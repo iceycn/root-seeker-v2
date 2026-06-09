@@ -1,0 +1,13 @@
+# Skill Registry 三级目标索引
+
+父级文件：`03-registry.md`
+
+## 三级文件列表
+
+- `01-扫描-builtin-generated-external.md`：扫描 builtin/generated/external（建议继续拆到四级）
+- `02-解析-SkillSpec.md`：解析 SkillSpec（建议继续拆到四级）
+- `03-支持缓存失效.md`：支持缓存失效（建议继续拆到四级）
+
+## 使用方式
+
+后续实现时，优先一次只选择一个三级文件；若该三级文件标记为“建议继续拆到四级”，先按其中的四级建议再拆一层。

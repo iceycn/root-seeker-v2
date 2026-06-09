@@ -1,0 +1,14 @@
+id: builtin.log_query
+name: Log and trace query
+version: 1.0.0
+description: Log data plane MCP tools (SLS and trace chain)
+kind: connector
+enabled_by_default: true
+capabilities:
+  - connector.log_query
+mcp_tools:
+  - log.query_by_trace_id
+  - log.query_by_template
+  - trace.get_chain
+config_schema: {}
+metadata: {}

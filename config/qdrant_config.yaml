@@ -1,0 +1,22 @@
+# Qdrant 服务配置（相对项目根目录的 data 目录；cwd 为项目根启动时生效）
+# 与姊妹项目 root_seek/config/qdrant_config.yaml 对齐，供本机非 Docker 启动 Qdrant 使用。
+log_level: INFO
+
+storage:
+  storage_path: ./data/qdrant_storage
+  snapshots_path: ./data/qdrant_storage/snapshots
+  on_disk_payload: true
+  wal:
+    wal_capacity_mb: 32
+    wal_segments_ahead: 0
+
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  enable_cors: true
+
+cluster:
+  enabled: false
+
+telemetry_disabled: true

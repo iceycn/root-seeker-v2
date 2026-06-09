@@ -1,0 +1,1 @@
+"""CLI app entrypoint package."""

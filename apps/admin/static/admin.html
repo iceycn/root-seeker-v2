@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RootSeeker V2 Admin</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --line: #edf0f5;
+      --muted: #8a91a0;
+      --text: #202534;
+      --pink: #ff5b8a;
+      --pink-soft: #fff0f5;
+      --green: #18b26b;
+      --blue: #4f7cff;
+      --shadow: 0 12px 28px rgba(31, 35, 53, .06);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .shell { display: grid; grid-template-columns: 210px 1fr; min-height: 100vh; }
+    .sidebar {
+      background: rgba(255,255,255,.92);
+      border-right: 1px solid var(--line);
+      padding: 18px 12px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .brand { display:flex; align-items:center; gap:10px; font-weight: 800; font-size: 22px; margin: 8px 8px 26px; }
+    .brand-mark { width: 28px; height: 28px; border-radius: 9px; background: linear-gradient(135deg, #2257ff, #ff4f8b); }
+    .group-title { color: var(--muted); font-size: 12px; margin: 18px 12px 8px; }
+    .nav-btn {
+      display:flex; align-items:center; gap:10px; width:100%; padding: 11px 12px; margin: 3px 0;
+      border: 0; border-radius: 10px; background: transparent; color:#5d6472; cursor:pointer; text-align:left;
+      font-size: 14px;
+    }
+    .nav-btn.active, .nav-btn:hover { background: var(--pink-soft); color: #d93668; box-shadow: inset 0 0 0 1px #ffd3e0; }
+    .main { padding: 22px 34px 40px; }
+    .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom: 28px; }
+    .title h1 { margin:0; font-size: 25px; }
+    .title p { margin: 8px 0 0; color: var(--muted); }
+    .status-pill { display:flex; align-items:center; gap:8px; background:#fff; border:1px solid var(--line); border-radius: 999px; padding:8px 13px; box-shadow: var(--shadow); }
+    .dot { width:8px; height:8px; border-radius:50%; background: var(--green); }
+    .section { margin-top: 20px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+    }
+    .card-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom: 14px; }
+    .card-title { font-size: 17px; font-weight: 760; }
+    .hint { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+    .metric { padding: 16px; border-radius: 14px; background: linear-gradient(180deg, #fff, #fbfcff); border: 1px solid var(--line); }
+    .metric span { color: var(--muted); font-size: 13px; }
+    .metric b { display:block; margin-top: 8px; font-size: 28px; }
+    .form-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 16px; }
+    label { color:#7b8291; font-size: 12px; display:block; margin-bottom:6px; }
+    input, select, textarea {
+      width:100%; border:1px solid #dde2ec; border-radius: 10px; padding: 10px 11px;
+      background:#fbfcff; outline:none; transition:.15s; color: var(--text);
+    }
+    input:focus, select:focus, textarea:focus { border-color:#ff9ab8; box-shadow:0 0 0 4px #fff0f5; background:#fff; }
+    textarea { min-height: 104px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+    button.primary, button.secondary, button.danger {
+      border:0; border-radius: 10px; padding: 10px 14px; cursor:pointer; font-weight:650;
+    }
+    button.primary { background: var(--pink); color:#fff; }
+    button.secondary { background:#eef2ff; color:#3855c9; }
+    button.danger { background:#fff1f2; color:#e11d48; }
+    table { width:100%; border-collapse:collapse; font-size: 13px; }
+    th { color:#8a91a0; font-weight:600; background:#fafbff; }
+    th, td { text-align:left; border-bottom:1px solid var(--line); padding: 10px; vertical-align:top; }
+    .tag { display:inline-flex; padding:3px 8px; background:#edfdf5; color:#118057; border-radius:999px; font-size:12px; }
+    .output { white-space: pre-wrap; background:#0d1324; color:#e6edf7; padding:16px; border-radius: 14px; max-height: 430px; overflow:auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    .model-pool { border-radius:16px; overflow:hidden; border:1px solid var(--line); background:#fff; box-shadow: var(--shadow); margin-bottom:18px; }
+    .pool-head { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); }
+    .provider-group { border-bottom:1px solid #f0f2f7; }
+    .provider-title { display:flex; justify-content:space-between; color:#5b6475; font-weight:700; font-size:13px; background:#fafbff; padding:10px 20px; }
+    .model-row { display:flex; align-items:center; justify-content:space-between; padding:13px 20px; }
+    .model-main { display:flex; align-items:center; gap:12px; }
+    .star { color:#c9ced8; font-size:18px; }
+    .model-name { font-weight:700; }
+    .model-sub { color:#a8afbd; font-size:12px; margin-top:2px; }
+    .badge { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; font-size:12px; background:#ecfdf3; color:#16a34a; }
+    .provider-cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap:16px; margin-bottom:18px; }
+    .provider-card { border:1px solid var(--line); border-radius:16px; background:#fff; padding:18px; box-shadow: var(--shadow); min-height:210px; }
+    .provider-meta { margin:14px 0; color:#7b8291; font-size:13px; line-height:1.8; }
+    .provider-meta b { color:#4b5563; font-weight:600; }
+    .card-actions { display:flex; gap:16px; border-top:1px solid #f1f3f7; padding-top:12px; margin-top:12px; }
+    .test-result { margin-top:10px; padding:8px 10px; border-radius:10px; background:#f8fafc; color:#64748b; font-size:12px; display:none; }
+    .test-result.ok { display:block; background:#ecfdf5; color:#047857; }
+    .test-result.err { display:block; background:#fff1f2; color:#be123c; }
+    .toast { position:fixed; left:50%; transform:translateX(-50%); top:18px; z-index:120; min-width:360px; max-width:620px; padding:13px 18px; border-radius:12px; background:#fff; color:#222; box-shadow:0 18px 48px rgba(15,23,42,.18); display:none; font-size:16px; }
+    .toast.ok { background:#fff; }
+    .toast.err { background:#fff; color:#222; }
+    .toast:before { content:"✓"; display:inline-grid; place-items:center; width:21px; height:21px; border-radius:50%; background:#20c05c; color:#fff; margin-right:10px; font-weight:800; }
+    .toast.err:before { content:"×"; background:#ff4d5e; }
+    .link-action { border:0; background:transparent; color:#e05280; cursor:pointer; padding:0; font-size:13px; }
+    .provider-card.accent { background: linear-gradient(180deg, #fff5f8, #fff); border-color:#ffd2df; }
+    .provider-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+    .provider-logo { width:34px; height:34px; border-radius:11px; display:grid; place-items:center; color:#fff; background:#6b5cff; font-weight:800; }
+    .provider-status { color:#10b981; font-size:12px; font-weight:700; }
+
+    .modal-mask { position:fixed; inset:0; background:rgba(15,23,42,.42); display:none; align-items:flex-start; justify-content:center; padding:28px 18px; z-index:50; overflow:auto; }
+    .modal { width:min(860px, 100%); background:#fff; border-radius:18px; box-shadow:0 24px 80px rgba(15,23,42,.22); padding:26px 36px; }
+    .modal-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+    .modal-title { font-size:22px; font-weight:780; }
+    .modal-close { border:0; background:transparent; font-size:30px; color:#9ca3af; cursor:pointer; }
+    .modal-field { margin:21px 0; }
+    .modal-field label { font-size:17px; color:#111827; margin-bottom:12px; }
+    .required { color:#f43f5e; margin-right:4px; }
+    .modal input, .modal select { height:50px; border-radius:15px; background:#fff; font-size:16px; }
+    .field-help { color:#969da9; font-size:15px; margin:6px 0 0; }
+    .section-title { display:flex; align-items:center; gap:14px; justify-content:center; margin:26px 0 14px; color:#111827; font-weight:760; }
+    .section-title:before, .section-title:after { content:""; height:1px; background:#eef1f6; flex:1; }
+    .empty-box { height:88px; display:grid; place-items:center; border:1px solid #f0f2f6; border-radius:12px; color:#c2c7d1; background:#fff; }
+    .add-model { width:100%; border:1px dashed #d8dde7; background:#fff; border-radius:13px; padding:12px; cursor:pointer; font-weight:650; color:#111827; }
+    .modal-actions { display:flex; justify-content:flex-end; gap:12px; margin-top:20px; }
+
+    .protocol-select { position:relative; }
+    .protocol-trigger { height:50px; border:1.5px solid #e84e83; border-radius:15px; padding:13px 42px 10px 16px; background:#fff; cursor:pointer; color:#111827; font-size:18px; }
+    .protocol-trigger:after { content:"⌄"; position:absolute; right:18px; top:12px; color:#aab0bc; font-size:20px; }
+    .protocol-menu { display:none; position:absolute; z-index:80; left:0; right:0; top:58px; background:#fff; border-radius:16px; box-shadow:0 16px 42px rgba(15,23,42,.16); overflow:hidden; border:1px solid #f1f2f5; }
+    .protocol-menu.open { display:block; }
+    .protocol-option { padding:16px 18px; cursor:pointer; font-size:19px; }
+    .protocol-option:hover, .protocol-option.selected { background:#fff1f3; font-weight:760; }
+    .modal-actions button { min-width:82px; }
+    .model-chip { display:flex; gap:8px; align-items:center; margin:8px 0; }
+    details { margin-top:12px; }
+    summary { cursor:pointer; color:#4f7cff; font-weight:600; }
+    @media (max-width: 860px) { .shell { grid-template-columns:1fr; } .sidebar { position:relative; height:auto; } }
+  </style>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark"></span><span>RootSeeker</span></div>
+    <div class="group-title">会话</div>
+    <button class="nav-btn" data-view="status" onclick="route('status')">◎ 总览状态</button>
+    <button class="nav-btn" data-view="semantic" onclick="route('semantic')">⌕ 语义搜索</button>
+    <div class="group-title">智能体</div>
+    <button class="nav-btn" data-view="skills" onclick="route('skills')">✧ Skills 管理</button>
+    <button class="nav-btn" data-view="plugins" onclick="route('plugins')">◇ Plugins / Tools</button>
+    <button class="nav-btn" data-view="repos" onclick="route('repos')">▣ Repo 管理</button>
+    <button class="nav-btn" data-view="catalog" onclick="route('catalog')">♡ Service Catalog</button>
+    <div class="group-title">设置</div>
+    <button class="nav-btn active" data-view="ai" onclick="route('ai')">◈ 大模型</button>
+    <button class="nav-btn" data-view="callbacks" onclick="route('callbacks')">↗ 消息回调</button>
+    <button class="nav-btn" data-view="settings" onclick="route('settings')">⚙ 高级设置</button>
+  </aside>
+  <main class="main">
+    <div class="topbar">
+      <div class="title">
+        <h1 id="pageTitle">大语言模型</h1>
+        <p id="pageDesc">系统会根据用户内容智能选择合适模型，也可以设置偏好模型。</p>
+      </div>
+      <div class="status-pill"><span class="dot"></span><span id="healthText">正常</span></div>
+    </div>
+    <div id="content"></div>
+    <section class="card">
+      <div class="card-header"><div><div class="card-title">操作结果</div><div class="hint">这里展示最近一次请求的返回。</div></div></div>
+      <div id="out" class="output">Ready.</div>
+    </section>
+  </main>
+</div>
+
+<div id="providerModal" class="modal-mask" onclick="if(event.target===this) closeProviderModal()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">添加自定义提供商</div>
+      <button class="modal-close" onclick="closeProviderModal()">×</button>
+    </div>
+    <div class="modal-field">
+      <label><span class="required">*</span>提供商 ID</label>
+      <input id="modalProviderId" placeholder="如 openai, google, anthropic" />
+      <div class="field-help">仅支持小写字母、数字、连字符、下划线，创建后不可更改。</div>
+    </div>
+    <div class="modal-field">
+      <label><span class="required">*</span>显示名称</label>
+      <input id="modalProviderName" placeholder="如 OpenAI, Google Gemini" />
+    </div>
+    <div class="modal-field">
+      <label>接入地址</label>
+      <input id="modalBaseUrl" placeholder="如 https://api.openai.com/v1" />
+      <div class="field-help">OpenAI 兼容端点，如 http://localhost:11434/v1</div>
+    </div>
+    <div class="modal-field">
+      <label>API 密钥</label>
+      <input id="modalApiKey" type="password" placeholder="输入 API 密钥（可选，可稍后设置）" />
+    </div>
+    <div class="modal-field">
+      <label>协议类型</label>
+      <input id="modalProtocol" type="hidden" value="openai_compatible" />
+      <div class="protocol-select">
+        <div id="protocolTrigger" class="protocol-trigger" onclick="toggleProtocolMenu()">默认（OpenAI 兼容）</div>
+        <div id="protocolMenu" class="protocol-menu">
+          <div class="protocol-option selected" data-value="openai_compatible" onclick="selectProtocol('openai_compatible','默认（OpenAI 兼容）')">默认（OpenAI 兼容）</div>
+          <div class="protocol-option" data-value="anthropic_messages" onclick="selectProtocol('anthropic_messages','Anthropic Messages')">Anthropic Messages</div>
+        </div>
+      </div>
+      <div class="field-help">选择与目标 API 兼容的协议类型</div>
+    </div>
+    <div class="section-title">管理模型</div>
+    <div class="field-help">可选，创建后也可在设置中添加</div>
+    <div id="modalModels" class="empty-box">暂无模型</div>
+    <button class="add-model" onclick="addModalModel()">＋ 添加模型</button>
+    <div class="modal-actions">
+      <button class="secondary" onclick="closeProviderModal()">取消</button>
+      <button class="primary" onclick="createProviderFromModal()">创建</button>
+    </div>
+  </div>
+</div>
+<script>
+const content = document.getElementById("content");
+const out = document.getElementById("out");
+const pageTitle = document.getElementById("pageTitle");
+const pageDesc = document.getElementById("pageDesc");
+const show = (x) => out.textContent = typeof x === "string" ? x : JSON.stringify(x, null, 2);
+function toastMsg(msg, type="ok"){ toast.textContent=msg; toast.className=`toast ${type}`; toast.style.display="block"; clearTimeout(window.__toastTimer); window.__toastTimer=setTimeout(()=>toast.style.display="none", 3200); }
+async function req(url, options={}) {
+  const res = await fetch(url, { headers: {"Content-Type":"application/json"}, ...options });
+  const text = await res.text();
+  let data; try { data = JSON.parse(text); } catch { data = text; }
+  if (!res.ok) throw new Error(typeof data === "string" ? data : JSON.stringify(data, null, 2));
+  return data;
+}
+function setActive(view){ document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active", b.dataset.view===view)); }
+function escapeHtml(s){ return String(s ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); }
+function table(rows, cols) {
+  if (!rows?.length) return `<p class="hint">暂无数据</p>`;
+  return `<table><thead><tr>${cols.map(c=>`<th>${c.label}</th>`).join("")}</tr></thead><tbody>`+
+    rows.map(r=>`<tr>${cols.map(c=>`<td>${c.html ? c.value(r) : escapeHtml(c.value(r))}</td>`).join("")}</tr>`).join("")+
+    `</tbody></table>`;
+}
+function btn(label, fn, cls="primary"){ return `<button class="${cls}" onclick="${fn}">${label}</button>`; }
+function route(view){ setActive(view); ({status,settings,ai,callbacks,skills,plugins,repos,catalog,semantic}[view])().catch(e=>show(String(e))); }
+
+async function status(){
+  pageTitle.textContent="总览状态"; pageDesc.textContent="系统状态、索引状态和管理配置概览。";
+  const d = await req("/api/status");
+  content.innerHTML = `<section class="card"><div class="grid">
+    <div class="metric"><span>Skills</span><b>${d.skills_total}</b></div>
+    <div class="metric"><span>Plugins</span><b>${d.plugins_total}</b></div>
+    <div class="metric"><span>Runtime Repos</span><b>${d.repos?.total ?? 0}</b></div>
+    <div class="metric"><span>Indexed Repos</span><b>${d.index?.total ?? 0}</b></div>
+    <div class="metric"><span>Catalog</span><b>${d.catalog?.total ?? 0}</b></div>
+  </div><p class="hint">配置文件：${escapeHtml(d.config_path || "")}</p></section>`;
+  show(d);
+}
+
+async function ai(){
+  pageTitle.textContent="大语言模型"; pageDesc.textContent="系统会根据用户内容智能选择合适模型，也可以设置偏好模型。";
+  const d = await req("/api/ai-providers");
+  const groups = d.items.length ? d.items.reduce((m,p)=>{ const k=p.builtin ? '内置提供商' : '自定义提供商'; (m[k] ||= []).push(p); return m; }, {}) : {
+    "内置": [{name:"Hash Embedding", model:"deterministic-hash", embedding_model:"hash", provider_type:"local", enabled:true}]
+  };
+  const pool = Object.entries(groups).map(([name,items])=>`<div class="provider-group"><div class="provider-title"><span>${name}</span><span>${items.length} 个</span></div>${items.map(p=>`<div class="model-row"><div class="model-main"><span class="star">☆</span><div><div class="model-name">${escapeHtml(p.model || p.name)}</div><div class="model-sub">${escapeHtml(p.embedding_model || p.base_url || p.provider_type || "")}</div></div></div><div>${d.default_provider===p.name?'<span class="badge">默认</span>':btn("切换",`setDefaultAIByName('${escapeHtml(p.name)}')`,"secondary")}</div></div>`).join("")}</div>`).join("");
+  content.innerHTML = `<section class="model-pool"><div class="pool-head"><div><div class="card-title">可用模型池</div><div class="hint">系统会根据用户内容智能选择最合适的模型。标记的偏好模型在无法确定时优先使用。</div></div><span class="badge">${d.total || 1} 个可用</span></div>${pool}</section>
+  <div class="card-header"><div><div class="card-title">模型提供商</div><div class="hint">为每个模型提供商配置 API 密钥和接入端点。</div></div><button class="primary" onclick="openProviderModal()">＋ 添加提供商</button></div>
+  <div class="card-title" style="margin:18px 0 12px">自定义提供商</div><section class="provider-cards">${d.items.filter(p=>!p.builtin || p.api_key).map(p=>providerCard(p,d)).join("") || '<section class="card"><p class="hint">暂无自定义提供商，点击右上角“添加提供商”开始接入。</p></section>'}</section><div class="card-title" style="margin:18px 0 12px">内置提供商</div><section class="provider-cards">${d.items.filter(p=>p.builtin && !p.api_key).map(p=>providerCard(p,d)).join("")}</section>`;
+  show(d);
+}
+
+
+
+function toggleProtocolMenu(){ protocolMenu.classList.toggle('open'); }
+function selectProtocol(value,label){
+  modalProtocol.value=value;
+  protocolTrigger.textContent=label;
+  document.querySelectorAll('.protocol-option').forEach(x=>x.classList.toggle('selected', x.dataset.value===value));
+  protocolMenu.classList.remove('open');
+}
+function openProviderModal(){ providerModal.style.display='flex'; modalProviderId.focus(); }
+function closeProviderModal(){ providerModal.style.display='none'; }
+function modalModelInputs(){ return [...document.querySelectorAll('#modalModels input')].map(i=>i.value.trim()).filter(Boolean); }
+function addModalModel(){
+  if (modalModels.classList.contains('empty-box')) { modalModels.className=''; modalModels.innerHTML=''; }
+  const wrap=document.createElement('div'); wrap.className='model-chip'; wrap.innerHTML='<input placeholder="模型名称，如 gpt-4o-mini"/><button class="danger" onclick="this.parentElement.remove(); if(!modalModels.children.length){modalModels.className=\'empty-box\'; modalModels.textContent=\'暂无模型\';}">删除</button>'; modalModels.append(wrap);
+}
+async function createProviderFromModal(){
+  const id = modalProviderId.value.trim();
+  const displayName = modalProviderName.value.trim();
+  if(!id || !displayName){ show('请填写提供商 ID 和显示名称'); return; }
+  const models = modalModelInputs();
+  await req('/api/ai-providers',{method:'POST',body:JSON.stringify({name:id,provider_type:modalProtocol.value,base_url:modalBaseUrl.value.trim(),api_key:modalApiKey.value,model:models[0]||'',embedding_model:'',embedding_dimension:1536,enabled:true,metadata:{display_name:displayName,protocol:modalProtocol.value,models}})});
+  closeProviderModal(); await ai();
+}
+
+
+function providerCard(p,d){
+  const models=(p.metadata?.models||[]).filter(Boolean);
+  const masked=p.api_key ? (p.api_key.slice(0,3)+'******'+p.api_key.slice(-4)) : '未设置';
+  const authorized=!!p.api_key;
+  const actions = authorized
+    ? `<button id="btn-test-${escapeHtml(p.name)}" class="link-action" onclick="testAI('${escapeHtml(p.name)}')">测试连接</button><button class="link-action" onclick="fillAI('${escapeHtml(p.name)}','${escapeHtml(p.provider_type||"")}','${escapeHtml(p.base_url||"")}','${escapeHtml(p.model||"")}','${escapeHtml(p.embedding_model||"")}','${p.embedding_dimension||1536}','${escapeHtml(p.metadata?.display_name||"")}')">设置</button><button class="link-action" onclick="deleteAIByName('${escapeHtml(p.name)}')">删除提供商</button>`
+    : `<button class="link-action" onclick="window.open('${escapeHtml(p.api_key_url||'#')}', '_blank')">获取 API Key</button><button class="link-action" onclick="fillAI('${escapeHtml(p.name)}','${escapeHtml(p.provider_type||"")}','${escapeHtml(p.base_url||"")}','${escapeHtml(p.model||"")}','${escapeHtml(p.embedding_model||"")}','${p.embedding_dimension||1536}','${escapeHtml(p.metadata?.display_name||"")}')">设置</button>`;
+  return `<div class="provider-card ${d.default_provider===p.name?'accent':''}"><div class="provider-top"><div style="display:flex;gap:10px;align-items:center"><div class="provider-logo">${escapeHtml((p.metadata?.display_name||p.name||'?')[0]).toUpperCase()}</div><div><div class="model-name">${escapeHtml(p.metadata?.display_name||p.name)}</div><div class="model-sub">${escapeHtml(p.name)}</div></div></div><span class="provider-status">${authorized?'● 已授权':'○ 未授权'}</span></div><div class="provider-meta"><div><b>接入地址：</b>${escapeHtml(p.base_url||'未配置')}</div><div><b>API 密钥：</b>${escapeHtml(masked)}</div><div><b>模型：</b>${models.length || (p.model?1:0)} 个模型</div></div><div id="test-${escapeHtml(p.name)}" class="test-result"></div><div class="card-actions">${actions}</div></div>`;
+}
+
+function fillAI(name,type,base,model,emb,dim,displayName=''){ modalProviderId.value=name; modalProviderName.value=displayName||name; selectProtocol(type||'openai_compatible', type==='anthropic_messages'?'Anthropic Messages':'默认（OpenAI 兼容）'); modalBaseUrl.value=base; modalApiKey.value=''; modalModels.className=''; modalModels.innerHTML=''; if(model){ addModalModel(); modalModels.querySelector('input').value=model; } else { modalModels.className='empty-box'; modalModels.textContent='暂无模型'; } openProviderModal(); }
+async function saveAI(){ show(await req("/api/ai-providers",{method:"POST",body:JSON.stringify({name:aiName.value,provider_type:aiType.value,base_url:aiBase.value,api_key:aiKey.value,model:aiModel.value,embedding_model:aiEmbModel.value,embedding_dimension:Number(aiDim.value||1536),enabled:true})})); await ai(); }
+async function setDefaultAI(){ show(await req(`/api/ai-providers/${encodeURIComponent(aiName.value)}/default`,{method:"POST"})); await ai(); }
+async function setDefaultAIByName(name){ show(await req(`/api/ai-providers/${encodeURIComponent(name)}/default`,{method:"POST"})); await ai(); }
+async function testAI(name){
+  const box = document.getElementById(`test-${name}`);
+  const button = document.getElementById(`btn-test-${name}`);
+  if (box) { box.className='test-result'; box.style.display='block'; box.textContent='正在测试连接...'; }
+  if (button) { button.disabled=true; button.textContent='测试中...'; }
+  try {
+    const data = await req(`/api/ai-providers/${encodeURIComponent(name)}/test`,{method:"POST"});
+    show(data);
+    const ok = !!data.ok;
+    const providerName = data.display_name || name;
+    const msg = ok ? `${providerName} 连接正常，响应 ${data.response_ms ?? '-'}ms` : `测试失败：${data.error || data.status_code || 'unknown'}`;
+    if (box) { box.className=`test-result ${ok?'ok':'err'}`; box.textContent=msg; }
+    toastMsg(msg, ok?'ok':'err');
+  } catch (e) {
+    const msg = `连接失败：${String(e)}`;
+    if (box) { box.className='test-result err'; box.textContent=msg; }
+    toastMsg(msg, 'err');
+    show(msg);
+  } finally {
+    if (button) { button.disabled=false; button.textContent='测试连接'; }
+  }
+}
+async function deleteAIByName(name){ show(await req(`/api/ai-providers/${encodeURIComponent(name)}`,{method:"DELETE"})); await ai(); }
+async function deleteAI(){ show(await req(`/api/ai-providers/${encodeURIComponent(aiName.value)}`,{method:"DELETE"})); await ai(); }
+
+async function callbacks(){
+  pageTitle.textContent="消息回调"; pageDesc.textContent="配置通知通道和外部消息回调。";
+  const d = await req("/api/callbacks");
+  content.innerHTML = `<section class="card"><div class="card-title">添加 / 编辑回调</div><div class="form-grid">
+    <div><label>名称</label><input id="cbName" value="default-webhook"></div>
+    <div><label>通道</label><select id="cbChannel"><option value="webhook">webhook</option><option value="feishu">feishu</option><option value="dingtalk">dingtalk</option><option value="wechat_work">wechat_work</option><option value="slack">slack</option><option value="discord">discord</option></select></div>
+    <div><label>回调 URL</label><input id="cbUrl" placeholder="https://..." /></div>
+    <div><label>Team</label><input id="cbTeam" value="default"></div>
+    <div><label>Secret</label><input id="cbSecret" type="password"></div>
+  </div><div class="actions">${btn("保存回调","saveCallback()")}${btn("删除","deleteCallback()","danger")}</div></section>
+  <section class="card"><div class="card-title">已配置回调</div>${table(d.items,[{label:"名称",value:x=>x.name},{label:"通道",value:x=>x.channel},{label:"URL",value:x=>x.url},{label:"Team",value:x=>x.team},{label:"启用",value:x=>x.enabled?"是":"否"},{label:"操作",html:true,value:x=>btn("测试",`testCallback('${escapeHtml(x.name)}')`,"secondary") + ' ' + btn("填入",`fillCallback('${escapeHtml(x.name)}','${escapeHtml(x.channel)}','${escapeHtml(x.url)}','${escapeHtml(x.team||"default")}')`,"secondary")}])}</section>`;
+  show(d);
+}
+function fillCallback(name,channel,url,team){ cbName.value=name; cbChannel.value=channel; cbUrl.value=url; cbTeam.value=team; cbSecret.value=""; }
+async function saveCallback(){ show(await req("/api/callbacks",{method:"POST",body:JSON.stringify({name:cbName.value,channel:cbChannel.value,url:cbUrl.value,team:cbTeam.value,secret:cbSecret.value,enabled:true})})); await callbacks(); }
+async function deleteCallback(){ show(await req(`/api/callbacks/${encodeURIComponent(cbName.value)}`,{method:"DELETE"})); await callbacks(); }
+async function testCallback(name){ show(await req(`/api/callbacks/${encodeURIComponent(name)}/test`,{method:"POST"})); }
+
+async function settings(){
+  pageTitle.textContent="高级设置"; pageDesc.textContent="常用连接配置和高级 JSON 配置。";
+  const d = await req("/api/settings");
+  content.innerHTML = `<section class="card"><div class="form-grid">
+    <div><label>Zoekt Endpoint</label><input id="setZoekt" placeholder="http://127.0.0.1:6070" value="${escapeHtml(d.settings?.ZOEKT_ENDPOINT||"")}"></div>
+    <div><label>Qdrant Endpoint</label><input id="setQdrant" placeholder="http://127.0.0.1:6333" value="${escapeHtml(d.settings?.QDRANT_ENDPOINT||"")}"></div>
+    <div><label>默认 Repo 基础目录</label><input id="setRepoBase" placeholder="data/admin-repos" value="${escapeHtml(d.settings?.ROOTSEEKER_REPO_BASE_PATH||"")}"></div>
+  </div><details open><summary>高级 JSON 配置</summary><textarea id="settingsText"></textarea></details><div class="actions">${btn("保存配置","saveSettings()")}</div></section>`;
+  settingsText.value = JSON.stringify(d.settings || {}, null, 2); show(d);
+}
+async function saveSettings(){ const s=JSON.parse(settingsText.value||"{}"); if(setZoekt.value)s.ZOEKT_ENDPOINT=setZoekt.value; if(setQdrant.value)s.QDRANT_ENDPOINT=setQdrant.value; if(setRepoBase.value)s.ROOTSEEKER_REPO_BASE_PATH=setRepoBase.value; show(await req("/api/settings",{method:"PUT",body:JSON.stringify({settings:s})})); }
+
+async function skills(){
+  pageTitle.textContent="Skills 管理"; pageDesc.textContent="用表单创建常用 Custom Skill，高级场景可编辑 JSON。";
+  const d = await req("/api/skills");
+  content.innerHTML = `<section class="card"><div class="form-grid">
+    <div><label>名称</label><input id="skillName" value="Custom Skill"></div><div><label>Slug</label><input id="skillSlug" value="custom/example"></div>
+    <div><label>描述</label><input id="skillDesc"></div><div><label>Tags</label><input id="skillTags" value="custom"></div>
+    <div><label>Triggers</label><input id="skillTriggers"></div><div><label>Required Tools</label><input id="skillTools"></div>
+  </div><details><summary>高级 JSON SkillSpec</summary><textarea id="skillSpec"></textarea></details><div class="actions">${btn("快速保存 Skill","saveQuickSkill()")}${btn("按 JSON 保存","saveSkill()","secondary")}</div></section>
+  <section class="card"><div class="card-title">Skills</div>${table(d.items,[{label:"Slug",value:x=>x.slug},{label:"名称",value:x=>x.name},{label:"版本",value:x=>x.version},{label:"来源",value:x=>x.source_kind},{label:"步骤",value:x=>(x.steps||[]).length},{label:"操作",html:true,value:x=>btn("删除",`deleteSkill('${escapeHtml(x.slug)}')`,"danger")}])}</section>`;
+  skillSpec.value = JSON.stringify({name:"Custom Skill",slug:"custom/example",description:"",tags:["custom"],triggers:[],required_tools:[],steps:[],source_kind:"custom",version:"0.1.0",metadata:{}}, null, 2); show(d);
+}
+async function saveQuickSkill(){ show(await req("/api/skills/quick",{method:"POST",body:JSON.stringify({name:skillName.value,slug:skillSlug.value,description:skillDesc.value,tags:skillTags.value,triggers:skillTriggers.value,required_tools:skillTools.value})})); await skills(); }
+async function saveSkill(){ show(await req("/api/skills",{method:"PUT",body:JSON.stringify({spec:JSON.parse(skillSpec.value||"{}")})})); await skills(); }
+async function deleteSkill(slug){ show(await req(`/api/skills/${encodeURIComponent(slug)}`,{method:"DELETE"})); await skills(); }
+
+async function repos(){
+  pageTitle.textContent="Repo 管理"; pageDesc.textContent="注册仓库、同步并触发 Zoekt/Qdrant 索引。";
+  const d = await req("/api/repos");
+  content.innerHTML = `<section class="card"><div class="form-grid"><div><label>仓库名称</label><input id="rn" value="smoke-mini"></div><div><label>Git URL 或本地路径</label><input id="ru" placeholder="/path/to/repo 或 https://..."></div><div><label>分支</label><input id="rb" value="master"></div></div><div class="actions">${btn("注册","registerRepo()")}${btn("同步并索引","syncRepo()","secondary")}${btn("删除","deleteRepo()","danger")}</div></section>
+  <section class="card"><div class="card-title">Repos</div>${table(d.repos,[{label:"名称",value:x=>x.name},{label:"URL",value:x=>x.url},{label:"分支",value:x=>x.default_branch},{label:"状态",value:x=>x.sync_status?.state},{label:"Commit",value:x=>x.sync_status?.commit_hash},{label:"操作",html:true,value:x=>btn("填入",`fillRepo('${escapeHtml(x.name)}','${escapeHtml(x.url||"")}','${escapeHtml(x.default_branch||"main")}')`,"secondary")}])}</section>`; show(d);
+}
+function fillRepo(n,u,b){ rn.value=n; ru.value=u; rb.value=b; }
+async function registerRepo(){ show(await req("/api/repos",{method:"POST",body:JSON.stringify({name:rn.value,url:ru.value,branch:rb.value})})); await repos(); }
+async function syncRepo(){ show(await req(`/api/repos/${encodeURIComponent(rn.value)}/sync`,{method:"POST",body:JSON.stringify({trigger_index:true})})); await repos(); }
+async function deleteRepo(){ show(await req(`/api/repos/${encodeURIComponent(rn.value)}`,{method:"DELETE"})); await repos(); }
+
+async function catalog(){
+  pageTitle.textContent="Service Catalog"; pageDesc.textContent="配置服务与仓库、日志源、负责人之间的映射。";
+  const d=await req("/api/catalog");
+  content.innerHTML=`<section class="card"><div class="form-grid"><div><label>Service Name</label><input id="sn"></div><div><label>Display Name</label><input id="dn"></div><div><label>Owner Team</label><input id="team"></div><div><label>语言</label><input id="lang"></div><div><label>Runtime</label><input id="rt"></div></div><label>仓库配置 JSON 数组</label><textarea id="catRepos">[]</textarea><div class="actions">${btn("保存服务","saveCatalog()")}${btn("删除服务","deleteCatalog()","danger")}</div></section>
+  <section class="card"><div class="card-title">Services</div>${table(d.items,[{label:"服务",value:x=>x.service_name},{label:"名称",value:x=>x.display_name},{label:"团队",value:x=>x.owner_team},{label:"语言",value:x=>x.language},{label:"仓库数",value:x=>(x.repositories||[]).length},{label:"操作",html:true,value:x=>btn("填入",`fillCatalog('${escapeHtml(x.service_name)}','${escapeHtml(x.display_name||"")}','${escapeHtml(x.owner_team||"")}','${escapeHtml(x.language||"")}','${escapeHtml(x.runtime||"")}')`,"secondary")}])}</section>`; show(d);
+}
+function fillCatalog(s,dn,owner,language,runtime){ sn.value=s; window.dn.value=dn; team.value=owner; lang.value=language; rt.value=runtime; }
+async function saveCatalog(){ show(await req("/api/catalog",{method:"POST",body:JSON.stringify({service_name:sn.value,display_name:dn.value||sn.value,owner_team:team.value,language:lang.value,runtime:rt.value,repositories:JSON.parse(catRepos.value||"[]")})})); await catalog(); }
+async function deleteCatalog(){ show(await req(`/api/catalog/demo/prod/${encodeURIComponent(sn.value)}`,{method:"DELETE"})); await catalog(); }
+
+async function plugins(){
+  pageTitle.textContent="Plugins / Tools"; pageDesc.textContent="查看已加载插件和 MCP 工具。";
+  const d=await req("/api/plugins"); const tools=await req("/api/tools");
+  content.innerHTML=`<section class="card"><div class="card-title">Plugins</div>${table(d.items,[{label:"ID",value:x=>x.plugin_id},{label:"名称",value:x=>x.display_name},{label:"类型",value:x=>x.kind},{label:"工具数",value:x=>(x.mcp_tools||[]).length},{label:"启用",value:x=>x.enabled_by_default?"是":"否"}])}</section><section class="card"><div class="card-title">Tools</div>${table(tools.items,[{label:"Name",value:x=>x.name},{label:"Scope",value:x=>x.scope},{label:"Server",value:x=>x.server_name},{label:"Tags",value:x=>(x.tags||[]).join(",")}])}</section>`; show({plugins:d,tools}); }
+
+function semantic(){ pageTitle.textContent="语义搜索"; pageDesc.textContent="搜索 Qdrant 中的代码片段。"; content.innerHTML=`<section class="card"><div class="form-grid"><div><label>Repo（可空）</label><input id="sr" value="smoke-mini"></div><div><label>查询</label><input id="sq" value="readme smoke handler"></div></div><div class="actions">${btn("搜索","semanticSearch()")}</div></section>`; }
+async function semanticSearch(){ show(await req("/api/code/semantic-search",{method:"POST",body:JSON.stringify({query:sq.value,repo_name:sr.value||null,limit:10})})); }
+
+route("ai");
+</script>
+</body>
+</html>

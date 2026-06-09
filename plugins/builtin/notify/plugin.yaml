@@ -1,0 +1,12 @@
+id: builtin.notify
+name: Notify
+version: 1.0.0
+description: Outbound notification MCP tool
+kind: channel
+enabled_by_default: true
+capabilities:
+  - channel.notify
+mcp_tools:
+  - notify.send
+config_schema: {}
+metadata: {}

@@ -1,0 +1,13 @@
+id: builtin.service_catalog
+name: Service catalog
+version: 1.0.0
+description: Resolves service catalog entries and log source mappings via MCP
+kind: connector
+enabled_by_default: true
+capabilities:
+  - connector.service_catalog
+mcp_tools:
+  - catalog.resolve_service
+  - catalog.get_log_sources
+config_schema: {}
+metadata: {}

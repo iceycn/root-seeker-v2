@@ -1,0 +1,27 @@
+id: builtin.code_index
+name: Code index
+version: 1.0.0
+description: Code search and index status MCP tools
+kind: connector
+enabled_by_default: true
+capabilities:
+  - connector.code_index
+mcp_tools:
+  - code.search
+  - code.semantic_search
+  - code.read
+  - index.get_status
+  - repo.register
+  - repo.unregister
+  - repo.sync
+  - repo.sync_all
+  - repo.list
+  - repo.get
+  - repo.index_status
+  - repo.semantic_search
+  - lsp.references
+  - lsp.definition
+  - lsp.hover
+  - lsp.symbols
+config_schema: {}
+metadata: {}
