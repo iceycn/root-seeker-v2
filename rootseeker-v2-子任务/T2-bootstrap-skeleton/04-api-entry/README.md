@@ -9,7 +9,7 @@
 - `03-查询-Skill-Tool.md`：查询 Skill/Tool（建议继续拆到四级）
 - `04-触发-Case-执行.md`：触发 Case 执行（建议继续拆到四级）
 - `05-apps-api-main.py.md`：单独定义 ``apps/api/main.py`` 的职责、输入输出和验收标准（建议继续拆到四级）
-- `06-apps-api-routes-*.py.md`：单独定义 ``apps/api/routes/*.py`` 的职责、输入输出和验收标准（建议继续拆到四级）
+- `06-apps-api-routes-wildcard.py.md`：单独定义 ``apps/api/routes/*.py`` 的职责、输入输出和验收标准（建议继续拆到四级）
 
 ## 使用方式
 
