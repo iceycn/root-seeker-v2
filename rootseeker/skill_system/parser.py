@@ -8,7 +8,9 @@ from pydantic import ValidationError
 
 from rootseeker.contracts.skill import SkillSpec
 
-__all__ = ["parse_skill_document", "load_skill_from_path"]
+ROOTSEEKER_SKILL_SPEC_FILENAME = "rootseeker-skill.yaml"
+
+__all__ = ["ROOTSEEKER_SKILL_SPEC_FILENAME", "parse_skill_document", "load_skill_from_path"]
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
@@ -49,5 +51,31 @@ def _normalize_skill_dict(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _parse_frontmatter(text: str) -> dict[str, Any]:
+    yaml_text, _body = _split_frontmatter(text)
+    data = yaml.safe_load(yaml_text)
+    if not isinstance(data, dict):
+        raise ValueError("SKILL frontmatter must parse to a mapping")
+    return data
+
+
+def _parse_rootseeker_skill_spec(path: Path) -> dict[str, Any]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{ROOTSEEKER_SKILL_SPEC_FILENAME} must parse to a mapping")
+    return data
+
+
 def load_skill_from_path(path: Path) -> SkillSpec:
-    return parse_skill_document(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    sidecar = path.with_name(ROOTSEEKER_SKILL_SPEC_FILENAME)
+    if not sidecar.exists():
+        return parse_skill_document(text)
+    frontmatter = _parse_frontmatter(text)
+    data = _parse_rootseeker_skill_spec(sidecar)
+    data.setdefault("name", frontmatter.get("name"))
+    data.setdefault("description", frontmatter.get("description", ""))
+    try:
+        return SkillSpec.model_validate(_normalize_skill_dict(data))
+    except ValidationError as e:
+        raise ValueError(f"Invalid SkillSpec in {ROOTSEEKER_SKILL_SPEC_FILENAME}: {e}") from e

@@ -10,6 +10,7 @@ from typing import Any
 
 from rootseeker.contracts.common import utc_now
 from rootseeker.skill_system.draft_builder import SkillDraft
+from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
 from rootseeker.skill_system.review import ReviewStatus, SkillReview
 
 __all__ = ["PublishedSkill", "SkillPublisher", "PublishStatus"]
@@ -124,6 +125,10 @@ class SkillPublisher:
 
         skill_path = skill_dir / "SKILL.md"
         skill_path.write_text(draft.to_skill_md(), encoding="utf-8")
+        (skill_dir / ROOTSEEKER_SKILL_SPEC_FILENAME).write_text(
+            draft.to_rootseeker_spec_yaml(),
+            encoding="utf-8",
+        )
 
         return skill_path
 

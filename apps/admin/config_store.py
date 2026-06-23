@@ -34,6 +34,7 @@ class AdminConfigStore:
                 "ai_providers": [],
                 "callbacks": [],
                 "error_chat": [],
+                "repo_remotes": [],
             }
         data = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -45,6 +46,7 @@ class AdminConfigStore:
                 "ai_providers": [],
                 "callbacks": [],
                 "error_chat": [],
+                "repo_remotes": [],
             }
         data.setdefault("repos", [])
         data.setdefault("catalog", [])
@@ -54,6 +56,7 @@ class AdminConfigStore:
         data.setdefault("ai_providers", [])
         data.setdefault("callbacks", [])
         data.setdefault("error_chat", [])
+        data.setdefault("repo_remotes", [])
         return data
 
     def save(self, data: dict[str, Any]) -> None:
@@ -73,6 +76,27 @@ class AdminConfigStore:
     def delete_repo(self, name: str) -> None:
         data = self.load()
         data["repos"] = [item for item in data.get("repos", []) if item.get("name") != name]
+        self.save(data)
+
+    def list_repo_remotes(self) -> list[dict[str, Any]]:
+        return list(self.load().get("repo_remotes", []))
+
+    def upsert_repo_remote(self, remote: dict[str, Any]) -> dict[str, Any]:
+        name = str(remote.get("name", "")).strip()
+        if not name:
+            raise ValueError("remote name is required")
+        data = self.load()
+        items = [item for item in data.get("repo_remotes", []) if item.get("name") != name]
+        payload = dict(remote)
+        payload["name"] = name
+        items.append(payload)
+        data["repo_remotes"] = items
+        self.save(data)
+        return payload
+
+    def delete_repo_remote(self, name: str) -> None:
+        data = self.load()
+        data["repo_remotes"] = [item for item in data.get("repo_remotes", []) if item.get("name") != name]
         self.save(data)
 
     def list_catalog(self) -> list[ServiceCatalogEntry]:

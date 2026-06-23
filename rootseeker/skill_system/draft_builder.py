@@ -11,6 +11,7 @@ import yaml
 
 from rootseeker.contracts.common import utc_now
 from rootseeker.contracts.report import CaseReport
+from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
 
 __all__ = ["SkillDraft", "SkillDraftBuilder"]
 
@@ -34,16 +35,9 @@ class SkillDraft:
     def to_skill_md(self) -> str:
         """Convert draft to SKILL.md format."""
         frontmatter = {
-            "slug": self.slug,
             "name": self.name,
-            "version": self.version,
             "description": self.description,
-            "tags": self.metadata.get("tags", []),
-            "triggers": self.triggers,
-            "required_tools": self.required_tools,
         }
-
-        steps_yaml = yaml.dump(self.steps, default_flow_style=False, allow_unicode=True)
 
         return f"""---
 {yaml.dump(frontmatter, default_flow_style=False, allow_unicode=True)}---
@@ -52,14 +46,28 @@ class SkillDraft:
 
 {self.description}
 
-## Steps
+## RootSeeker Runtime
 
-{steps_yaml}
+Runtime metadata is stored in `{ROOTSEEKER_SKILL_SPEC_FILENAME}`.
 
 ## Source
 
 Generated from case: `{self.source_case_id}`
 """
+
+    def to_rootseeker_spec_yaml(self) -> str:
+        """Convert runtime metadata to RootSeeker sidecar YAML."""
+        skill_spec = {
+            "slug": self.slug,
+            "version": self.version,
+            "tags": self.metadata.get("tags", []),
+            "triggers": self.triggers,
+            "required_tools": self.required_tools,
+            "source_kind": "generated",
+            "metadata": self.metadata,
+            "steps": self.steps,
+        }
+        return yaml.dump(skill_spec, default_flow_style=False, allow_unicode=True)
 
 
 class SkillDraftBuilder:
@@ -120,6 +128,10 @@ class SkillDraftBuilder:
 
         skill_path = skill_dir / "SKILL.md"
         skill_path.write_text(draft.to_skill_md(), encoding="utf-8")
+        (skill_dir / ROOTSEEKER_SKILL_SPEC_FILENAME).write_text(
+            draft.to_rootseeker_spec_yaml(),
+            encoding="utf-8",
+        )
 
         return skill_path
 

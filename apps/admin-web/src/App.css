@@ -204,6 +204,28 @@
   color: var(--fn-color-brand-hover) !important;
 }
 
+.repo-remote-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 12px 16px;
+}
+
+.repo-remote-table {
+  margin-top: 16px;
+}
+
+@media (max-width: 1180px) {
+  .repo-remote-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .repo-remote-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .provider-form .ant-input,
 .provider-form .ant-select-selector {
   border-radius: 14px !important;

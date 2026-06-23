@@ -7,18 +7,20 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from apps.admin.config_store import AdminConfigStore
-from apps.admin.error_history import build_error_history_store
+from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
 from rootseeker.contracts.repository import RepositoryRef
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.contracts.tool import ToolCallRequest
+from rootseeker.flow_runtime import build_execution_trace
+from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
 
 ADMIN_CASE_ID = "admin-console"
 ADMIN_STEP_ID = "admin-route"
@@ -187,9 +189,48 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
 
 class AdminRegisterRepoRequest(BaseModel):
     name: str = Field(min_length=1)
-    url: str = Field(min_length=1)
+    url: str | None = None
     branch: str = "main"
+    local_path: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminImportLocalRepoRequest(BaseModel):
+    path: str = Field(min_length=1)
+    name: str | None = None
+    branch: str = "main"
+    trigger_index: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminDiscoverReposRequest(BaseModel):
+    provider: str = Field(default="github")
+    base_url: str = ""
+    token: str = ""
+    owner: str = ""
+    api_path: str = ""
+    query: str = ""
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=50, ge=1, le=100)
+
+
+class AdminRepoRemoteRequest(BaseModel):
+    name: str = Field(min_length=1)
+    provider: str = Field(default="github")
+    base_url: str = ""
+    token: str = ""
+    owner: str = ""
+    api_path: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminDiscoverReposFromRemoteRequest(BaseModel):
+    remote_name: str = Field(min_length=1)
+    owner: str = ""
+    api_path: str = ""
+    query: str = ""
+    page: int = Field(default=1, ge=1)
+    per_page: int = Field(default=50, ge=1, le=100)
 
 
 class AdminSyncRepoRequest(BaseModel):
@@ -317,6 +358,223 @@ def _load_admin_config(runtime: DevRuntime, store: AdminConfigStore) -> None:
         runtime.skill_registry.upsert(skill)
 
 
+def _builtin_skill_dir(config_root: Path, slug: str) -> Path:
+    parts = [part for part in slug.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        raise HTTPException(status_code=400, detail="invalid skill slug")
+    return config_root / "skills" / "builtin" / Path(*parts)
+
+
+def _read_skill_references(skill_dir: Path) -> list[dict[str, str]]:
+    references_dir = skill_dir / "references"
+    if not references_dir.is_dir():
+        return []
+    refs: list[dict[str, str]] = []
+    for path in sorted(references_dir.glob("*.md")):
+        refs.append(
+            {
+                "path": str(path.relative_to(skill_dir)),
+                "title": path.stem,
+                "content": path.read_text(encoding="utf-8"),
+            }
+        )
+    return refs
+
+
+def _join_url(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _normalize_repo_provider(provider: str) -> str:
+    value = provider.lower().strip()
+    if value == "codeup":
+        return "yunxiao"
+    if value == "generic":
+        return "custom"
+    return value or "github"
+
+
+def _default_repo_base_url(provider: str) -> str:
+    provider = _normalize_repo_provider(provider)
+    if provider == "github":
+        return "https://github.com"
+    if provider == "gitee":
+        return "https://gitee.com"
+    if provider == "yunxiao":
+        return "https://openapi-rdc.aliyuncs.com"
+    return ""
+
+
+def _repo_api_base(provider: str, base_url: str) -> str:
+    provider = _normalize_repo_provider(provider)
+    base = (base_url or _default_repo_base_url(provider)).rstrip("/")
+    if provider == "github":
+        if "api.github.com" in base:
+            return base
+        if base in {"https://github.com", "http://github.com"}:
+            return "https://api.github.com"
+        return _join_url(base, "api/v3")
+    if provider == "gitee":
+        return base if "/api/" in base else _join_url(base, "api/v5")
+    if provider == "yunxiao":
+        return "https://openapi-rdc.aliyuncs.com/oapi/v1/codeup"
+    return base
+
+
+def _repo_api_path(req: AdminDiscoverReposRequest) -> str:
+    provider = _normalize_repo_provider(req.provider)
+    if req.api_path:
+        return req.api_path
+    if provider == "github":
+        return f"/orgs/{req.owner}/repos" if req.owner else "/user/repos"
+    if provider == "gitee":
+        return f"/orgs/{req.owner}/repos" if req.owner else "/user/repos"
+    if provider == "yunxiao":
+        if not req.owner:
+            raise HTTPException(status_code=400, detail="organizationId is required for Yunxiao Codeup")
+        return f"/organizations/{req.owner}/repositories"
+    raise HTTPException(status_code=400, detail="api_path is required for this provider")
+
+
+def _repo_auth_headers(provider: str, token: str) -> dict[str, str]:
+    provider = _normalize_repo_provider(provider)
+    headers = {"Accept": "application/json"}
+    if not token:
+        return headers
+    if provider == "yunxiao":
+        headers["x-yunxiao-token"] = token
+        return headers
+    if provider == "github":
+        headers["Authorization"] = f"Bearer {token}"
+    else:
+        headers["Authorization"] = f"Bearer {token}"
+        headers["PRIVATE-TOKEN"] = token
+    return headers
+
+
+def _extract_repo_items(data: Any) -> list[Any]:
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for key in ("repositories", "repos", "items", "data", "list"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict):
+            nested = _extract_repo_items(value)
+            if nested:
+                return nested
+    return []
+
+
+def _normalize_remote_repo(provider: str, item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, dict):
+        return None
+    name = item.get("name") or item.get("path") or item.get("repoName")
+    if not name:
+        return None
+    clone_url = (
+        item.get("clone_url")
+        or item.get("httpUrlToRepo")
+        or item.get("http_url_to_repo")
+        or item.get("html_url")
+        or item.get("web_url")
+        or item.get("webUrl")
+        or item.get("ssh_url_to_repo")
+        or item.get("sshUrlToRepo")
+        or item.get("ssh_url")
+    )
+    ssh_url = item.get("ssh_url") or item.get("ssh_url_to_repo") or item.get("sshUrlToRepo")
+    namespace = item.get("namespace")
+    if isinstance(namespace, dict):
+        namespace_name = namespace.get("path") or namespace.get("name")
+    else:
+        namespace_name = None
+    full_name = (
+        item.get("full_name")
+        or item.get("fullName")
+        or item.get("pathWithNamespace")
+        or item.get("nameWithNamespace")
+        or item.get("path_with_namespace")
+    )
+    if not full_name and namespace_name:
+        full_name = f"{namespace_name}/{name}"
+    return {
+        "provider": provider,
+        "name": str(name),
+        "full_name": str(full_name or name),
+        "clone_url": str(clone_url or ""),
+        "ssh_url": str(ssh_url or ""),
+        "web_url": str(item.get("html_url") or item.get("web_url") or ""),
+        "default_branch": str(item.get("default_branch") or item.get("defaultBranch") or "main"),
+        "private": bool(item.get("private") or item.get("visibility") == "private"),
+        "raw": item,
+    }
+
+
+def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
+    provider = _normalize_repo_provider(req.provider)
+    base = _repo_api_base(provider, req.base_url)
+    url = _join_url(base, _repo_api_path(req))
+    params: dict[str, Any] = {"page": req.page, "per_page": req.per_page}
+    if provider == "gitee" and req.token:
+        params["access_token"] = req.token
+    if provider == "yunxiao":
+        params = {"page": req.page, "perPage": req.per_page}
+    with httpx.Client(timeout=10.0) as client:
+        response = client.get(url, headers=_repo_auth_headers(provider, req.token), params=params)
+        response.raise_for_status()
+        data = response.json()
+    repos = [
+        repo
+        for repo in (_normalize_remote_repo(provider, item) for item in _extract_repo_items(data))
+        if repo is not None
+    ]
+    query = req.query.strip().lower()
+    if query:
+        repos = [
+            repo
+            for repo in repos
+            if query in str(repo.get("name", "")).lower() or query in str(repo.get("full_name", "")).lower()
+        ]
+    return {"ok": True, "provider": provider, "url": url, "repos": repos, "total": len(repos)}
+
+
+def _mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return f"{value[:2]}******"
+    return f"{value[:3]}******{value[-4:]}"
+
+
+def _public_repo_remote(remote: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(remote)
+    token = str(payload.get("token") or "")
+    payload["token"] = ""
+    payload["masked_token"] = _mask_secret(token)
+    payload["has_token"] = bool(token)
+    return payload
+
+
+def _discover_repos_from_remote(store: AdminConfigStore, req: AdminDiscoverReposFromRemoteRequest) -> dict[str, Any]:
+    remote = next((item for item in store.list_repo_remotes() if item.get("name") == req.remote_name), None)
+    if remote is None:
+        raise HTTPException(status_code=404, detail="repo remote not found")
+    discover_req = AdminDiscoverReposRequest(
+        provider=str(remote.get("provider") or "github"),
+        base_url=str(remote.get("base_url") or ""),
+        token=str(remote.get("token") or ""),
+        owner=req.owner or str(remote.get("owner") or ""),
+        api_path=req.api_path or str(remote.get("api_path") or ""),
+        query=req.query,
+        page=req.page,
+        per_page=req.per_page,
+    )
+    return _discover_remote_repos(discover_req)
+
+
 def _configured_ai_provider(store: AdminConfigStore) -> dict[str, Any] | None:
     settings = store.get_settings()
     default_name = settings.get("ROOTSEEKER_DEFAULT_AI_PROVIDER")
@@ -327,6 +585,21 @@ def _configured_ai_provider(store: AdminConfigStore) -> dict[str, Any] | None:
         if item.get("api_key") and item.get("base_url"):
             return item
     return None
+
+
+def _configured_ai_model(store: AdminConfigStore, provider: dict[str, Any]) -> str:
+    return str(
+        store.get_settings().get("ROOTSEEKER_DEFAULT_AI_MODEL")
+        or provider.get("model")
+        or (provider.get("metadata", {}).get("models") or [""])[0]
+    )
+
+
+def _has_ready_ai_provider(store: AdminConfigStore) -> bool:
+    provider = _configured_ai_provider(store)
+    if provider is None:
+        return False
+    return bool(str(provider.get("base_url") or "").strip() and str(provider.get("api_key") or "").strip() and _configured_ai_model(store, provider))
 
 
 def _run_llm_analysis(
@@ -340,11 +613,7 @@ def _run_llm_analysis(
         return {"ok": False, "skipped": True, "reason": "no configured AI provider"}
     base_url = str(provider.get("base_url") or "").rstrip("/")
     api_key = str(provider.get("api_key") or "")
-    model = (
-        store.get_settings().get("ROOTSEEKER_DEFAULT_AI_MODEL")
-        or provider.get("model")
-        or (provider.get("metadata", {}).get("models") or [""])[0]
-    )
+    model = _configured_ai_model(store, provider)
     if not base_url or not api_key or not model:
         return {"ok": False, "skipped": True, "reason": "AI provider missing base_url/api_key/model"}
     config = LlmReportConfig(
@@ -383,6 +652,47 @@ def _run_llm_analysis(
     ]
     result = OpenAICompatibleReportClient(config).complete(messages)
     return result.to_payload(include_content=True, include_raw=True)
+
+
+def _run_and_store_llm_analysis(
+    *,
+    store: AdminConfigStore,
+    history_store: ErrorChatHistoryStore,
+    item_id: str,
+    content: str,
+    flow_result: Any,
+) -> None:
+    ai_analysis = _run_llm_analysis(store=store, content=content, flow_result=flow_result)
+    history_store.update(item_id, {"ai_analysis": ai_analysis})
+
+
+def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
+    trace = build_execution_trace(
+        case_id=result.case.case_id,
+        skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",
+        flow_id="builtin.default_log_triage_flow",
+        case_steps=result.case.steps,
+    )
+    runtime.flow_checkpoint_store.save(
+        trace.execution_id,
+        {
+            "case_id": result.case.case_id,
+            "flow_id": trace.flow_id,
+            "skill_slug": trace.skill_slug,
+            "status": "completed",
+            "next_step_index": len(trace.steps),
+            "steps": [
+                {
+                    "step_id": step.step_id,
+                    "name": step.name,
+                    "status": step.status.value,
+                    "tool_name": step.tool_name,
+                }
+                for step in trace.steps
+            ],
+        },
+    )
+    return trace.execution_id
 
 
 def create_app(repo_root: Path | None = None) -> FastAPI:
@@ -634,7 +944,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         return {"items": items, "total": len(items)}
 
     @app.post("/api/error-chat")
-    def submit_error_chat(req: AdminErrorChatSubmitRequest) -> dict[str, Any]:
+    def submit_error_chat(req: AdminErrorChatSubmitRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         started = time.perf_counter()
         result = runtime.run_default_flow_from_payload(
             {
@@ -650,7 +960,11 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             }
         )
         flow_elapsed_ms = int((time.perf_counter() - started) * 1000)
-        ai_analysis = _run_llm_analysis(store=store, content=req.content, flow_result=result)
+        flow_run_id = _save_default_flow_checkpoint(runtime, result)
+        if _has_ready_ai_provider(store):
+            ai_analysis = {"ok": False, "pending": True, "reason": "AI analysis is running"}
+        else:
+            ai_analysis = _run_llm_analysis(store=store, content=req.content, flow_result=result)
         item = history_store.append(
             {
                 "role": "user",
@@ -658,13 +972,25 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
                 "request": req.model_dump(mode="json"),
                 "case": result.case.model_dump(mode="json"),
                 "report": result.report.model_dump(mode="json"),
+                "flow_run_id": flow_run_id,
                 "evidence_count": len(result.evidence_pack.items),
+                "evidence_summary": result.evidence_pack.summary,
+                "evidence_items": [evidence.model_dump(mode="json") for evidence in result.evidence_pack.items],
                 "flow_elapsed_ms": flow_elapsed_ms,
                 "ai_analysis": ai_analysis,
                 "tool_results": [tool.model_dump(mode="json") for tool in result.tool_results],
             }
         )
-        return {"ok": True, "item": item, "items": history_store.list_items()}
+        if ai_analysis.get("pending"):
+            background_tasks.add_task(
+                _run_and_store_llm_analysis,
+                store=store,
+                history_store=history_store,
+                item_id=str(item["id"]),
+                content=req.content,
+                flow_result=result,
+            )
+        return {"ok": True, "item": item}
 
     @app.delete("/api/error-chat")
     def clear_error_chat() -> dict[str, Any]:
@@ -675,6 +1001,32 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     def list_skills() -> dict[str, Any]:
         items = [skill.model_dump(mode="json") for skill in runtime.skill_registry.list_skills()]
         return {"items": items, "total": len(items)}
+
+    @app.get("/api/skills/{slug:path}/content")
+    def get_skill_content(slug: str) -> dict[str, Any]:
+        skill = runtime.skill_registry.get(slug)
+        if skill is None:
+            raise HTTPException(status_code=404, detail="skill not found")
+        if skill.source_kind != SkillSourceKind.BUILTIN:
+            return {
+                "slug": slug,
+                "source_kind": skill.source_kind.value,
+                "skill_md": "",
+                "runtime_spec": skill.model_dump(mode="json"),
+            }
+        skill_dir = _builtin_skill_dir(config_root, slug)
+        skill_path = skill_dir / "SKILL.md"
+        sidecar_path = skill_dir / ROOTSEEKER_SKILL_SPEC_FILENAME
+        if not skill_path.exists():
+            raise HTTPException(status_code=404, detail="SKILL.md not found")
+        return {
+            "slug": slug,
+            "source_kind": skill.source_kind.value,
+            "skill_md": skill_path.read_text(encoding="utf-8"),
+            "rootseeker_skill_yaml": sidecar_path.read_text(encoding="utf-8") if sidecar_path.exists() else "",
+            "references": _read_skill_references(skill_dir),
+            "runtime_spec": skill.model_dump(mode="json"),
+        }
 
     @app.get("/api/skills/{slug:path}")
     def get_skill(slug: str) -> dict[str, Any]:
@@ -729,16 +1081,79 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     def list_repos(state: str | None = None) -> dict[str, Any]:
         return _invoke_admin_tool(runtime, "repo.list", {"state": state} if state else {})
 
+    @app.get("/api/repo-remotes")
+    def list_repo_remotes() -> dict[str, Any]:
+        items = [_public_repo_remote(item) for item in store.list_repo_remotes()]
+        return {"items": items, "total": len(items)}
+
+    @app.post("/api/repo-remotes")
+    def upsert_repo_remote(req: AdminRepoRemoteRequest) -> dict[str, Any]:
+        existing = next((item for item in store.list_repo_remotes() if item.get("name") == req.name), {})
+        token = req.token or str(existing.get("token") or "")
+        payload = req.model_dump(mode="json")
+        payload["provider"] = _normalize_repo_provider(str(payload.get("provider") or "github"))
+        payload["base_url"] = payload.get("base_url") or _default_repo_base_url(str(payload["provider"]))
+        remote = store.upsert_repo_remote({**payload, "token": token})
+        return {"ok": True, "remote": _public_repo_remote(remote)}
+
+    @app.delete("/api/repo-remotes/{name}")
+    def delete_repo_remote(name: str) -> dict[str, Any]:
+        store.delete_repo_remote(name)
+        return {"ok": True, "name": name}
+
+    @app.post("/api/repos/discover")
+    def discover_repos(req: AdminDiscoverReposFromRemoteRequest) -> dict[str, Any]:
+        try:
+            return _discover_repos_from_remote(store, req)
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=e.response.text) from e
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
     @app.post("/api/repos")
     def register_repo(req: AdminRegisterRepoRequest) -> dict[str, Any]:
         result = _invoke_admin_tool(
             runtime,
             "repo.register",
-            {"name": req.name, "url": req.url, "branch": req.branch, "metadata": req.metadata},
+            {
+                "name": req.name,
+                "url": req.url,
+                "branch": req.branch,
+                "local_path": req.local_path,
+                "metadata": req.metadata,
+            },
         )
         repo_payload = result.get("repo")
         if isinstance(repo_payload, dict):
             store.upsert_repo(RepositoryRef.model_validate(repo_payload))
+        return result
+
+    @app.post("/api/repos/import-local")
+    def import_local_repo(req: AdminImportLocalRepoRequest) -> dict[str, Any]:
+        local_path = Path(req.path).expanduser().resolve()
+        if not local_path.is_dir():
+            raise HTTPException(status_code=400, detail="local path is not a directory")
+        if not (local_path / ".git").exists():
+            raise HTTPException(status_code=400, detail="local path is not a git repository")
+        name = req.name or local_path.name
+        metadata = {"source": "local", **req.metadata}
+        result = _invoke_admin_tool(
+            runtime,
+            "repo.register",
+            {
+                "name": name,
+                "url": None,
+                "branch": req.branch,
+                "local_path": str(local_path),
+                "metadata": metadata,
+            },
+        )
+        repo_payload = result.get("repo")
+        if isinstance(repo_payload, dict):
+            store.upsert_repo(RepositoryRef.model_validate(repo_payload))
+        if req.trigger_index:
+            sync_result = _invoke_admin_tool(runtime, "repo.sync", {"name": name, "trigger_index": True})
+            return {"ok": bool(result.get("ok")) and bool(sync_result.get("ok")), "repo": repo_payload, "sync": sync_result}
         return result
 
     @app.get("/api/repos/{repo_name}")

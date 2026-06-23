@@ -22,6 +22,9 @@ class ErrorChatHistoryStore(Protocol):
     def append(self, item: dict[str, Any]) -> dict[str, Any]:
         ...
 
+    def update(self, item_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        ...
+
     def clear(self) -> None:
         ...
 
@@ -55,6 +58,17 @@ class FileErrorChatHistoryStore:
         data.setdefault("items", []).append(payload)
         self._save(data)
         return payload
+
+    def update(self, item_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        data = self._load()
+        items = data.setdefault("items", [])
+        for index, item in enumerate(items):
+            if item.get("id") == item_id:
+                updated = {**item, **patch}
+                items[index] = updated
+                self._save(data)
+                return updated
+        return None
 
     def clear(self) -> None:
         self._save({"items": []})
@@ -96,6 +110,21 @@ class SqliteErrorChatHistoryStore:
             conn.execute(
                 "INSERT OR REPLACE INTO error_chat_history (id, created_at, payload) VALUES (?, ?, ?)",
                 (payload["id"], payload["created_at"], json.dumps(payload, ensure_ascii=False)),
+            )
+        return payload
+
+    def update(self, item_id: str, patch: dict[str, Any]) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM error_chat_history WHERE id = ?",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            payload = {**json.loads(row[0]), **patch}
+            conn.execute(
+                "UPDATE error_chat_history SET payload = ? WHERE id = ?",
+                (json.dumps(payload, ensure_ascii=False), item_id),
             )
         return payload
 

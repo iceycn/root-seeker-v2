@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from mcp_servers.internal.adapters import InternalToolAdapter
+from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.tool import ToolPermissionLevel, ToolScope, ToolSpec
 from rootseeker.mcp_plane.registry import ToolRegistry
 from rootseeker.service_catalog.memory_catalog import MemoryServiceCatalog
@@ -16,6 +18,36 @@ def register_internal_tools(
     adapter: InternalToolAdapter,
 ) -> MemoryServiceCatalog:
     """Register internal MCP handlers backed by an adapter."""
+
+    def _invoke_incident_normalize(args: dict[str, Any]) -> dict[str, Any]:
+        payload = args.get("payload")
+        if not isinstance(payload, dict):
+            payload = dict(args)
+        case_request = webhook_payload_to_case_create(payload)
+        metadata = dict(case_request.metadata)
+        extracted = {
+            "service_name": case_request.service_name,
+            "tenant": metadata.get("tenant"),
+            "environment": metadata.get("environment"),
+            "trace_id": metadata.get("trace_id"),
+            "symptom": case_request.symptom,
+            "source": case_request.source,
+            "severity": metadata.get("severity"),
+            "time_window": metadata.get("time_window") or metadata.get("start_time") or metadata.get("end_time"),
+            "code_path": metadata.get("code_path") or _extract_code_path(case_request.symptom),
+            "code_symbol": metadata.get("code_symbol"),
+        }
+        missing_fields = [
+            field
+            for field in ("service_name", "tenant", "environment", "trace_id", "symptom", "source", "time_window")
+            if not extracted.get(field) or extracted.get(field) in {"unknown", "unknown-service"}
+        ]
+        return {
+            "case_request": case_request.model_dump(mode="json"),
+            "extracted": extracted,
+            "missing_fields": missing_fields,
+            "notes": "缺失字段仅表示未知输入，不代表系统健康。",
+        }
 
     def _invoke_catalog_resolve(args: dict[str, Any]) -> dict[str, Any]:
         tenant = str(args.get("tenant", "demo"))
@@ -107,6 +139,16 @@ def register_internal_tools(
     server = "internal"
 
     tools: list[tuple[ToolSpec, Any]] = [
+        (
+            ToolSpec(
+                name="incident.normalize",
+                description="Normalize inbound alert payload into incident triage fields",
+                server_name=server,
+                scope=internal,
+                tags=["incident", "alert"],
+            ),
+            _invoke_incident_normalize,
+        ),
         (
             ToolSpec(
                 name="catalog.resolve_service",
@@ -341,3 +383,8 @@ def register_internal_tools(
     if isinstance(mem, MemoryServiceCatalog):
         return mem
     return MemoryServiceCatalog.seeded_default()
+
+
+def _extract_code_path(symptom: str) -> str | None:
+    match = re.search(r"([A-Za-z0-9_./-]+\.(?:java|kt|py|go|ts|tsx|js|jsx|cs|rb|php|scala|rs|cpp|c|h))(?::\d+)?", symptom)
+    return match.group(1) if match else None

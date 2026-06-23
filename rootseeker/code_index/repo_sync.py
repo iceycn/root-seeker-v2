@@ -138,11 +138,13 @@ class RepoSyncService:
                 message=f"Repository not found: {repo_name}",
             )
 
-        if not repo.url:
+        local_path = Path(repo.local_path) if repo.local_path else self.base_path / repo.name
+        is_local_repo = local_path.exists() and (local_path / ".git").exists()
+        if not repo.url and not is_local_repo:
             return RepoSyncResult(
                 repo=repo,
                 success=False,
-                message="Repository URL is required for sync",
+                message="Repository URL is required for sync unless local_path points to a git repository",
             )
 
         # 更新状态为同步中
@@ -150,10 +152,11 @@ class RepoSyncService:
         repo.sync_status.error_message = None
 
         try:
-            local_path = Path(repo.local_path) if repo.local_path else self.base_path / repo.name
             branch = repo.default_branch or "main"
 
-            if local_path.exists() and (local_path / ".git").exists():
+            if is_local_repo and not repo.url:
+                commit_hash = self._get_commit_hash(local_path)
+            elif local_path.exists() and (local_path / ".git").exists():
                 # 执行 git pull
                 commit_hash = self._git_pull(local_path, branch)
             else:

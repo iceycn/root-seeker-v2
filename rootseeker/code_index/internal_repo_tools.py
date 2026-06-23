@@ -28,6 +28,7 @@ def repo_register_tool(service: RepoSyncService, args: dict[str, Any]) -> dict[s
         name=str(name),
         url=args.get("url"),
         default_branch=args.get("branch", "main"),
+        local_path=args.get("local_path"),
         metadata=args.get("metadata", {}),
     )
     service.register(repo)

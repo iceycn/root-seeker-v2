@@ -3,6 +3,7 @@ import {
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
+  EyeOutlined,
   FolderOpenOutlined,
   HeartOutlined,
   KeyOutlined,
@@ -36,8 +37,10 @@ import {
   message,
 } from 'antd'
 import type { MenuProps } from 'antd'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
+
+type ApiRecord = Record<string, unknown>
 
 type AiProvider = {
   name: string
@@ -59,6 +62,150 @@ type AiProvider = {
   }
 }
 
+type StatusData = ApiRecord & {
+  skills_total?: number
+  plugins_total?: number
+  repos?: { total?: number }
+  index?: { total?: number }
+}
+
+type SkillRecord = ApiRecord & {
+  slug: string
+  name?: string
+  description?: string
+  tags?: string[]
+  triggers?: string[]
+  required_tools?: string[]
+  steps?: ApiRecord[]
+  version?: string
+  source_kind?: string
+  metadata?: ApiRecord
+}
+
+type SkillReference = {
+  path: string
+  title?: string
+  content: string
+}
+
+type SkillContent = ApiRecord & {
+  slug: string
+  source_kind?: string
+  skill_md?: string
+  rootseeker_skill_yaml?: string
+  references?: SkillReference[]
+  runtime_spec?: SkillRecord
+}
+
+type PluginRecord = ApiRecord & {
+  plugin_id: string
+  display_name?: string
+  kind?: string
+}
+
+type ToolRecord = ApiRecord & {
+  name: string
+  scope?: string
+  server_name?: string
+}
+
+type RepoRecord = ApiRecord & {
+  name: string
+  url?: string
+  local_path?: string
+  default_branch?: string
+  sync_status?: { state?: string }
+  metadata?: ApiRecord
+}
+
+type RemoteRepoRecord = ApiRecord & {
+  provider: string
+  name: string
+  full_name: string
+  clone_url?: string
+  ssh_url?: string
+  web_url?: string
+  default_branch?: string
+  private?: boolean
+}
+
+type RepoRemoteRecord = ApiRecord & {
+  name: string
+  provider: string
+  base_url: string
+  owner?: string
+  api_path?: string
+  has_token?: boolean
+  masked_token?: string
+}
+
+type CatalogRecord = ApiRecord & {
+  tenant: string
+  environment: string
+  service_name: string
+  display_name?: string
+  owner_team?: string
+  language?: string
+}
+
+type CallbackRecord = ApiRecord & {
+  name: string
+  channel?: string
+  url?: string
+  team?: string
+}
+
+type EnvVarRecord = ApiRecord & {
+  key: string
+  value?: string
+  masked_value?: string
+  scope?: string
+  secret?: boolean
+}
+
+type ErrorChatCase = ApiRecord & {
+  case_id?: string
+  title?: string
+  status?: string
+  service_name?: string
+  steps?: ApiRecord[]
+}
+
+type ErrorChatEvidence = ApiRecord & {
+  item_id: string
+  type?: string
+  source?: string
+  content?: ApiRecord
+  collected_at?: string
+}
+
+type ErrorChatResult = ApiRecord & {
+  id?: string
+  content: string
+  created_at?: string
+  request?: ApiRecord
+  case?: ErrorChatCase
+  flow_run_id?: string
+  evidence_count?: number
+  evidence_summary?: string
+  evidence_items?: ErrorChatEvidence[]
+  flow_elapsed_ms?: number
+  report?: ApiRecord & {
+    root_cause?: { title?: string }
+  }
+  ai_analysis?: {
+    ok?: boolean
+    pending?: boolean
+    provider?: string
+    model?: string
+    elapsed_ms?: number
+    reason?: string
+    error?: string
+    content?: string
+  }
+  tool_results?: unknown[]
+}
+
 const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
@@ -78,6 +225,14 @@ const maskKey = (key?: string) => {
 
 const providerDisplay = (provider: AiProvider) =>
   provider.metadata?.display_name || provider.name
+
+const repoRemoteDefaultBaseUrl: Record<string, string> = {
+  github: 'https://github.com',
+  gitee: 'https://gitee.com',
+  yunxiao: 'https://openapi-rdc.aliyuncs.com',
+  custom: '',
+  generic: '',
+}
 
 const pathToView: Record<string, string> = {
   '/': 'models',
@@ -111,24 +266,38 @@ function App() {
   const [providers, setProviders] = useState<AiProvider[]>([])
   const [defaultProvider, setDefaultProvider] = useState<string | null>(null)
   const [defaultModel, setDefaultModel] = useState<string | null>(null)
-  const [statusData, setStatusData] = useState<any>(null)
-  const [skills, setSkills] = useState<any[]>([])
-  const [plugins, setPlugins] = useState<any[]>([])
-  const [tools, setTools] = useState<any[]>([])
-  const [repos, setRepos] = useState<any[]>([])
-  const [catalogItems, setCatalogItems] = useState<any[]>([])
-  const [callbacksData, setCallbacksData] = useState<any[]>([])
+  const [statusData, setStatusData] = useState<StatusData | null>(null)
+  const [skills, setSkills] = useState<SkillRecord[]>([])
+  const [skillEditorOpen, setSkillEditorOpen] = useState(false)
+  const [skillEditorLoading, setSkillEditorLoading] = useState(false)
+  const [skillEditorReadOnly, setSkillEditorReadOnly] = useState(false)
+  const [skillSpecText, setSkillSpecText] = useState('')
+  const [selectedSkillContent, setSelectedSkillContent] = useState<SkillContent | null>(null)
+  const [selectedSkill, setSelectedSkill] = useState<SkillRecord | null>(null)
+  const [plugins, setPlugins] = useState<PluginRecord[]>([])
+  const [tools, setTools] = useState<ToolRecord[]>([])
+  const [repos, setRepos] = useState<RepoRecord[]>([])
+  const [repoRemotes, setRepoRemotes] = useState<RepoRemoteRecord[]>([])
+  const [remoteRepos, setRemoteRepos] = useState<RemoteRepoRecord[]>([])
+  const [selectedRemoteRepoKeys, setSelectedRemoteRepoKeys] = useState<string[]>([])
+  const [catalogItems, setCatalogItems] = useState<CatalogRecord[]>([])
+  const [callbacksData, setCallbacksData] = useState<CallbackRecord[]>([])
   const [settingsData, setSettingsData] = useState<Record<string, unknown>>({})
-  const [envVars, setEnvVars] = useState<any[]>([])
+  const [envVars, setEnvVars] = useState<EnvVarRecord[]>([])
   const [providerModalOpen, setProviderModalOpen] = useState(false)
+  const [repoRemoteModalOpen, setRepoRemoteModalOpen] = useState(false)
   const [envModalOpen, setEnvModalOpen] = useState(false)
   const [runtimeModalOpen, setRuntimeModalOpen] = useState(false)
   const [editingProvider, setEditingProvider] = useState<AiProvider | null>(null)
+  const [editingRepoRemote, setEditingRepoRemote] = useState<RepoRemoteRecord | null>(null)
   const [editingRuntimeKey, setEditingRuntimeKey] = useState<string | null>(null)
   const [models, setModels] = useState<string[]>([])
   const [disabledModels, setDisabledModels] = useState<string[]>([])
   const [form] = Form.useForm()
   const [repoForm] = Form.useForm()
+  const [repoRemoteForm] = Form.useForm()
+  const [remoteRepoForm] = Form.useForm()
+  const [localRepoForm] = Form.useForm()
   const [catalogForm] = Form.useForm()
   const [callbackForm] = Form.useForm()
   const [skillForm] = Form.useForm()
@@ -137,11 +306,11 @@ function App() {
   const [envForm] = Form.useForm()
   const [runtimeForm] = Form.useForm()
   const [semanticResult, setSemanticResult] = useState<unknown>(null)
-  const [errorChatItems, setErrorChatItems] = useState<any[]>([])
+  const [errorChatItems, setErrorChatItems] = useState<ErrorChatResult[]>([])
   const [errorChatInput, setErrorChatInput] = useState('')
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [errorChatSubmitting, setErrorChatSubmitting] = useState(false)
-  const [errorChatResult, setErrorChatResult] = useState<any>(null)
+  const [errorChatResult, setErrorChatResult] = useState<ErrorChatResult | null>(null)
   const [apiMessage, contextHolder] = message.useMessage()
 
   const navigateTo = (view: string) => {
@@ -165,39 +334,47 @@ function App() {
     advanced: { title: '高级设置', desc: '管理 Skill/MCP 运行时环境变量与 RootSeeker 运行时配置。' },
   }
 
-  const loadProviders = async () => {
+  const loadProviders = useCallback(async () => {
     const data = await api<{ items: AiProvider[]; default_provider: string | null; default_model?: string | null }>('/api/ai-providers')
     setProviders(data.items)
     setDefaultProvider(data.default_provider)
     setDefaultModel(data.default_model || null)
-  }
-
-  useEffect(() => {
-    loadProviders().catch((error) => apiMessage.error(String(error)))
-    const onPopState = () => setActive(pathToView[window.location.pathname] || 'models')
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
   useEffect(() => {
-    if (active === 'overview') api<any>('/api/status').then(setStatusData).catch((e) => apiMessage.error(String(e)))
-    if (active === 'skills') api<any>('/api/skills').then((d) => setSkills(d.items || [])).catch((e) => apiMessage.error(String(e)))
-    if (active === 'plugins') {
-      api<any>('/api/plugins').then((d) => setPlugins(d.items || [])).catch((e) => apiMessage.error(String(e)))
-      api<any>('/api/tools').then((d) => setTools(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    const loadTimer = window.setTimeout(() => {
+      loadProviders().catch((error) => apiMessage.error(String(error)))
+    }, 0)
+    const onPopState = () => setActive(pathToView[window.location.pathname] || 'models')
+    window.addEventListener('popstate', onPopState)
+    return () => {
+      window.clearTimeout(loadTimer)
+      window.removeEventListener('popstate', onPopState)
     }
-    if (active === 'repos') api<any>('/api/repos').then((d) => setRepos(d.repos || [])).catch((e) => apiMessage.error(String(e)))
-    if (active === 'catalog') api<any>('/api/catalog').then((d) => setCatalogItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
-    if (active === 'callbacks') api<any>('/api/callbacks').then((d) => setCallbacksData(d.items || [])).catch((e) => apiMessage.error(String(e)))
-    if (active === 'errorChat') api<any>('/api/error-chat').then((d) => setErrorChatItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
+  }, [apiMessage, loadProviders])
+
+  useEffect(() => {
+    if (active === 'overview') api<StatusData>('/api/status').then(setStatusData).catch((e) => apiMessage.error(String(e)))
+    if (active === 'skills') api<{ items: SkillRecord[] }>('/api/skills').then((d) => setSkills(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    if (active === 'plugins') {
+      api<{ items: PluginRecord[] }>('/api/plugins').then((d) => setPlugins(d.items || [])).catch((e) => apiMessage.error(String(e)))
+      api<{ items: ToolRecord[] }>('/api/tools').then((d) => setTools(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    }
+    if (active === 'repos') {
+      api<{ repos: RepoRecord[] }>('/api/repos').then((d) => setRepos(d.repos || [])).catch((e) => apiMessage.error(String(e)))
+      api<{ items: RepoRemoteRecord[] }>('/api/repo-remotes').then((d) => setRepoRemotes(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    }
+    if (active === 'catalog') api<{ items: CatalogRecord[] }>('/api/catalog').then((d) => setCatalogItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    if (active === 'callbacks') api<{ items: CallbackRecord[] }>('/api/callbacks').then((d) => setCallbacksData(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    if (active === 'errorChat') api<{ items: ErrorChatResult[] }>('/api/error-chat').then((d) => setErrorChatItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
     if (active === 'advanced') {
-      api<any>('/api/settings').then((d) => {
+      api<{ settings: Record<string, unknown> }>('/api/settings').then((d) => {
         setSettingsData(d.settings || {})
         runtimeForm.setFieldsValue(d.settings || {})
       }).catch((e) => apiMessage.error(String(e)))
-      api<any>('/api/env-vars').then((d) => setEnvVars(d.items || [])).catch((e) => apiMessage.error(String(e)))
+      api<{ items: EnvVarRecord[] }>('/api/env-vars').then((d) => setEnvVars(d.items || [])).catch((e) => apiMessage.error(String(e)))
     }
-  }, [active])
+  }, [active, apiMessage, runtimeForm])
 
   const builtinProviders = useMemo(
     () => providers.filter((provider) => provider.builtin && !provider.api_key),
@@ -285,14 +462,106 @@ function App() {
   }
 
   const refreshRepos = async () => {
-    const data = await api<{ repos: any[] }>('/api/repos')
+    const data = await api<{ repos: RepoRecord[] }>('/api/repos')
     setRepos(data.repos || [])
+  }
+
+  const refreshRepoRemotes = async () => {
+    const data = await api<{ items: RepoRemoteRecord[] }>('/api/repo-remotes')
+    setRepoRemotes(data.items || [])
+  }
+
+  const openRepoRemoteModal = (remote?: RepoRemoteRecord) => {
+    setEditingRepoRemote(remote || null)
+    setRepoRemoteModalOpen(true)
+    repoRemoteForm.setFieldsValue(
+      remote
+        ? { ...remote, token: '' }
+        : { provider: 'github', base_url: repoRemoteDefaultBaseUrl.github },
+    )
+  }
+
+  const saveRepoRemote = async () => {
+    const values = await repoRemoteForm.validateFields()
+    await api('/api/repo-remotes', { method: 'POST', body: JSON.stringify(values) })
+    apiMessage.success('远端源已保存')
+    setRepoRemoteModalOpen(false)
+    setEditingRepoRemote(null)
+    repoRemoteForm.resetFields()
+    await refreshRepoRemotes()
+  }
+
+  const deleteRepoRemote = async (name: string) => {
+    await api(`/api/repo-remotes/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    apiMessage.success('远端源已删除')
+    await refreshRepoRemotes()
   }
 
   const registerRepo = async () => {
     const values = await repoForm.validateFields()
     await api('/api/repos', { method: 'POST', body: JSON.stringify(values) })
     apiMessage.success('仓库已注册')
+    await refreshRepos()
+  }
+
+  const discoverRemoteRepos = async () => {
+    const values = await remoteRepoForm.validateFields()
+    const data = await api<{ repos: RemoteRepoRecord[] }>('/api/repos/discover', {
+      method: 'POST',
+      body: JSON.stringify(values),
+    })
+    setRemoteRepos(data.repos || [])
+    setSelectedRemoteRepoKeys([])
+    apiMessage.success(`发现 ${data.repos?.length || 0} 个仓库`)
+  }
+
+  const importRemoteRepoRecords = async (selected: RemoteRepoRecord[]) => {
+    const values = await remoteRepoForm.validateFields()
+    const remote = repoRemotes.find((item) => item.name === values.remote_name)
+    if (!selected.length) {
+      apiMessage.warning('请先选择要导入的远端仓库')
+      return
+    }
+    for (const repo of selected) {
+      const name = repo.full_name.replace(/[/:]+/g, '__')
+      await api('/api/repos', {
+        method: 'POST',
+        body: JSON.stringify({
+          name,
+          url: repo.clone_url || repo.ssh_url || repo.web_url,
+          branch: repo.default_branch || 'main',
+          metadata: {
+            source: 'remote',
+            provider: repo.provider,
+            full_name: repo.full_name,
+            remote_name: remote?.name || values.remote_name,
+            remote_base_url: remote?.base_url,
+            web_url: repo.web_url,
+          },
+        }),
+      })
+      if (values.trigger_sync) {
+        await api(`/api/repos/${encodeURIComponent(name)}/sync`, {
+          method: 'POST',
+          body: JSON.stringify({ trigger_index: true }),
+        })
+      }
+    }
+    apiMessage.success(`已导入 ${selected.length} 个仓库`)
+    await refreshRepos()
+  }
+
+  const importSelectedRemoteRepos = async () => {
+    await importRemoteRepoRecords(remoteRepos.filter((repo) => selectedRemoteRepoKeys.includes(repo.full_name)))
+  }
+
+  const importLocalRepo = async () => {
+    const values = await localRepoForm.validateFields()
+    await api('/api/repos/import-local', {
+      method: 'POST',
+      body: JSON.stringify(values),
+    })
+    apiMessage.success('本地仓库已导入')
     await refreshRepos()
   }
 
@@ -312,7 +581,7 @@ function App() {
   }
 
   const refreshCatalog = async () => {
-    const data = await api<{ items: any[] }>('/api/catalog')
+    const data = await api<{ items: CatalogRecord[] }>('/api/catalog')
     setCatalogItems(data.items || [])
   }
 
@@ -329,14 +598,14 @@ function App() {
     await refreshCatalog()
   }
 
-  const deleteCatalog = async (record: any) => {
+  const deleteCatalog = async (record: CatalogRecord) => {
     await api(`/api/catalog/${record.tenant}/${record.environment}/${encodeURIComponent(record.service_name)}`, { method: 'DELETE' })
     apiMessage.success('服务已删除')
     await refreshCatalog()
   }
 
   const refreshCallbacks = async () => {
-    const data = await api<{ items: any[] }>('/api/callbacks')
+    const data = await api<{ items: CallbackRecord[] }>('/api/callbacks')
     setCallbacksData(data.items || [])
   }
 
@@ -359,18 +628,99 @@ function App() {
     await refreshCallbacks()
   }
 
+  const refreshSkills = async () => {
+    const data = await api<{ items: SkillRecord[] }>('/api/skills')
+    setSkills(data.items || [])
+  }
+
   const saveQuickSkill = async () => {
     const values = await skillForm.validateFields()
     await api('/api/skills/quick', { method: 'POST', body: JSON.stringify(values) })
     apiMessage.success('Skill 已保存')
-    const data = await api<{ items: any[] }>('/api/skills')
-    setSkills(data.items || [])
+    await refreshSkills()
+  }
+
+  const openSkillEditor = async (record: SkillRecord, readOnly = false) => {
+    setSelectedSkill(record)
+    setSelectedSkillContent(null)
+    setSkillEditorReadOnly(readOnly)
+    setSkillEditorOpen(true)
+    setSkillEditorLoading(true)
+    try {
+      if (readOnly) {
+        const detail = await api<SkillContent>(`/api/skills/${encodeURIComponent(record.slug)}/content`)
+        setSelectedSkillContent(detail)
+        if (detail.runtime_spec) setSelectedSkill(detail.runtime_spec)
+        setSkillSpecText(detail.skill_md || '')
+      } else {
+        const detail = await api<SkillRecord>(`/api/skills/${encodeURIComponent(record.slug)}`)
+        setSelectedSkill(detail)
+        setSkillSpecText(JSON.stringify(detail, null, 2))
+      }
+    } finally {
+      setSkillEditorLoading(false)
+    }
+  }
+
+  const saveSkillSpec = async () => {
+    if (skillEditorReadOnly) return
+    let spec: SkillRecord
+    try {
+      spec = JSON.parse(skillSpecText) as SkillRecord
+    } catch {
+      apiMessage.error('SkillSpec JSON 格式不正确')
+      return
+    }
+    if (!spec.slug || !spec.name) {
+      apiMessage.error('SkillSpec 必须包含 name 和 slug')
+      return
+    }
+    setSkillEditorLoading(true)
+    try {
+      await api('/api/skills', { method: 'PUT', body: JSON.stringify({ spec }) })
+      apiMessage.success('Skill 已更新')
+      setSkillEditorOpen(false)
+      await refreshSkills()
+    } finally {
+      setSkillEditorLoading(false)
+    }
+  }
+
+  const deleteSkill = async (record: SkillRecord) => {
+    Modal.confirm({
+      title: `删除 Skill：${record.slug}`,
+      content: '删除后会从当前运行时和管理端配置中移除。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        await api(`/api/skills/${encodeURIComponent(record.slug)}`, { method: 'DELETE' })
+        apiMessage.success('Skill 已删除')
+        await refreshSkills()
+      },
+    })
   }
 
   const runSemanticSearch = async () => {
     const values = await semanticForm.validateFields()
     const data = await api('/api/code/semantic-search', { method: 'POST', body: JSON.stringify(values) })
     setSemanticResult(data)
+  }
+
+  const pollErrorChatAnalysis = (itemId: string, attempt = 0) => {
+    if (attempt >= 30) return
+    window.setTimeout(() => {
+      api<{ items: ErrorChatResult[] }>('/api/error-chat')
+        .then((data) => {
+          const items = data.items || []
+          setErrorChatItems(items)
+          const updated = items.find((item) => item.id === itemId)
+          if (!updated) return
+          setErrorChatResult((current) => (current?.id === itemId ? updated : current))
+          if (updated.ai_analysis?.pending) pollErrorChatAnalysis(itemId, attempt + 1)
+        })
+        .catch((error) => apiMessage.error(String(error)))
+    }, 2000)
   }
 
   const submitErrorChat = async () => {
@@ -382,14 +732,15 @@ function App() {
     }
     setErrorChatSubmitting(true)
     try {
-      const data = await api<{ item: any; items: any[] }>('/api/error-chat', {
+      const data = await api<{ item: ErrorChatResult }>('/api/error-chat', {
         method: 'POST',
         body: JSON.stringify({ ...formValues, content }),
       })
-      setErrorChatItems(data.items || [])
+      setErrorChatItems((items) => [...items, data.item])
       setErrorChatResult(data.item)
       setErrorChatInput('')
       apiMessage.success('排查流程已完成')
+      if (data.item.id && data.item.ai_analysis?.pending) pollErrorChatAnalysis(data.item.id)
     } finally {
       setErrorChatSubmitting(false)
     }
@@ -403,7 +754,7 @@ function App() {
   }
 
   const refreshEnvVars = async () => {
-    const data = await api<{ items: any[] }>('/api/env-vars')
+    const data = await api<{ items: EnvVarRecord[] }>('/api/env-vars')
     setEnvVars(data.items || [])
   }
 
@@ -434,7 +785,7 @@ function App() {
     setEditingRuntimeKey(null)
   }
 
-  const openEnvModal = (record?: any) => {
+  const openEnvModal = (record?: EnvVarRecord) => {
     envForm.setFieldsValue(record || { scope: 'runtime', secret: false })
     setEnvModalOpen(true)
   }
@@ -587,17 +938,173 @@ function App() {
       )
     }
     if (active === 'skills') {
+      const systemSkills = skills.filter((skill) => skill.source_kind === 'builtin')
+      const userSkills = skills.filter((skill) => skill.source_kind !== 'builtin')
+      const renderSkillDetails = (record: SkillRecord) => (
+        <Space direction="vertical" size={8} style={{ width: '100%' }}>
+          <Typography.Paragraph style={{ marginBottom: 0 }}>{record.description || '暂无描述'}</Typography.Paragraph>
+          <Space wrap>
+            {(record.tags || []).map((tag) => <Tag key={tag}>{tag}</Tag>)}
+          </Space>
+          <Typography.Text type="secondary">Triggers：{(record.triggers || []).join(', ') || '-'}</Typography.Text>
+          <Typography.Text type="secondary">Required Tools：{(record.required_tools || []).join(', ') || '-'}</Typography.Text>
+          <Table
+            size="small"
+            pagination={false}
+            rowKey={(step) => String(step.step_id || step.action)}
+            dataSource={record.steps || []}
+            columns={[
+              { title: '步骤', dataIndex: 'name' },
+              { title: 'Action', dataIndex: 'action' },
+              {
+                title: '子技能说明',
+                render: (_: unknown, step: ApiRecord) => {
+                  const metadata = step.metadata as ApiRecord | undefined
+                  return metadata?.reference ? <Tag>{String(metadata.reference)}</Tag> : '-'
+                },
+              },
+            ]}
+          />
+        </Space>
+      )
+      const skillColumns = (readOnly: boolean) => [
+        { title: 'Slug', dataIndex: 'slug' },
+        { title: '名称', dataIndex: 'name' },
+        { title: '版本', dataIndex: 'version' },
+        { title: '来源', dataIndex: 'source_kind' },
+        { title: '步骤', render: (_: unknown, record: SkillRecord) => record.steps?.length ?? 0 },
+        {
+          title: '操作',
+          render: (_: unknown, record: SkillRecord) => (
+            <Space>
+              <Button icon={readOnly ? <EyeOutlined /> : <EditOutlined />} onClick={() => openSkillEditor(record, readOnly)}>
+                {readOnly ? '查看' : '查看/编辑'}
+              </Button>
+              {!readOnly && <Button danger icon={<DeleteOutlined />} onClick={() => deleteSkill(record)}>删除</Button>}
+            </Space>
+          ),
+        },
+      ]
       return (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Card title="快速创建 Custom Skill" bordered={false}>
-            <Form form={skillForm} layout="inline">
-              <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="名称" /></Form.Item>
-              <Form.Item name="slug" rules={[{ required: true }]}><Input placeholder="custom/example" /></Form.Item>
-              <Form.Item name="tags"><Input placeholder="tags 逗号分隔" /></Form.Item>
-              <Form.Item><Button type="primary" onClick={saveQuickSkill}>保存</Button></Form.Item>
-            </Form>
-          </Card>
-          <Card bordered={false}><Table rowKey="slug" dataSource={skills} columns={[{ title: 'Slug', dataIndex: 'slug' }, { title: '名称', dataIndex: 'name' }, { title: '版本', dataIndex: 'version' }, { title: '来源', dataIndex: 'source_kind' }]} /></Card>
+          <Tabs
+            items={[
+              {
+                key: 'system',
+                label: `系统 Skills (${systemSkills.length})`,
+                children: (
+                  <Card bordered={false}>
+                    <Table
+                      rowKey="slug"
+                      dataSource={systemSkills}
+                      expandable={{ expandedRowRender: renderSkillDetails }}
+                      columns={skillColumns(true)}
+                    />
+                  </Card>
+                ),
+              },
+              {
+                key: 'user',
+                label: `用户 Skills (${userSkills.length})`,
+                children: (
+                  <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Card title="快速创建 Custom Skill" bordered={false}>
+                      <Form form={skillForm} layout="inline">
+                        <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="名称" /></Form.Item>
+                        <Form.Item name="slug" rules={[{ required: true }]}><Input placeholder="custom/example" /></Form.Item>
+                        <Form.Item name="tags"><Input placeholder="tags 逗号分隔" /></Form.Item>
+                        <Form.Item><Button type="primary" onClick={saveQuickSkill}>保存</Button></Form.Item>
+                      </Form>
+                    </Card>
+                    <Card bordered={false}>
+                      <Table
+                        rowKey="slug"
+                        dataSource={userSkills}
+                        expandable={{ expandedRowRender: renderSkillDetails }}
+                        columns={skillColumns(false)}
+                      />
+                    </Card>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+          <Modal
+            title={selectedSkill ? `${skillEditorReadOnly ? 'SKILL.md' : 'Runtime SkillSpec'}：${selectedSkill.slug}` : 'Skill'}
+            open={skillEditorOpen}
+            onCancel={() => setSkillEditorOpen(false)}
+            onOk={saveSkillSpec}
+            okText={skillEditorReadOnly ? '关闭' : '保存'}
+            cancelText="取消"
+            confirmLoading={skillEditorLoading}
+            footer={skillEditorReadOnly ? [
+              <Button key="close" onClick={() => setSkillEditorOpen(false)}>关闭</Button>,
+            ] : undefined}
+            width={920}
+          >
+            {skillEditorReadOnly ? (
+              <Tabs
+                items={[
+                  {
+                    key: 'skill-md',
+                    label: 'SKILL.md',
+                    children: (
+                      <Input.TextArea
+                        value={skillSpecText}
+                        autoSize={{ minRows: 18, maxRows: 28 }}
+                        readOnly
+                        spellCheck={false}
+                      />
+                    ),
+                  },
+                  {
+                    key: 'runtime',
+                    label: '运行编排',
+                    children: (
+                      <Input.TextArea
+                        value={selectedSkillContent?.rootseeker_skill_yaml || JSON.stringify(selectedSkillContent?.runtime_spec || {}, null, 2)}
+                        autoSize={{ minRows: 18, maxRows: 28 }}
+                        readOnly
+                        spellCheck={false}
+                      />
+                    ),
+                  },
+                  {
+                    key: 'references',
+                    label: `子技能说明 (${selectedSkillContent?.references?.length || 0})`,
+                    children: selectedSkillContent?.references?.length ? (
+                      <Tabs
+                        tabPosition="left"
+                        items={(selectedSkillContent.references || []).map((ref) => ({
+                          key: ref.path,
+                          label: ref.path.replace('references/', '').replace('.md', ''),
+                          children: (
+                            <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                              <Typography.Text type="secondary">{ref.path}</Typography.Text>
+                              <Input.TextArea
+                                value={ref.content}
+                                autoSize={{ minRows: 16, maxRows: 26 }}
+                                readOnly
+                                spellCheck={false}
+                              />
+                            </Space>
+                          ),
+                        }))}
+                      />
+                    ) : <Empty description="暂无子技能说明" />,
+                  },
+                ]}
+              />
+            ) : (
+              <Input.TextArea
+                value={skillSpecText}
+                onChange={(event) => setSkillSpecText(event.target.value)}
+                autoSize={{ minRows: 18, maxRows: 28 }}
+                readOnly={skillEditorReadOnly}
+                spellCheck={false}
+              />
+            )}
+          </Modal>
         </Space>
       )
     }
@@ -607,15 +1114,180 @@ function App() {
     if (active === 'repos') {
       return (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Card title="注册仓库" bordered={false}>
-            <Form form={repoForm} layout="inline">
-              <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="repo name" /></Form.Item>
-              <Form.Item name="url" rules={[{ required: true }]}><Input placeholder="git url or local path" style={{ width: 360 }} /></Form.Item>
-              <Form.Item name="branch" initialValue="main"><Input placeholder="branch" /></Form.Item>
-              <Form.Item><Button type="primary" onClick={registerRepo}>注册</Button></Form.Item>
-            </Form>
+          <Tabs
+            items={[
+              {
+                key: 'remote-sources',
+                label: '远端源管理',
+                children: (
+                  <Card
+                    title="远端源列表"
+                    bordered={false}
+                    extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openRepoRemoteModal()}>新增远端源</Button>}
+                  >
+                    <Table
+                      rowKey="name"
+                      dataSource={repoRemotes}
+                      columns={[
+                        { title: '名称', dataIndex: 'name' },
+                        { title: '类型', dataIndex: 'provider' },
+                        { title: '域名', dataIndex: 'base_url' },
+                        { title: '默认组织', dataIndex: 'owner' },
+                        { title: 'API Path', dataIndex: 'api_path' },
+                        { title: 'Token', render: (_: unknown, r: RepoRemoteRecord) => r.has_token ? r.masked_token : '-' },
+                        {
+                          title: '操作',
+                          render: (_: unknown, r: RepoRemoteRecord) => (
+                            <Space>
+                              <Button icon={<EditOutlined />} onClick={() => openRepoRemoteModal(r)}>编辑</Button>
+                              <Button danger icon={<DeleteOutlined />} onClick={() => deleteRepoRemote(r.name)}>删除</Button>
+                            </Space>
+                          ),
+                        },
+                      ]}
+                    />
+                  </Card>
+                ),
+              },
+              {
+                key: 'remote',
+                label: '从远端导入',
+                children: (
+                  <Space direction="vertical" size={16} style={{ width: '100%' }}>
+                    <Card title="从远端搜索并导入" bordered={false}>
+                      <Form form={remoteRepoForm} layout="inline" initialValues={{ per_page: 50, page: 1, trigger_sync: false }}>
+                        <Form.Item name="remote_name" rules={[{ required: true }]}>
+                          <Select
+                            placeholder="选择远端源"
+                            style={{ width: 220 }}
+                            options={repoRemotes.map((remote) => ({ label: `${remote.name} (${remote.provider})`, value: remote.name }))}
+                          />
+                        </Form.Item>
+                        <Form.Item name="query"><Input placeholder="搜索仓库名，可空" style={{ width: 220 }} /></Form.Item>
+                        <Form.Item name="owner"><Input placeholder="覆盖组织/Group" style={{ width: 180 }} /></Form.Item>
+                        <Form.Item name="api_path"><Input placeholder="覆盖 API path" style={{ width: 180 }} /></Form.Item>
+                        <Form.Item name="trigger_sync" valuePropName="checked"><Switch checkedChildren="导入后同步" unCheckedChildren="只注册" /></Form.Item>
+                        <Form.Item><Button type="primary" icon={<SearchOutlined />} onClick={discoverRemoteRepos}>搜索</Button></Form.Item>
+                        <Form.Item><Button icon={<FolderOpenOutlined />} onClick={importSelectedRemoteRepos}>导入选中</Button></Form.Item>
+                      </Form>
+                    </Card>
+                    <Card title="远端仓库列表" bordered={false}>
+                      <Table
+                        rowKey="full_name"
+                        dataSource={remoteRepos}
+                        rowSelection={{
+                          selectedRowKeys: selectedRemoteRepoKeys,
+                          onChange: (keys) => setSelectedRemoteRepoKeys(keys.map(String)),
+                        }}
+                        columns={[
+                          { title: '仓库', dataIndex: 'full_name' },
+                          { title: 'Provider', dataIndex: 'provider' },
+                          { title: '默认分支', dataIndex: 'default_branch' },
+                          { title: 'Clone URL', dataIndex: 'clone_url' },
+                          { title: '可见性', render: (_: unknown, r: RemoteRepoRecord) => r.private ? <Tag color="red">private</Tag> : <Tag>public</Tag> },
+                          { title: '操作', render: (_: unknown, r: RemoteRepoRecord) => <Button onClick={() => importRemoteRepoRecords([r])}>导入</Button> },
+                        ]}
+                      />
+                    </Card>
+                  </Space>
+                ),
+              },
+              {
+                key: 'local',
+                label: '本地仓库导入',
+                children: (
+                  <Card title="导入本地 Git 仓库" bordered={false}>
+                    <Form form={localRepoForm} layout="inline" initialValues={{ branch: 'main', trigger_index: false }}>
+                      <Form.Item name="path" rules={[{ required: true }]}><Input placeholder="/path/to/local/repo" style={{ width: 360 }} /></Form.Item>
+                      <Form.Item name="name"><Input placeholder="名称，可空" style={{ width: 180 }} /></Form.Item>
+                      <Form.Item name="branch"><Input placeholder="branch" style={{ width: 120 }} /></Form.Item>
+                      <Form.Item name="trigger_index" valuePropName="checked"><Switch checkedChildren="立即索引" unCheckedChildren="只导入" /></Form.Item>
+                      <Form.Item><Button type="primary" icon={<FolderOpenOutlined />} onClick={importLocalRepo}>导入</Button></Form.Item>
+                    </Form>
+                  </Card>
+                ),
+              },
+              {
+                key: 'manual',
+                label: '手动注册',
+                children: (
+                  <Card title="手动注册 Git 仓库" bordered={false}>
+                    <Form form={repoForm} layout="inline" initialValues={{ branch: 'main' }}>
+                      <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="repo name" /></Form.Item>
+                      <Form.Item name="url" rules={[{ required: true }]}><Input placeholder="git url" style={{ width: 360 }} /></Form.Item>
+                      <Form.Item name="branch"><Input placeholder="branch" /></Form.Item>
+                      <Form.Item><Button type="primary" onClick={registerRepo}>注册</Button></Form.Item>
+                    </Form>
+                  </Card>
+                ),
+              },
+            ]}
+          />
+          <Card title="已注册仓库" bordered={false}>
+            <Table
+              rowKey="name"
+              dataSource={repos}
+              columns={[
+                { title: '名称', dataIndex: 'name' },
+                { title: 'URL', dataIndex: 'url' },
+                { title: '本地路径', dataIndex: 'local_path' },
+                { title: '分支', dataIndex: 'default_branch' },
+                { title: '来源', render: (_: unknown, r: RepoRecord) => String(r.metadata?.source || '-') },
+                { title: '状态', render: (_: unknown, r: RepoRecord) => r.sync_status?.state },
+                { title: '操作', render: (_: unknown, r: RepoRecord) => <Space><Button onClick={() => syncRepo(r.name)}>同步/索引</Button><Button danger onClick={() => deleteRepo(r.name)}>删除</Button></Space> },
+              ]}
+            />
           </Card>
-          <Card bordered={false}><Table rowKey="name" dataSource={repos} columns={[{ title: '名称', dataIndex: 'name' }, { title: 'URL', dataIndex: 'url' }, { title: '分支', dataIndex: 'default_branch' }, { title: '状态', render: (_, r) => r.sync_status?.state }, { title: '操作', render: (_, r) => <Space><Button onClick={() => syncRepo(r.name)}>同步索引</Button><Button danger onClick={() => deleteRepo(r.name)}>删除</Button></Space> }]} /></Card>
+          <Modal
+            title={editingRepoRemote ? `编辑远端源：${editingRepoRemote.name}` : '新增远端源'}
+            open={repoRemoteModalOpen}
+            onCancel={() => {
+              setRepoRemoteModalOpen(false)
+              setEditingRepoRemote(null)
+              repoRemoteForm.resetFields()
+            }}
+            onOk={saveRepoRemote}
+            okText="保存"
+            cancelText="取消"
+            width={760}
+          >
+            <Form form={repoRemoteForm} layout="vertical" initialValues={{ provider: 'github' }}>
+              <div className="repo-remote-grid">
+                <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+                  <Input placeholder="github-main" disabled={Boolean(editingRepoRemote)} />
+                </Form.Item>
+                <Form.Item name="provider" label="类型" rules={[{ required: true }]}>
+                  <Select
+                    onChange={(provider) => {
+                      const current = repoRemoteForm.getFieldValue('base_url')
+                      const previousDefaults = Object.values(repoRemoteDefaultBaseUrl)
+                      if (!current || previousDefaults.includes(current)) {
+                        repoRemoteForm.setFieldValue('base_url', repoRemoteDefaultBaseUrl[String(provider)] || '')
+                      }
+                    }}
+                    options={[
+                      { label: 'GitHub', value: 'github' },
+                      { label: 'Gitee', value: 'gitee' },
+                      { label: '云效 / Codeup', value: 'yunxiao' },
+                      { label: '自定义', value: 'custom' },
+                    ]}
+                  />
+                </Form.Item>
+                <Form.Item name="base_url" label="域名 / Base URL">
+                  <Input placeholder="常见平台会自动填充，可改为私有域名" />
+                </Form.Item>
+                <Form.Item name="token" label="Token">
+                  <Input.Password placeholder="留空则保留已有 Token" />
+                </Form.Item>
+                <Form.Item name="owner" label="默认组织 / Group">
+                  <Input placeholder="可空" />
+                </Form.Item>
+                <Form.Item name="api_path" label="自定义 API path">
+                  <Input placeholder="云效/私有平台可填" />
+                </Form.Item>
+              </div>
+            </Form>
+          </Modal>
         </Space>
       )
     }
@@ -732,9 +1404,10 @@ function App() {
                 {errorChatItems.map((item) => (
                   <button className="history-row" key={item.id} onClick={() => {
                     setErrorChatInput(item.content)
+                    errorCaseForm.setFieldsValue(item.request || {})
                     setErrorChatResult(item)
                   }}>
-                    <div className="history-row-title">{item.case?.title || item.content.slice(0, 32) || '错误信息'}</div>
+                    <div className="history-row-title">{item.content.slice(0, 48) || item.case?.title || '错误信息'}</div>
                     <div className="history-row-sub">
                       {item.case?.status || 'submitted'} · evidence {item.evidence_count ?? 0}
                     </div>
@@ -782,15 +1455,19 @@ function App() {
               <Card bordered={false} className="error-result-card" title="排查结果">
                 <Space direction="vertical" size={10} style={{ width: '100%' }}>
                   <div><b>Case ID：</b>{errorChatResult.case?.case_id || '-'}</div>
+                  <div><b>Flow Run ID：</b>{errorChatResult.flow_run_id || '-'}</div>
                   <div><b>状态：</b>{errorChatResult.case?.status || '-'}</div>
                   <div><b>服务：</b>{errorChatResult.case?.service_name || '-'}</div>
                   <div><b>证据数：</b>{errorChatResult.evidence_count ?? 0}</div>
+                  <div><b>证据摘要：</b>{errorChatResult.evidence_summary || '-'}</div>
                   <div><b>流程耗时：</b>{errorChatResult.flow_elapsed_ms ?? '-'}ms</div>
                   <div><b>根因：</b>{errorChatResult.report?.root_cause?.title || '暂无明确根因'}</div>
                   <div>
                     <b>AI 分析：</b>
                     {errorChatResult.ai_analysis?.ok
                       ? `${errorChatResult.ai_analysis.provider}/${errorChatResult.ai_analysis.model} · ${errorChatResult.ai_analysis.elapsed_ms}ms`
+                      : errorChatResult.ai_analysis?.pending
+                        ? '分析中，结果会自动刷新'
                       : `未完成（${errorChatResult.ai_analysis?.reason || errorChatResult.ai_analysis?.error || 'unknown'}）`}
                   </div>
                   {errorChatResult.ai_analysis?.content ? (
@@ -806,6 +1483,27 @@ function App() {
                         { title: 'Step', dataIndex: 'name' },
                         { title: 'Tool', dataIndex: 'tool_name' },
                         { title: 'Status', dataIndex: 'status' },
+                      ]}
+                      pagination={false}
+                    />
+                  </details>
+                  <details>
+                    <summary>查看证据明细</summary>
+                    <Table
+                      size="small"
+                      rowKey="item_id"
+                      dataSource={errorChatResult.evidence_items || []}
+                      columns={[
+                        { title: 'ID', dataIndex: 'item_id' },
+                        { title: '类型', dataIndex: 'type' },
+                        { title: '来源', dataIndex: 'source' },
+                        { title: '采集时间', dataIndex: 'collected_at' },
+                        {
+                          title: '内容',
+                          render: (_: unknown, record: ErrorChatEvidence) => (
+                            <pre>{JSON.stringify(record.content || {}, null, 2)}</pre>
+                          ),
+                        },
                       ]}
                       pagination={false}
                     />
