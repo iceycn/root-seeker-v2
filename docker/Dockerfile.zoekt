@@ -1,15 +1,11 @@
-# 与 root_seek/root_seeker_docker/Dockerfile.zoekt 对齐：
-# zoekt-webserver + zoekt-index，-rpc 提供 RootSeeker / 本仓库 MCP 使用的 JSON API。
-FROM golang:1.22-alpine AS builder
-RUN apk add --no-cache git
-RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto && \
-    go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest && \
-    go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
-
+# Zoekt - uses pre-downloaded static binaries (see prepare-zoekt.ps1 / prepare-zoekt.sh)
+# Build context: ./docker
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /go/bin/zoekt-webserver /usr/local/bin/
-COPY --from=builder /go/bin/zoekt-index /usr/local/bin/
-RUN mkdir -p /data/index
+
+COPY bin/zoekt-webserver /usr/local/bin/zoekt-webserver
+COPY bin/zoekt-index /usr/local/bin/zoekt-index
+RUN chmod +x /usr/local/bin/zoekt-webserver /usr/local/bin/zoekt-index && \
+    mkdir -p /data/index
+
 EXPOSE 6070
 CMD ["zoekt-webserver", "-index", "/data/index", "-listen", ":6070", "-rpc"]

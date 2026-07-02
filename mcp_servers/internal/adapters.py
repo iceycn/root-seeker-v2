@@ -32,7 +32,7 @@ class InternalToolAdapter(Protocol):
     def semantic_search_code(self, query: str, repo_name: str | None = None, limit: int = 10) -> dict[str, Any]:
         ...
 
-    def read_code(self, path: str) -> dict[str, Any]:
+    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
         ...
 
     def get_index_status(self) -> dict[str, Any]:
@@ -177,8 +177,8 @@ class HttpInternalToolAdapter:
             payload["repo_name"] = repo_name
         return self._post(self.route_code_semantic_search, payload)
 
-    def read_code(self, path: str) -> dict[str, Any]:
-        return self._post(self.route_code_read, {"path": path})
+    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
+        return self._post(self.route_code_read, {"path": path, **({"repo": repo} if repo else {})})
 
     def get_index_status(self) -> dict[str, Any]:
         return self._post(self.route_index_status, {})

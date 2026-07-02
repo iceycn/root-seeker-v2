@@ -52,12 +52,12 @@ def run_loop(
 
     empty_polls = 0
     runs = 0
-    while runs < max_runs:
+    while max_runs <= 0 or runs < max_runs:
         task = task_runtime.run_once()
         if task is None:
             empty_polls += 1
             print(f"worker idle: empty_polls={empty_polls}/{max_empty_polls}")
-            if empty_polls >= max_empty_polls:
+            if max_empty_polls > 0 and empty_polls >= max_empty_polls:
                 print("worker stopped: queue empty for too long")
                 return 0
         else:
@@ -75,8 +75,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rootseeker-worker", description="RootSeeker worker")
     parser.add_argument("--loop", action="store_true", help="run worker polling loop")
     parser.add_argument("--interval-seconds", type=float, default=2.0)
-    parser.add_argument("--max-empty-polls", type=int, default=5)
-    parser.add_argument("--max-runs", type=int, default=100)
+    parser.add_argument("--max-empty-polls", type=int, default=5, help="0 means unlimited idle polls")
+    parser.add_argument("--max-runs", type=int, default=100, help="0 means unlimited task runs")
     parser.add_argument("--seed-demo", action="store_true", help="submit one demo task before polling")
     return parser
 

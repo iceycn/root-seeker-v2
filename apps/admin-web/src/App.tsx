@@ -29,6 +29,7 @@ import {
   Modal,
   Select,
   Space,
+  Spin,
   Switch,
   Table,
   Tag,
@@ -73,6 +74,8 @@ type SkillRecord = ApiRecord & {
   slug: string
   name?: string
   description?: string
+  skill_kind?: string
+  bound_tools?: string[]
   tags?: string[]
   triggers?: string[]
   required_tools?: string[]
@@ -95,6 +98,28 @@ type SkillContent = ApiRecord & {
   rootseeker_skill_yaml?: string
   references?: SkillReference[]
   runtime_spec?: SkillRecord
+  tool_parameters?: ToolParameterDoc[]
+}
+
+type JsonSchemaProperty = {
+  type?: string
+  description?: string
+  enum?: unknown[]
+  default?: unknown
+  items?: JsonSchemaProperty
+}
+
+type JsonSchema = {
+  type?: string
+  properties?: Record<string, JsonSchemaProperty>
+  required?: string[]
+}
+
+type ToolParameterDoc = {
+  tool_name: string
+  description?: string
+  parameters_schema?: JsonSchema
+  registered?: boolean
 }
 
 type PluginRecord = ApiRecord & {
@@ -107,6 +132,8 @@ type ToolRecord = ApiRecord & {
   name: string
   scope?: string
   server_name?: string
+  description?: string
+  parameters_schema?: JsonSchema
 }
 
 type RepoRecord = ApiRecord & {
@@ -114,7 +141,7 @@ type RepoRecord = ApiRecord & {
   url?: string
   local_path?: string
   default_branch?: string
-  sync_status?: { state?: string }
+  sync_status?: { state?: string; error_message?: string | null }
   metadata?: ApiRecord
 }
 
@@ -223,6 +250,81 @@ const maskKey = (key?: string) => {
   return `${key.slice(0, 3)}******${key.slice(-4)}`
 }
 
+type SchemaPropertyRow = {
+  name: string
+  type: string
+  required: boolean
+  description: string
+}
+
+const schemaPropertyRows = (schema?: JsonSchema): SchemaPropertyRow[] => {
+  const properties = schema?.properties || {}
+  const required = new Set(schema?.required || [])
+  return Object.entries(properties).map(([name, meta]) => ({
+    name,
+    type: meta?.type || 'any',
+    required: required.has(name),
+    description: meta?.description || '',
+  }))
+}
+
+const parameterSchemaColumns = [
+  { title: '字段', dataIndex: 'name', width: 140 },
+  { title: '类型', dataIndex: 'type', width: 90, render: (value: string) => <Tag>{value}</Tag> },
+  { title: '必填', dataIndex: 'required', width: 60, render: (value: boolean) => (value ? '是' : '否') },
+  { title: '说明', dataIndex: 'description' },
+]
+
+function ParameterSchemaTable({ schema }: { schema?: JsonSchema }) {
+  const rows = schemaPropertyRows(schema)
+  if (!rows.length) {
+    return <Typography.Text type="secondary">无结构化参数定义</Typography.Text>
+  }
+  return (
+    <Table
+      size="small"
+      pagination={false}
+      rowKey="name"
+      dataSource={rows}
+      columns={parameterSchemaColumns}
+    />
+  )
+}
+
+function ToolParametersPanel({
+  toolParameters,
+  loading,
+}: {
+  toolParameters?: ToolParameterDoc[]
+  loading?: boolean
+}) {
+  if (loading) {
+    return null
+  }
+  if (!toolParameters?.length) {
+    return <Empty description="暂无关联工具参数" />
+  }
+  return (
+    <Tabs
+      items={toolParameters.map((doc) => ({
+        key: doc.tool_name,
+        label: doc.tool_name,
+        children: (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            {doc.description ? (
+              <Typography.Paragraph style={{ marginBottom: 0 }}>{doc.description}</Typography.Paragraph>
+            ) : null}
+            {doc.registered === false ? (
+              <Typography.Text type="warning">工具未在 registry 注册</Typography.Text>
+            ) : null}
+            <ParameterSchemaTable schema={doc.parameters_schema} />
+          </Space>
+        ),
+      }))}
+    />
+  )
+}
+
 const providerDisplay = (provider: AiProvider) =>
   provider.metadata?.display_name || provider.name
 
@@ -245,6 +347,7 @@ const pathToView: Record<string, string> = {
   '/plugins': 'plugins',
   '/callbacks': 'callbacks',
   '/semantic-search': 'semantic',
+  '/error-chat': 'errorChat',
   '/overview': 'overview',
 }
 
@@ -325,7 +428,7 @@ function App() {
     overview: { title: '总览状态', desc: '系统健康、索引、服务目录和运行时资源概览。' },
     semantic: { title: '语义搜索', desc: '使用 Qdrant 在已索引代码块里做语义搜索。' },
     errorChat: { title: '错误排查助手', desc: '提交错误信息、日志或现象，形成可追踪的排查历史。' },
-    skills: { title: 'Skills 管理', desc: '查看内置技能，快速创建和删除自定义 Skill。' },
+    skills: { title: 'Skills 管理', desc: 'Flow Skill 编排排查链路；Tool Skill 描述各工具如何取参与协作。' },
     plugins: { title: 'Plugins / Tools', desc: '查看已加载插件和 MCP 工具注册情况。' },
     repos: { title: 'Repo 管理', desc: '注册仓库、同步代码并触发 Zoekt/Qdrant 索引。' },
     catalog: { title: 'Service Catalog', desc: '配置 service_name 到仓库、日志源、负责人等信息的映射。' },
@@ -362,7 +465,19 @@ function App() {
     }
     if (active === 'repos') {
       api<{ repos: RepoRecord[] }>('/api/repos').then((d) => setRepos(d.repos || [])).catch((e) => apiMessage.error(String(e)))
-      api<{ items: RepoRemoteRecord[] }>('/api/repo-remotes').then((d) => setRepoRemotes(d.items || [])).catch((e) => apiMessage.error(String(e)))
+      api<{ items: RepoRemoteRecord[] }>('/api/repo-remotes').then((d) => {
+        const items = d.items || []
+        setRepoRemotes(items)
+        if (items.length) {
+          const current = remoteRepoForm.getFieldValue('remote_name')
+          if (!current) {
+            remoteRepoForm.setFieldsValue({
+              remote_name: items[0].name,
+              owner: items[0].owner || '',
+            })
+          }
+        }
+      }).catch((e) => apiMessage.error(String(e)))
     }
     if (active === 'catalog') api<{ items: CatalogRecord[] }>('/api/catalog').then((d) => setCatalogItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
     if (active === 'callbacks') api<{ items: CallbackRecord[] }>('/api/callbacks').then((d) => setCallbacksData(d.items || [])).catch((e) => apiMessage.error(String(e)))
@@ -505,50 +620,58 @@ function App() {
   }
 
   const discoverRemoteRepos = async () => {
-    const values = await remoteRepoForm.validateFields()
-    const data = await api<{ repos: RemoteRepoRecord[] }>('/api/repos/discover', {
-      method: 'POST',
-      body: JSON.stringify(values),
-    })
-    setRemoteRepos(data.repos || [])
-    setSelectedRemoteRepoKeys([])
-    apiMessage.success(`发现 ${data.repos?.length || 0} 个仓库`)
+    try {
+      const values = await remoteRepoForm.validateFields()
+      const data = await api<{ repos: RemoteRepoRecord[] }>('/api/repos/discover', {
+        method: 'POST',
+        body: JSON.stringify(values),
+      })
+      setRemoteRepos(data.repos || [])
+      setSelectedRemoteRepoKeys([])
+      apiMessage.success(`发现 ${data.repos?.length || 0} 个仓库`)
+    } catch (error) {
+      apiMessage.error(String(error))
+    }
   }
 
   const importRemoteRepoRecords = async (selected: RemoteRepoRecord[]) => {
-    const values = await remoteRepoForm.validateFields()
-    const remote = repoRemotes.find((item) => item.name === values.remote_name)
-    if (!selected.length) {
-      apiMessage.warning('请先选择要导入的远端仓库')
-      return
-    }
-    for (const repo of selected) {
-      const name = repo.full_name.replace(/[/:]+/g, '__')
-      await api('/api/repos', {
-        method: 'POST',
-        body: JSON.stringify({
-          name,
-          url: repo.clone_url || repo.ssh_url || repo.web_url,
-          branch: repo.default_branch || 'main',
-          metadata: {
-            source: 'remote',
-            provider: repo.provider,
-            full_name: repo.full_name,
-            remote_name: remote?.name || values.remote_name,
-            remote_base_url: remote?.base_url,
-            web_url: repo.web_url,
-          },
-        }),
-      })
-      if (values.trigger_sync) {
-        await api(`/api/repos/${encodeURIComponent(name)}/sync`, {
-          method: 'POST',
-          body: JSON.stringify({ trigger_index: true }),
-        })
+    try {
+      const values = await remoteRepoForm.validateFields()
+      const remote = repoRemotes.find((item) => item.name === values.remote_name)
+      if (!selected.length) {
+        apiMessage.warning('请先选择要导入的远端仓库')
+        return
       }
+      for (const repo of selected) {
+        const name = repo.full_name.replace(/[/:]+/g, '__')
+        await api('/api/repos', {
+          method: 'POST',
+          body: JSON.stringify({
+            name,
+            url: repo.clone_url || repo.ssh_url || repo.web_url,
+            branch: repo.default_branch || 'main',
+            metadata: {
+              source: 'remote',
+              provider: repo.provider,
+              full_name: repo.full_name,
+              remote_name: remote?.name || values.remote_name,
+              remote_base_url: remote?.base_url,
+              web_url: repo.web_url,
+            },
+          }),
+        })
+        if (values.trigger_sync) {
+          await api(`/api/repos/${encodeURIComponent(name)}/sync`, {
+            method: 'POST',
+            body: JSON.stringify({ trigger_index: true }),
+          })
+        }
+      }
+      apiMessage.success(`已导入 ${selected.length} 个仓库`)
+      await refreshRepos()
+    } catch (error) {
+      apiMessage.error(String(error))
     }
-    apiMessage.success(`已导入 ${selected.length} 个仓库`)
-    await refreshRepos()
   }
 
   const importSelectedRemoteRepos = async () => {
@@ -566,12 +689,20 @@ function App() {
   }
 
   const syncRepo = async (name: string) => {
-    await api(`/api/repos/${encodeURIComponent(name)}/sync`, {
-      method: 'POST',
-      body: JSON.stringify({ trigger_index: true }),
-    })
-    apiMessage.success('仓库同步/索引已完成')
-    await refreshRepos()
+    try {
+      const result = await api<{ ok?: boolean; message?: string }>(`/api/repos/${encodeURIComponent(name)}/sync`, {
+        method: 'POST',
+        body: JSON.stringify({ trigger_index: true }),
+      })
+      if (result.ok === false) {
+        throw new Error(result.message || '仓库同步/索引失败')
+      }
+      apiMessage.success('仓库同步/索引已完成')
+      await refreshRepos()
+    } catch (error) {
+      apiMessage.error(String(error))
+      await refreshRepos()
+    }
   }
 
   const deleteRepo = async (name: string) => {
@@ -643,6 +774,7 @@ function App() {
   const openSkillEditor = async (record: SkillRecord, readOnly = false) => {
     setSelectedSkill(record)
     setSelectedSkillContent(null)
+    setSkillSpecText('')
     setSkillEditorReadOnly(readOnly)
     setSkillEditorOpen(true)
     setSkillEditorLoading(true)
@@ -940,39 +1072,46 @@ function App() {
     if (active === 'skills') {
       const systemSkills = skills.filter((skill) => skill.source_kind === 'builtin')
       const userSkills = skills.filter((skill) => skill.source_kind !== 'builtin')
+      const flowSkills = systemSkills.filter((skill) => skill.skill_kind === 'flow' || (skill.steps?.length ?? 0) > 0)
+      const toolSkills = systemSkills.filter((skill) => skill.skill_kind === 'tool' || skill.skill_kind === 'tool_group')
+      const kindLabel = (kind?: string) => ({ flow: 'Flow', tool: 'Tool', tool_group: 'Tool 组' }[kind || ''] || kind || '-')
       const renderSkillDetails = (record: SkillRecord) => (
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
           <Typography.Paragraph style={{ marginBottom: 0 }}>{record.description || '暂无描述'}</Typography.Paragraph>
           <Space wrap>
             {(record.tags || []).map((tag) => <Tag key={tag}>{tag}</Tag>)}
           </Space>
+          <Typography.Text type="secondary">类型：{kindLabel(record.skill_kind)}</Typography.Text>
           <Typography.Text type="secondary">Triggers：{(record.triggers || []).join(', ') || '-'}</Typography.Text>
           <Typography.Text type="secondary">Required Tools：{(record.required_tools || []).join(', ') || '-'}</Typography.Text>
-          <Table
-            size="small"
-            pagination={false}
-            rowKey={(step) => String(step.step_id || step.action)}
-            dataSource={record.steps || []}
-            columns={[
-              { title: '步骤', dataIndex: 'name' },
-              { title: 'Action', dataIndex: 'action' },
-              {
-                title: '子技能说明',
-                render: (_: unknown, step: ApiRecord) => {
-                  const metadata = step.metadata as ApiRecord | undefined
-                  return metadata?.reference ? <Tag>{String(metadata.reference)}</Tag> : '-'
-                },
-              },
-            ]}
-          />
+          {(record.bound_tools?.length ?? 0) > 0 && (
+            <Typography.Text type="secondary">Bound Tools：{(record.bound_tools || []).join(', ')}</Typography.Text>
+          )}
+          {(record.steps?.length ?? 0) > 0 ? (
+            <Table
+              size="small"
+              pagination={false}
+              rowKey={(step) => String(step.step_id || step.action)}
+              dataSource={record.steps || []}
+              columns={[
+                { title: '步骤', dataIndex: 'name' },
+                { title: 'Action', dataIndex: 'action' },
+                { title: 'Tool Skill', dataIndex: 'tool_skill_slug' },
+              ]}
+            />
+          ) : null}
         </Space>
       )
       const skillColumns = (readOnly: boolean) => [
         { title: 'Slug', dataIndex: 'slug' },
         { title: '名称', dataIndex: 'name' },
+        { title: '类型', render: (_: unknown, record: SkillRecord) => kindLabel(record.skill_kind) },
         { title: '版本', dataIndex: 'version' },
-        { title: '来源', dataIndex: 'source_kind' },
-        { title: '步骤', render: (_: unknown, record: SkillRecord) => record.steps?.length ?? 0 },
+        { title: '步骤/工具', render: (_: unknown, record: SkillRecord) => (
+          record.skill_kind === 'flow' || (record.steps?.length ?? 0) > 0
+            ? (record.steps?.length ?? 0)
+            : (record.bound_tools || []).join(', ')
+        ) },
         {
           title: '操作',
           render: (_: unknown, record: SkillRecord) => (
@@ -990,13 +1129,27 @@ function App() {
           <Tabs
             items={[
               {
-                key: 'system',
-                label: `系统 Skills (${systemSkills.length})`,
+                key: 'flow',
+                label: `Flow Skills (${flowSkills.length})`,
                 children: (
                   <Card bordered={false}>
                     <Table
                       rowKey="slug"
-                      dataSource={systemSkills}
+                      dataSource={flowSkills}
+                      expandable={{ expandedRowRender: renderSkillDetails }}
+                      columns={skillColumns(true)}
+                    />
+                  </Card>
+                ),
+              },
+              {
+                key: 'tool',
+                label: `Tool Skills (${toolSkills.length})`,
+                children: (
+                  <Card bordered={false}>
+                    <Table
+                      rowKey="slug"
+                      dataSource={toolSkills}
                       expandable={{ expandedRowRender: renderSkillDetails }}
                       columns={skillColumns(true)}
                     />
@@ -1042,74 +1195,141 @@ function App() {
             ] : undefined}
             width={920}
           >
-            {skillEditorReadOnly ? (
-              <Tabs
-                items={[
-                  {
-                    key: 'skill-md',
-                    label: 'SKILL.md',
-                    children: (
-                      <Input.TextArea
-                        value={skillSpecText}
-                        autoSize={{ minRows: 18, maxRows: 28 }}
-                        readOnly
-                        spellCheck={false}
-                      />
-                    ),
-                  },
-                  {
-                    key: 'runtime',
-                    label: '运行编排',
-                    children: (
-                      <Input.TextArea
-                        value={selectedSkillContent?.rootseeker_skill_yaml || JSON.stringify(selectedSkillContent?.runtime_spec || {}, null, 2)}
-                        autoSize={{ minRows: 18, maxRows: 28 }}
-                        readOnly
-                        spellCheck={false}
-                      />
-                    ),
-                  },
-                  {
-                    key: 'references',
-                    label: `子技能说明 (${selectedSkillContent?.references?.length || 0})`,
-                    children: selectedSkillContent?.references?.length ? (
-                      <Tabs
-                        tabPosition="left"
-                        items={(selectedSkillContent.references || []).map((ref) => ({
-                          key: ref.path,
-                          label: ref.path.replace('references/', '').replace('.md', ''),
-                          children: (
-                            <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                              <Typography.Text type="secondary">{ref.path}</Typography.Text>
-                              <Input.TextArea
-                                value={ref.content}
-                                autoSize={{ minRows: 16, maxRows: 26 }}
-                                readOnly
-                                spellCheck={false}
-                              />
-                            </Space>
-                          ),
-                        }))}
-                      />
-                    ) : <Empty description="暂无子技能说明" />,
-                  },
-                ]}
-              />
-            ) : (
-              <Input.TextArea
-                value={skillSpecText}
-                onChange={(event) => setSkillSpecText(event.target.value)}
-                autoSize={{ minRows: 18, maxRows: 28 }}
-                readOnly={skillEditorReadOnly}
-                spellCheck={false}
-              />
-            )}
+            <Spin spinning={skillEditorLoading} tip="正在加载 Skill 内容...">
+              <div style={{ minHeight: skillEditorLoading ? 420 : undefined }}>
+              {skillEditorReadOnly ? (
+                <Tabs
+                  items={[
+                    {
+                      key: 'skill-md',
+                      label: 'SKILL.md',
+                      children: (
+                        <Input.TextArea
+                          value={skillSpecText}
+                          autoSize={{ minRows: 18, maxRows: 28 }}
+                          readOnly
+                          spellCheck={false}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'runtime',
+                      label: '运行编排',
+                      children: (
+                        <Input.TextArea
+                          value={
+                            skillEditorLoading
+                              ? ''
+                              : selectedSkillContent?.rootseeker_skill_yaml
+                                || (selectedSkillContent?.runtime_spec
+                                  ? JSON.stringify(selectedSkillContent.runtime_spec, null, 2)
+                                  : '')
+                          }
+                          autoSize={{ minRows: 18, maxRows: 28 }}
+                          readOnly
+                          spellCheck={false}
+                        />
+                      ),
+                    },
+                    {
+                      key: 'references',
+                      label: skillEditorLoading
+                        ? '子技能说明'
+                        : `子技能说明 (${selectedSkillContent?.references?.length || 0})`,
+                      children: skillEditorLoading ? null : selectedSkillContent?.references?.length ? (
+                        <Tabs
+                          tabPosition="left"
+                          items={(selectedSkillContent.references || []).map((ref) => ({
+                            key: ref.path,
+                            label: ref.path.replace('references/', '').replace('.md', ''),
+                            children: (
+                              <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                                <Typography.Text type="secondary">{ref.path}</Typography.Text>
+                                <Input.TextArea
+                                  value={ref.content}
+                                  autoSize={{ minRows: 16, maxRows: 26 }}
+                                  readOnly
+                                  spellCheck={false}
+                                />
+                              </Space>
+                            ),
+                          }))}
+                        />
+                      ) : <Empty description="暂无子技能说明" />,
+                    },
+                    {
+                      key: 'parameters',
+                      label: skillEditorLoading
+                        ? '参数说明'
+                        : `参数说明 (${selectedSkillContent?.tool_parameters?.length || 0})`,
+                      children: (
+                        <ToolParametersPanel
+                          loading={skillEditorLoading}
+                          toolParameters={selectedSkillContent?.tool_parameters}
+                        />
+                      ),
+                    },
+                  ]}
+                />
+              ) : (
+                <Input.TextArea
+                  value={skillSpecText}
+                  onChange={(event) => setSkillSpecText(event.target.value)}
+                  autoSize={{ minRows: 18, maxRows: 28 }}
+                  readOnly={skillEditorReadOnly}
+                  spellCheck={false}
+                />
+              )}
+              </div>
+            </Spin>
           </Modal>
         </Space>
       )
     }
     if (active === 'plugins') {
-      return <Space direction="vertical" style={{ width: '100%' }} size={16}><Card title="Plugins" bordered={false}><Table rowKey="plugin_id" dataSource={plugins} columns={[{ title: 'ID', dataIndex: 'plugin_id' }, { title: '名称', dataIndex: 'display_name' }, { title: '类型', dataIndex: 'kind' }]} /></Card><Card title="Tools" bordered={false}><Table rowKey="name" dataSource={tools} columns={[{ title: '名称', dataIndex: 'name' }, { title: 'Scope', dataIndex: 'scope' }, { title: 'Server', dataIndex: 'server_name' }]} /></Card></Space>
+      return (
+        <Space direction="vertical" style={{ width: '100%' }} size={16}>
+          <Card title="Plugins" bordered={false}>
+            <Table
+              rowKey="plugin_id"
+              dataSource={plugins}
+              columns={[
+                { title: 'ID', dataIndex: 'plugin_id' },
+                { title: '名称', dataIndex: 'display_name' },
+                { title: '类型', dataIndex: 'kind' },
+              ]}
+            />
+          </Card>
+          <Card title="Tools" bordered={false}>
+            <Table
+              rowKey="name"
+              dataSource={tools}
+              expandable={{
+                expandedRowRender: (record: ToolRecord) => (
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Typography.Paragraph style={{ marginBottom: 0 }}>
+                      {record.description || '暂无描述'}
+                    </Typography.Paragraph>
+                    <ParameterSchemaTable schema={record.parameters_schema} />
+                  </Space>
+                ),
+              }}
+              columns={[
+                { title: '名称', dataIndex: 'name' },
+                { title: 'Scope', dataIndex: 'scope' },
+                { title: 'Server', dataIndex: 'server_name' },
+                {
+                  title: '参数',
+                  render: (_: unknown, record: ToolRecord) => {
+                    const count = schemaPropertyRows(record.parameters_schema).length
+                    return count ? <Tag>{count} 个字段</Tag> : <Typography.Text type="secondary">-</Typography.Text>
+                  },
+                },
+              ]}
+            />
+          </Card>
+        </Space>
+      )
     }
     if (active === 'repos') {
       return (
@@ -1155,12 +1375,18 @@ function App() {
                 children: (
                   <Space direction="vertical" size={16} style={{ width: '100%' }}>
                     <Card title="从远端搜索并导入" bordered={false}>
-                      <Form form={remoteRepoForm} layout="inline" initialValues={{ per_page: 50, page: 1, trigger_sync: false }}>
+                      <Form form={remoteRepoForm} layout="inline" initialValues={{ per_page: 50, page: 1, trigger_sync: true }}>
                         <Form.Item name="remote_name" rules={[{ required: true }]}>
                           <Select
                             placeholder="选择远端源"
                             style={{ width: 220 }}
                             options={repoRemotes.map((remote) => ({ label: `${remote.name} (${remote.provider})`, value: remote.name }))}
+                            onChange={(name) => {
+                              const remote = repoRemotes.find((item) => item.name === name)
+                              if (remote?.owner) {
+                                remoteRepoForm.setFieldValue('owner', remote.owner)
+                              }
+                            }}
                           />
                         </Form.Item>
                         <Form.Item name="query"><Input placeholder="搜索仓库名，可空" style={{ width: 220 }} /></Form.Item>
@@ -1233,7 +1459,24 @@ function App() {
                 { title: '本地路径', dataIndex: 'local_path' },
                 { title: '分支', dataIndex: 'default_branch' },
                 { title: '来源', render: (_: unknown, r: RepoRecord) => String(r.metadata?.source || '-') },
-                { title: '状态', render: (_: unknown, r: RepoRecord) => r.sync_status?.state },
+                { title: '状态', render: (_: unknown, r: RepoRecord) => {
+                  const state = r.sync_status?.state || 'pending'
+                  const labels: Record<string, { color: string; text: string }> = {
+                    pending: { color: 'default', text: '待同步' },
+                    syncing: { color: 'processing', text: '同步中' },
+                    indexing: { color: 'processing', text: '索引中' },
+                    completed: { color: 'success', text: '已完成' },
+                    failed: { color: 'error', text: '失败' },
+                  }
+                  const item = labels[state] || { color: 'default', text: state }
+                  return (
+                    <Space direction="vertical" size={0}>
+                      <Tag color={item.color}>{item.text}</Tag>
+                      {state === 'pending' ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>仅注册，需点「同步/索引」</Typography.Text> : null}
+                      {r.sync_status?.error_message ? <Typography.Text type="danger" style={{ fontSize: 12 }}>{r.sync_status.error_message}</Typography.Text> : null}
+                    </Space>
+                  )
+                } },
                 { title: '操作', render: (_: unknown, r: RepoRecord) => <Space><Button onClick={() => syncRepo(r.name)}>同步/索引</Button><Button danger onClick={() => deleteRepo(r.name)}>删除</Button></Space> },
               ]}
             />

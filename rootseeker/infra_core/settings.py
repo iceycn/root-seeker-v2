@@ -42,6 +42,12 @@ class RootSeekerSettings(BaseSettings):
     agent_tool_call_max_concurrency: int = 4
     agent_max_attempts: int = 2
 
+    # Skill-driven flow: LLM reads tool skill docs to generate per-step arguments.
+    skill_llm_argument_planning_enabled: bool = True
+    skill_llm_argument_fallback_enabled: bool = True
+    skill_context_max_chars: int = 12000
+    skill_composer_default_flow: str = "flows/default-log-triage"
+
     # Approval policy orchestration. Off by default to keep local demo flows frictionless.
     approval_required_for_write_tools: bool = False
     approval_webhook_url: str | None = None

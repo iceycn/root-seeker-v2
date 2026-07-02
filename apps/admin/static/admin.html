@@ -371,16 +371,43 @@ async function settings(){
 async function saveSettings(){ const s=JSON.parse(settingsText.value||"{}"); if(setZoekt.value)s.ZOEKT_ENDPOINT=setZoekt.value; if(setQdrant.value)s.QDRANT_ENDPOINT=setQdrant.value; if(setRepoBase.value)s.ROOTSEEKER_REPO_BASE_PATH=setRepoBase.value; show(await req("/api/settings",{method:"PUT",body:JSON.stringify({settings:s})})); }
 
 async function skills(){
-  pageTitle.textContent="Skills 管理"; pageDesc.textContent="用表单创建常用 Custom Skill，高级场景可编辑 JSON。";
+  pageTitle.textContent="Skills 管理"; pageDesc.textContent="Flow Skill 编排排查链路；Tool Skill 描述各工具如何取参与协作。";
   const d = await req("/api/skills");
-  content.innerHTML = `<section class="card"><div class="form-grid">
+  const items = d.items || [];
+  const kindLabel = k => ({flow:"Flow",tool:"Tool",tool_group:"Tool 组",custom:"Custom"}[k] || k || "-");
+  const group = (kind) => items.filter(x => (x.skill_kind || (x.steps?.length ? "flow" : "tool")) === kind);
+  const flows = group("flow");
+  const tools = items.filter(x => x.skill_kind === "tool" || x.skill_kind === "tool_group");
+  const custom = items.filter(x => x.source_kind === "custom");
+  const row = (x, deletable) => `<tr>
+    <td><code>${escapeHtml(x.slug)}</code></td>
+    <td>${escapeHtml(x.name||"")}</td>
+    <td>${kindLabel(x.skill_kind)}</td>
+    <td>${escapeHtml(x.version||"")}</td>
+    <td>${escapeHtml(x.source_kind||"")}</td>
+    <td>${x.skill_kind==="flow" ? (x.steps||[]).length : (x.bound_tools||[]).join(", ")}</td>
+    <td>${btn("查看",`viewSkill('${escapeHtml(x.slug)}')`,"secondary")}${deletable ? btn("删除",`deleteSkill('${escapeHtml(x.slug)}')`,"danger") : ""}</td>
+  </tr>`;
+  const section = (title, rows) => rows.length ? `<section class="card"><div class="card-title">${title} (${rows.length})</div>
+    <table class="data-table"><thead><tr><th>Slug</th><th>名称</th><th>类型</th><th>版本</th><th>来源</th><th>步骤/工具</th><th>操作</th></tr></thead><tbody>${rows.join("")}</tbody></table></section>` : "";
+  content.innerHTML = `<section class="card"><div class="metric-row">
+    <div class="metric"><span>总计</span><b>${items.length}</b></div>
+    <div class="metric"><span>Flow</span><b>${flows.length}</b></div>
+    <div class="metric"><span>Tool</span><b>${tools.length}</b></div>
+    <div class="metric"><span>Custom</span><b>${custom.length}</b></div>
+  </div></section>
+  ${section("Flow Skills", flows.map(x=>row(x,false)))}
+  ${section("Tool Skills", tools.map(x=>row(x,false)))}
+  ${section("Custom Skills", custom.map(x=>row(x,true)))}
+  <section class="card"><div class="card-title">创建 Custom Skill</div><div class="form-grid">
     <div><label>名称</label><input id="skillName" value="Custom Skill"></div><div><label>Slug</label><input id="skillSlug" value="custom/example"></div>
     <div><label>描述</label><input id="skillDesc"></div><div><label>Tags</label><input id="skillTags" value="custom"></div>
     <div><label>Triggers</label><input id="skillTriggers"></div><div><label>Required Tools</label><input id="skillTools"></div>
   </div><details><summary>高级 JSON SkillSpec</summary><textarea id="skillSpec"></textarea></details><div class="actions">${btn("快速保存 Skill","saveQuickSkill()")}${btn("按 JSON 保存","saveSkill()","secondary")}</div></section>
-  <section class="card"><div class="card-title">Skills</div>${table(d.items,[{label:"Slug",value:x=>x.slug},{label:"名称",value:x=>x.name},{label:"版本",value:x=>x.version},{label:"来源",value:x=>x.source_kind},{label:"步骤",value:x=>(x.steps||[]).length},{label:"操作",html:true,value:x=>btn("删除",`deleteSkill('${escapeHtml(x.slug)}')`,"danger")}])}</section>`;
-  skillSpec.value = JSON.stringify({name:"Custom Skill",slug:"custom/example",description:"",tags:["custom"],triggers:[],required_tools:[],steps:[],source_kind:"custom",version:"0.1.0",metadata:{}}, null, 2); show(d);
+  <section class="card" id="skillDetail" style="display:none"><div class="card-title">Skill 详情</div><pre id="skillDetailPre"></pre></section>`;
+  skillSpec.value = JSON.stringify({name:"Custom Skill",slug:"custom/example",description:"",tags:["custom"],triggers:[],required_tools:[],steps:[],skill_kind:"flow",source_kind:"custom",version:"0.1.0",metadata:{}}, null, 2); show(d);
 }
+async function viewSkill(slug){ const d=await req(`/api/skills/${encodeURIComponent(slug)}/content`); skillDetail.style.display="block"; skillDetailPre.textContent=JSON.stringify(d,null,2); show(d); }
 async function saveQuickSkill(){ show(await req("/api/skills/quick",{method:"POST",body:JSON.stringify({name:skillName.value,slug:skillSlug.value,description:skillDesc.value,tags:skillTags.value,triggers:skillTriggers.value,required_tools:skillTools.value})})); await skills(); }
 async function saveSkill(){ show(await req("/api/skills",{method:"PUT",body:JSON.stringify({spec:JSON.parse(skillSpec.value||"{}")})})); await skills(); }
 async function deleteSkill(slug){ show(await req(`/api/skills/${encodeURIComponent(slug)}`,{method:"DELETE"})); await skills(); }

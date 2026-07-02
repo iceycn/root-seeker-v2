@@ -139,7 +139,7 @@ class ZoektCodeAdapter:
                 })
         return repos
 
-    def _local_repo_root(self, repo: str | None) -> Path | None:
+    def _local_repo_root(self, repo: str | None, path: str | None = None) -> Path | None:
         data = self._fetch_index_list_payload(reuse_cache=True)
         if not data:
             return None
@@ -147,8 +147,14 @@ class ZoektCodeAdapter:
         cand = repos
         if repo:
             cand = [r for r in repos if r.get("name") == repo]
-        for r in cand:
-            src = r.get("source") or ""
+        if path:
+            for item in cand:
+                src = item.get("source") or ""
+                if src and _safe_read_repo_file(Path(src), path) is not None:
+                    return Path(src)
+            return None
+        for item in cand:
+            src = item.get("source") or ""
             if src:
                 return Path(src)
         return None
@@ -163,6 +169,7 @@ class ZoektCodeAdapter:
         if not self._client:
             return self._not_configured_search(query)
 
+        query = " ".join(query.split())
         url = f"{self.config.endpoint.rstrip('/')}/api/search"
         payload: dict[str, Any] = {"q": query, "Num": num_results}
         if repo_filter:
@@ -288,7 +295,7 @@ class ZoektCodeAdapter:
         except Exception:
             pass
 
-        root = self._local_repo_root(repo)
+        root = self._local_repo_root(repo, path=path)
         if root is None:
             return {
                 "path": path,

@@ -140,9 +140,9 @@ class CompositeProductionAdapter:
         """Search code chunks via Qdrant-backed repo sync service."""
         return self.repo_sync_service.semantic_search(query=query, repo_name=repo_name, limit=limit)
 
-    def read_code(self, path: str) -> dict[str, Any]:
+    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
         """Read file via Zoekt."""
-        return self._zoekt.read_file(path)
+        return self._zoekt.read_file(path, repo=repo)
 
     def get_index_status(self) -> dict[str, Any]:
         """Get index status via Zoekt."""

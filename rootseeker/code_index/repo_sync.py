@@ -12,10 +12,22 @@ from rootseeker.code_index.zoekt_indexer import ZoektIndexer
 from rootseeker.contracts.common import utc_now
 from rootseeker.contracts.indexing import IndexKind, IndexStatus
 from rootseeker.contracts.repository import RepositoryRef, RepoSyncState
+from rootseeker.infra_core.http_client import resolve_http_proxy
 
 __all__ = ["RepoSyncService", "RepoSyncResult"]
 
 logger = logging.getLogger(__name__)
+
+
+def _git_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    proxy = resolve_http_proxy()
+    if proxy:
+        env["HTTP_PROXY"] = proxy
+        env["HTTPS_PROXY"] = proxy
+        env["http_proxy"] = proxy
+        env["https_proxy"] = proxy
+    return env
 
 
 def _get_default_base_path() -> Path:
@@ -252,6 +264,7 @@ class RepoSyncService:
             capture_output=True,
             text=True,
             check=True,
+            env=_git_subprocess_env(),
         )
 
         return self._get_commit_hash(path)
@@ -267,6 +280,7 @@ class RepoSyncService:
             capture_output=True,
             text=True,
             check=True,
+            env=_git_subprocess_env(),
         )
         subprocess.run(
             ["git", "reset", "--hard", f"origin/{branch}"],
@@ -274,6 +288,7 @@ class RepoSyncService:
             capture_output=True,
             text=True,
             check=True,
+            env=_git_subprocess_env(),
         )
 
         return self._get_commit_hash(path)
@@ -286,6 +301,7 @@ class RepoSyncService:
             capture_output=True,
             text=True,
             check=True,
+            env=_git_subprocess_env(),
         )
         return result.stdout.strip()
 

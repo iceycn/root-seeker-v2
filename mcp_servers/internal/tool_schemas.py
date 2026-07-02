@@ -1,0 +1,87 @@
+"""JSON Schema definitions for internal MCP tools used by skill-driven argument planning."""
+
+from __future__ import annotations
+
+from typing import Any
+
+__all__ = ["INTERNAL_TOOL_PARAMETER_SCHEMAS", "parameter_schema_for"]
+
+
+INTERNAL_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
+    "incident.normalize": {
+        "type": "object",
+        "properties": {
+            "payload": {
+                "type": "object",
+                "description": "Raw alert payload with title, service_name, message/symptom, source, metadata fields",
+            }
+        },
+        "required": ["payload"],
+    },
+    "catalog.resolve_service": {
+        "type": "object",
+        "properties": {
+            "tenant": {"type": "string"},
+            "environment": {"type": "string"},
+            "service_name": {"type": "string"},
+        },
+        "required": ["tenant", "environment", "service_name"],
+    },
+    "catalog.get_log_sources": {
+        "type": "object",
+        "properties": {
+            "tenant": {"type": "string"},
+            "environment": {"type": "string"},
+            "service_name": {"type": "string"},
+        },
+        "required": ["tenant", "environment", "service_name"],
+    },
+    "log.query_by_trace_id": {
+        "type": "object",
+        "properties": {
+            "trace_id": {"type": "string"},
+            "service_name": {"type": "string"},
+        },
+        "required": ["trace_id"],
+    },
+    "log.query_by_template": {
+        "type": "object",
+        "properties": {
+            "template_id": {"type": "string"},
+            "service_name": {"type": "string"},
+        },
+        "required": ["template_id"],
+    },
+    "trace.get_chain": {
+        "type": "object",
+        "properties": {"trace_id": {"type": "string"}},
+        "required": ["trace_id"],
+    },
+    "code.search": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    },
+    "code.read": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "repo": {"type": "string"},
+        },
+        "required": ["path"],
+    },
+    "index.get_status": {"type": "object", "properties": {}},
+    "repo.list": {"type": "object", "properties": {}},
+    "notify.send": {
+        "type": "object",
+        "properties": {
+            "channel": {"type": "string"},
+            "message": {"type": "string"},
+        },
+        "required": ["channel", "message"],
+    },
+}
+
+
+def parameter_schema_for(tool_name: str) -> dict[str, Any]:
+    return dict(INTERNAL_TOOL_PARAMETER_SCHEMAS.get(tool_name, {"type": "object", "properties": {}}))

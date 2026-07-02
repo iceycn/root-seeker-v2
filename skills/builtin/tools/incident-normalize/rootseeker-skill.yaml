@@ -1,0 +1,15 @@
+slug: tools/incident-normalize
+skill_kind: tool
+bound_tools:
+  - incident.normalize
+tags:
+  - builtin
+  - tool
+  - incident
+required_tools:
+  - incident.normalize
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: other
+  reference: references/guide.md

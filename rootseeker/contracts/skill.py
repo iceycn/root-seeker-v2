@@ -13,6 +13,12 @@ class SkillSourceKind(StrEnum):
     GENERATED = "generated"
 
 
+class SkillKind(StrEnum):
+    FLOW = "flow"
+    TOOL = "tool"
+    TOOL_GROUP = "tool_group"
+
+
 class SkillCondition(BaseModel):
     field: str = Field(min_length=1)
     operator: str = Field(min_length=1)
@@ -24,8 +30,11 @@ class SkillStepDefinition(BaseModel):
     name: str = Field(min_length=1)
     action: str = Field(min_length=1, description="Capability or MCP tool action name")
     description: str = ""
+    tool_skill_slug: str = Field(default="", description="Tool skill to load for argument planning")
+    defer_until: str | None = Field(default=None, description="Defer step until phase e.g. after_report")
     requires_tools: list[str] = Field(default_factory=list)
     conditions: list[SkillCondition] = Field(default_factory=list)
+    skip_if: list[SkillCondition] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -33,6 +42,8 @@ class SkillSpec(BaseModel):
     name: str = Field(min_length=1)
     slug: str = Field(min_length=1)
     description: str = ""
+    skill_kind: SkillKind = SkillKind.FLOW
+    bound_tools: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     triggers: list[str] = Field(default_factory=list)
     required_tools: list[str] = Field(default_factory=list)

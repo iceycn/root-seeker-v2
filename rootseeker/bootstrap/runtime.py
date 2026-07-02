@@ -60,6 +60,7 @@ class DevRuntime:
             skill_registry=self.skill_registry,
             plugin_registry=self.plugin_registry,
             gateway=self.gateway,
+            tool_registry=self.tool_registry,
             start_from_step_index=start_from_step_index,
             prior_step_outputs=prior_step_outputs,
             prior_case_id=prior_case_id,

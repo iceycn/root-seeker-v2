@@ -1,0 +1,79 @@
+# RootSeeker V2 - Zoekt Code Search Engine
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zoekt
+  namespace: rootseeker
+  labels:
+    app.kubernetes.io/name: rootseeker-zoekt
+    app.kubernetes.io/component: zoekt
+    app.kubernetes.io/part-of: rootseeker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rootseeker-zoekt
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rootseeker-zoekt
+        app.kubernetes.io/component: zoekt
+    spec:
+      containers:
+        - name: zoekt
+          image: rootseeker-zoekt:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 6070
+              name: http
+          volumeMounts:
+            - name: zoekt-index
+              mountPath: /data/index
+            - name: repos
+              mountPath: /repos
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /api/list
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /api/list
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: zoekt-index
+          persistentVolumeClaim:
+            claimName: zoekt-index
+        - name: repos
+          persistentVolumeClaim:
+            claimName: repo-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zoekt
+  namespace: rootseeker
+  labels:
+    app.kubernetes.io/name: rootseeker-zoekt
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6070
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: rootseeker-zoekt

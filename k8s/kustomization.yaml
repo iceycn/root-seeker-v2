@@ -1,0 +1,26 @@
+# RootSeeker V2 - Kustomization
+# Usage: kubectl apply -k k8s/
+#
+# Or with overlays:
+#   kubectl apply -k k8s/overlays/production
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rootseeker
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - pvc.yaml
+  - zoekt.yaml
+  - qdrant.yaml
+  - api.yaml
+  - admin.yaml
+  - worker.yaml
+  - scheduler.yaml
+  - ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: rootseeker
+  app.kubernetes.io/managed-by: kustomize

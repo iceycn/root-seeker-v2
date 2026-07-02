@@ -1,0 +1,15 @@
+slug: tools/log-query-trace
+skill_kind: tool
+bound_tools:
+  - log.query_by_trace_id
+tags:
+  - builtin
+  - tool
+  - log
+required_tools:
+  - log.query_by_trace_id
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: log
+  reference: references/guide.md

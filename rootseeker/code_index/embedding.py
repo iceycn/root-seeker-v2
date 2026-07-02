@@ -8,6 +8,8 @@ from typing import Protocol
 
 import httpx
 
+from rootseeker.infra_core.openai_compat import build_openai_compat_headers
+
 __all__ = [
     "EmbeddingProvider",
     "HashEmbeddingProvider",
@@ -66,10 +68,7 @@ class HttpEmbeddingProvider:
     timeout_seconds: float = 30.0
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+        return build_openai_compat_headers(self.api_key or "")
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         url = f"{self.base_url.rstrip('/')}/embeddings"

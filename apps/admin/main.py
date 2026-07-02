@@ -20,6 +20,11 @@ from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.flow_runtime import build_execution_trace
+from rootseeker.infra_core.http_client import get_with_retry, outbound_http_client
+from rootseeker.infra_core.openai_compat import (
+    resolve_mimo_base_url,
+    test_openai_compatible_connection,
+)
 from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
 
 ADMIN_CASE_ID = "admin-console"
@@ -151,14 +156,20 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
     {
         "name": "mimo",
         "provider_type": "openai_compatible",
-        "base_url": "https://api.mimo.mi.com/v1",
-        "model": "mimo-vl",
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "model": "mimo-v2.5-pro",
         "embedding_model": "",
         "embedding_dimension": 1536,
         "enabled": False,
         "builtin": True,
-        "api_key_url": "https://platform.mimo.mi.com/",
-        "metadata": {"display_name": "小米 MiMo", "models": ["mimo-vl", "mimo-reasoner"]},
+        "api_key_url": "https://platform.xiaomimimo.com/",
+        "metadata": {
+            "display_name": "小米 MiMo",
+            "models": ["mimo-v2.5-pro", "mimo-v2-pro", "mimo-reasoner"],
+            "token_plan_openai_base_url": "https://token-plan-cn.xiaomimimo.com/v1",
+            "token_plan_anthropic_base_url": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            "hint": "Token Plan 密钥（tp- 开头）请使用 token-plan-cn 专属 Base URL",
+        },
     },
     {
         "name": "tencent-token-plan",
@@ -185,6 +196,32 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
         "metadata": {"display_name": "腾讯云 Coding Plan", "models": []},
     },
 ]
+
+
+def _prepare_ai_provider(provider: dict[str, Any]) -> dict[str, Any]:
+    prepared = dict(provider)
+    name = str(prepared.get("name") or "")
+    api_key = str(prepared.get("api_key") or "")
+    provider_type = str(prepared.get("provider_type") or "openai_compatible")
+    if name == "mimo":
+        prepared["base_url"] = resolve_mimo_base_url(
+            api_key=api_key,
+            base_url=str(prepared.get("base_url") or ""),
+            provider_type=provider_type,
+        )
+    return prepared
+
+
+def _persist_ai_provider_if_changed(store: AdminConfigStore, provider: dict[str, Any]) -> dict[str, Any]:
+    prepared = _prepare_ai_provider(provider)
+    if prepared.get("base_url") != provider.get("base_url"):
+        store.upsert_ai_provider(prepared)
+        settings = dict(store.get_settings())
+        if prepared.get("name") == settings.get("ROOTSEEKER_LLM_PROVIDER_NAME"):
+            settings["ROOTSEEKER_LLM_BASE_URL"] = prepared["base_url"]
+            settings["ROOTSEEKER_EMBEDDING_BASE_URL"] = prepared["base_url"]
+            store.update_settings(settings)
+    return prepared
 
 
 class AdminRegisterRepoRequest(BaseModel):
@@ -333,6 +370,13 @@ def _invoke_admin_tool(runtime: DevRuntime, tool_name: str, arguments: dict[str,
     return result.content
 
 
+def _persist_repo_state(store: AdminConfigStore, runtime: DevRuntime, repo_name: str) -> None:
+    result = _invoke_admin_tool(runtime, "repo.get", {"name": repo_name})
+    repo_payload = result.get("repo")
+    if isinstance(repo_payload, dict):
+        store.upsert_repo(RepositoryRef.model_validate(repo_payload))
+
+
 def _load_admin_config(runtime: DevRuntime, store: AdminConfigStore) -> None:
     for repo in store.list_repos():
         runtime.gateway.invoke(
@@ -365,6 +409,15 @@ def _builtin_skill_dir(config_root: Path, slug: str) -> Path:
     return config_root / "skills" / "builtin" / Path(*parts)
 
 
+def _resolve_skill_dir(config_root: Path, skill: SkillSpec, slug: str) -> Path:
+    raw_dir = skill.metadata.get("skill_dir")
+    if isinstance(raw_dir, str) and raw_dir.strip():
+        path = Path(raw_dir)
+        if path.is_dir():
+            return path
+    return _builtin_skill_dir(config_root, slug)
+
+
 def _read_skill_references(skill_dir: Path) -> list[dict[str, str]]:
     references_dir = skill_dir / "references"
     if not references_dir.is_dir():
@@ -379,6 +432,43 @@ def _read_skill_references(skill_dir: Path) -> list[dict[str, str]]:
             }
         )
     return refs
+
+
+def _tool_parameters_for_actions(runtime: DevRuntime, actions: list[str]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    docs: list[dict[str, Any]] = []
+    for action in actions:
+        name = str(action or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        spec = runtime.tool_registry.get_spec(name)
+        if spec is None:
+            docs.append(
+                {
+                    "tool_name": name,
+                    "description": "",
+                    "parameters_schema": {},
+                    "registered": False,
+                }
+            )
+            continue
+        docs.append(
+            {
+                "tool_name": spec.name,
+                "description": spec.description,
+                "parameters_schema": dict(spec.parameters_schema or {}),
+                "registered": True,
+            }
+        )
+    return docs
+
+
+def _skill_tool_parameters(runtime: DevRuntime, skill: SkillSpec) -> list[dict[str, Any]]:
+    if skill.bound_tools:
+        return _tool_parameters_for_actions(runtime, list(skill.bound_tools))
+    actions = [step.action for step in skill.steps if step.action]
+    return _tool_parameters_for_actions(runtime, actions)
 
 
 def _join_url(base_url: str, path: str) -> str:
@@ -445,10 +535,12 @@ def _repo_auth_headers(provider: str, token: str) -> dict[str, str]:
         headers["x-yunxiao-token"] = token
         return headers
     if provider == "github":
+        headers["Accept"] = "application/vnd.github+json"
         headers["Authorization"] = f"Bearer {token}"
-    else:
-        headers["Authorization"] = f"Bearer {token}"
-        headers["PRIVATE-TOKEN"] = token
+        headers["X-GitHub-Api-Version"] = "2022-11-28"
+        return headers
+    headers["Authorization"] = f"Bearer {token}"
+    headers["PRIVATE-TOKEN"] = token
     return headers
 
 
@@ -522,8 +614,13 @@ def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
         params["access_token"] = req.token
     if provider == "yunxiao":
         params = {"page": req.page, "perPage": req.per_page}
-    with httpx.Client(timeout=10.0) as client:
-        response = client.get(url, headers=_repo_auth_headers(provider, req.token), params=params)
+    with outbound_http_client(timeout=30.0) as client:
+        response = get_with_retry(
+            client,
+            url,
+            headers=_repo_auth_headers(provider, req.token),
+            params=params,
+        )
         response.raise_for_status()
         data = response.json()
     repos = [
@@ -580,11 +677,14 @@ def _configured_ai_provider(store: AdminConfigStore) -> dict[str, Any] | None:
     default_name = settings.get("ROOTSEEKER_DEFAULT_AI_PROVIDER")
     providers_by_name = {item.get("name"): item for item in store.list_ai_providers()}
     if default_name and default_name in providers_by_name:
-        return providers_by_name[default_name]
-    for item in store.list_ai_providers():
-        if item.get("api_key") and item.get("base_url"):
-            return item
-    return None
+        provider = _prepare_ai_provider(providers_by_name[default_name])
+    else:
+        provider = None
+        for item in store.list_ai_providers():
+            if item.get("api_key") and item.get("base_url"):
+                provider = _prepare_ai_provider(item)
+                break
+    return provider
 
 
 def _configured_ai_model(store: AdminConfigStore, provider: dict[str, Any]) -> str:
@@ -800,15 +900,15 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/api/ai-providers")
     def upsert_ai_provider(req: AdminAiProviderRequest) -> dict[str, Any]:
-        payload = req.model_dump(mode="json")
+        payload = _prepare_ai_provider(req.model_dump(mode="json"))
         store.upsert_ai_provider(payload)
         settings: dict[str, Any] = {}
         if req.provider_type in {"openai_compatible", "http"}:
             settings["ROOTSEEKER_LLM_ENABLED"] = True
             settings["ROOTSEEKER_LLM_PROVIDER_NAME"] = req.name
-            if req.base_url:
-                settings["ROOTSEEKER_LLM_BASE_URL"] = req.base_url
-                settings["ROOTSEEKER_EMBEDDING_BASE_URL"] = req.base_url
+            if payload.get("base_url"):
+                settings["ROOTSEEKER_LLM_BASE_URL"] = payload["base_url"]
+                settings["ROOTSEEKER_EMBEDDING_BASE_URL"] = payload["base_url"]
             if req.api_key:
                 settings["ROOTSEEKER_LLM_API_KEY"] = req.api_key
                 settings["ROOTSEEKER_EMBEDDING_API_KEY"] = req.api_key
@@ -852,30 +952,14 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         provider = next((item for item in store.list_ai_providers() if item.get("name") == name), None)
         if provider is None:
             raise HTTPException(status_code=404, detail=f"AI provider not found: {name}")
-        base_url = str(provider.get("base_url") or "").rstrip("/")
-        if not base_url:
-            return {"ok": False, "name": name, "error": "base_url is empty"}
-        headers = {}
-        api_key = str(provider.get("api_key") or "")
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        try:
-            started = time.perf_counter()
-            with httpx.Client(timeout=10.0, trust_env=False) as client:
-                response = client.get(f"{base_url}/models", headers=headers)
-                if response.status_code == 404:
-                    response = client.get(base_url, headers=headers)
-                elapsed_ms = int((time.perf_counter() - started) * 1000)
-                return {
-                    "ok": 200 <= response.status_code < 500,
-                    "name": name,
-                    "display_name": provider.get("metadata", {}).get("display_name") or name,
-                    "response_ms": elapsed_ms,
-                    "status_code": response.status_code,
-                    "body_preview": response.text[:500],
-                }
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "name": name, "error": str(exc)}
+        provider = _persist_ai_provider_if_changed(store, provider)
+        return test_openai_compatible_connection(
+            base_url=str(provider.get("base_url") or ""),
+            api_key=str(provider.get("api_key") or ""),
+            model=str(provider.get("model") or ""),
+            name=name,
+            display_name=str(provider.get("metadata", {}).get("display_name") or name),
+        )
 
     @app.get("/api/callbacks")
     def list_callbacks() -> dict[str, Any]:
@@ -1014,7 +1098,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
                 "skill_md": "",
                 "runtime_spec": skill.model_dump(mode="json"),
             }
-        skill_dir = _builtin_skill_dir(config_root, slug)
+        skill_dir = _resolve_skill_dir(config_root, skill, slug)
         skill_path = skill_dir / "SKILL.md"
         sidecar_path = skill_dir / ROOTSEEKER_SKILL_SPEC_FILENAME
         if not skill_path.exists():
@@ -1026,6 +1110,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             "rootseeker_skill_yaml": sidecar_path.read_text(encoding="utf-8") if sidecar_path.exists() else "",
             "references": _read_skill_references(skill_dir),
             "runtime_spec": skill.model_dump(mode="json"),
+            "tool_parameters": _skill_tool_parameters(runtime, skill),
         }
 
     @app.get("/api/skills/{slug:path}")
@@ -1033,7 +1118,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         skill = runtime.skill_registry.get(slug)
         if skill is None:
             raise HTTPException(status_code=404, detail="skill not found")
-        return skill.model_dump(mode="json")
+        payload = skill.model_dump(mode="json")
+        payload["tool_parameters"] = _skill_tool_parameters(runtime, skill)
+        return payload
 
     @app.put("/api/skills")
     def upsert_skill(req: AdminSkillUpsertRequest) -> dict[str, Any]:
@@ -1153,6 +1240,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             store.upsert_repo(RepositoryRef.model_validate(repo_payload))
         if req.trigger_index:
             sync_result = _invoke_admin_tool(runtime, "repo.sync", {"name": name, "trigger_index": True})
+            _persist_repo_state(store, runtime, name)
             return {"ok": bool(result.get("ok")) and bool(sync_result.get("ok")), "repo": repo_payload, "sync": sync_result}
         return result
 
@@ -1168,7 +1256,12 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/api/repos/{repo_name}/sync")
     def sync_repo(repo_name: str, req: AdminSyncRepoRequest) -> dict[str, Any]:
-        return _invoke_admin_tool(runtime, "repo.sync", {"name": repo_name, "trigger_index": req.trigger_index})
+        result = _invoke_admin_tool(runtime, "repo.sync", {"name": repo_name, "trigger_index": req.trigger_index})
+        _persist_repo_state(store, runtime, repo_name)
+        if not result.get("ok"):
+            message = str(result.get("message") or result.get("error") or "repo sync failed")
+            raise HTTPException(status_code=502, detail=message)
+        return result
 
     @app.get("/api/repos/{repo_name}/index-status")
     def repo_index_status(repo_name: str) -> dict[str, Any]:

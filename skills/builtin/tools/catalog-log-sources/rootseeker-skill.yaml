@@ -1,0 +1,15 @@
+slug: tools/catalog-log-sources
+skill_kind: tool
+bound_tools:
+  - catalog.get_log_sources
+tags:
+  - builtin
+  - tool
+  - catalog
+required_tools:
+  - catalog.get_log_sources
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: service_catalog
+  reference: references/guide.md

@@ -1,0 +1,18 @@
+slug: tools/index-repo-context
+skill_kind: tool_group
+bound_tools:
+  - index.get_status
+  - repo.list
+tags:
+  - builtin
+  - tool
+  - index
+  - repo
+required_tools:
+  - index.get_status
+  - repo.list
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: other
+  reference: references/guide.md

@@ -64,6 +64,8 @@ def test_default_flow_closed_loop_from_alert_payload() -> None:
     assert len(result.evidence_pack.items) >= 10
     assert result.report.case_id == result.case.case_id
     assert result.report.evidence_item_ids
+    assert result.step_traces
+    assert all("argument_source" in trace for trace in result.step_traces)
 
     audit_events = runtime.audit_log.list_events(case_id=result.case.case_id)
     assert audit_events

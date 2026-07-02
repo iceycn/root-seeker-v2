@@ -1,0 +1,20 @@
+# RootSeeker V2 - Global ConfigMap
+# Contains non-sensitive configuration shared across services
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rootseeker-config
+  namespace: rootseeker
+data:
+  ROOTSEEKER_STORAGE_BACKEND: "sqlite"
+  ROOTSEEKER_SQLITE_DB_PATH: "/app/data/rootseeker.db"
+  ROOTSEEKER_INTERNAL_ADAPTER_KIND: "composite"
+  ROOTSEEKER_QDRANT_COLLECTION_NAME: "code_chunks"
+  ROOTSEEKER_EMBEDDING_PROVIDER: "hash"
+  ROOTSEEKER_EMBEDDING_DIMENSION: "384"
+  ROOTSEEKER_REPO_ENABLE_ZOEKT: "true"
+  ROOTSEEKER_REPO_ENABLE_QDRANT: "true"
+  ROOTSEEKER_LLM_ENABLED: "true"
+  ROOTSEEKER_ZOEKT_ENDPOINT: "http://zoekt.rootseeker.svc.cluster.local:6070"
+  ROOTSEEKER_QDRANT_ENDPOINT: "http://qdrant.rootseeker.svc.cluster.local:6333"
+  ROOTSEEKER_REPO_BASE_PATH: "/data/repos"

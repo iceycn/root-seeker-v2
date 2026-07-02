@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from mcp_servers.internal.tool_schemas import parameter_schema_for
 from mcp_servers.internal.adapters import InternalToolAdapter
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.tool import ToolPermissionLevel, ToolScope, ToolSpec
@@ -89,7 +90,11 @@ def register_internal_tools(
         )
 
     def _invoke_code_read(args: dict[str, Any]) -> dict[str, Any]:
-        return adapter.read_code(str(args.get("path", "README.md")))
+        repo = args.get("repo")
+        return adapter.read_code(
+            str(args.get("path", "README.md")),
+            repo=str(repo) if repo else None,
+        )
 
     def _invoke_index_status(_args: dict[str, Any]) -> dict[str, Any]:
         return adapter.get_index_status()
@@ -146,6 +151,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["incident", "alert"],
+                parameters_schema=parameter_schema_for("incident.normalize"),
             ),
             _invoke_incident_normalize,
         ),
@@ -156,6 +162,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["catalog"],
+                parameters_schema=parameter_schema_for("catalog.resolve_service"),
             ),
             _invoke_catalog_resolve,
         ),
@@ -166,6 +173,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["catalog"],
+                parameters_schema=parameter_schema_for("catalog.get_log_sources"),
             ),
             _invoke_catalog_log_sources,
         ),
@@ -176,6 +184,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["log"],
+                parameters_schema=parameter_schema_for("log.query_by_trace_id"),
             ),
             _invoke_log_by_trace,
         ),
@@ -186,6 +195,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["log"],
+                parameters_schema=parameter_schema_for("log.query_by_template"),
             ),
             _invoke_log_by_template,
         ),
@@ -196,6 +206,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["trace"],
+                parameters_schema=parameter_schema_for("trace.get_chain"),
             ),
             _invoke_trace_chain,
         ),
@@ -206,6 +217,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["code"],
+                parameters_schema=parameter_schema_for("code.search"),
             ),
             _invoke_code_search,
         ),
@@ -226,6 +238,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["code"],
+                parameters_schema=parameter_schema_for("code.read"),
             ),
             _invoke_code_read,
         ),
@@ -236,6 +249,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["index"],
+                parameters_schema=parameter_schema_for("index.get_status"),
             ),
             _invoke_index_status,
         ),
@@ -247,6 +261,7 @@ def register_internal_tools(
                 scope=internal,
                 permission_level=ToolPermissionLevel.WRITE,
                 tags=["notify"],
+                parameters_schema=parameter_schema_for("notify.send"),
             ),
             _invoke_notify_send,
         ),
@@ -279,6 +294,7 @@ def register_internal_tools(
                 server_name=server,
                 scope=internal,
                 tags=["repo"],
+                parameters_schema=parameter_schema_for("repo.list"),
             ),
             _repo_list,
         ),

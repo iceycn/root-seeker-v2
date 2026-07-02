@@ -1,0 +1,15 @@
+slug: tools/trace-chain
+skill_kind: tool
+bound_tools:
+  - trace.get_chain
+tags:
+  - builtin
+  - tool
+  - trace
+required_tools:
+  - trace.get_chain
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: trace
+  reference: references/guide.md

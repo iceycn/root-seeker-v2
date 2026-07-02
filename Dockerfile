@@ -1,57 +1,71 @@
 # RootSeeker V2 Dockerfile
-# Multi-stage build for production deployment
+# Multi-stage build; production image installs git for repo sync/clone
 
-# Build stage
+# ============================================================
+# Stage 1: Build admin-web frontend
+# ============================================================
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /build/admin-web
+
+COPY apps/admin-web/package.json apps/admin-web/package-lock.json ./
+RUN npm ci --prefer-offline
+
+COPY apps/admin-web/ ./
+RUN npm run build
+
+# ============================================================
+# Stage 2: Python builder
+# ============================================================
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple \
+    PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
-# Install Python dependencies
 COPY pyproject.toml README.md ./
 COPY rootseeker ./rootseeker
 COPY apps ./apps
 COPY mcp_servers ./mcp_servers
 COPY plugins ./plugins
 COPY skills ./skills
+
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
 
-# Production stage
+# ============================================================
+# Stage 3: Production image
+# ============================================================
 FROM python:3.11-slim AS production
 
 WORKDIR /app
 
-# Create non-root user
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/* && \
-    groupadd -r rootseeker && useradd -r -g rootseeker rootseeker
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy installed packages from builder
+COPY docker/bin/zoekt-index /usr/local/bin/zoekt-index
+RUN chmod +x /usr/local/bin/zoekt-index
+
+RUN groupadd -r rootseeker && useradd -r -g rootseeker -d /app rootseeker
+
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy application code
 COPY --chown=rootseeker:rootseeker . .
+COPY --from=frontend-builder --chown=rootseeker:rootseeker /build/admin-web/dist /app/apps/admin-web/dist
 
-# Set environment variables
+RUN mkdir -p /app/data /data/repos /data/zoekt/index && \
+    chown -R rootseeker:rootseeker /app/data /data
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    ROOTSEEKER_ZOEKT_INDEX_BINARY=/usr/local/bin/zoekt-index
 
-# Switch to non-root user
 USER rootseeker
 
-# Expose API port
-EXPOSE 8000
+EXPOSE 8000 8010
 
-# Default command (API server)
 CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

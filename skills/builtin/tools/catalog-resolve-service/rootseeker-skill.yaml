@@ -1,0 +1,15 @@
+slug: tools/catalog-resolve-service
+skill_kind: tool
+bound_tools:
+  - catalog.resolve_service
+tags:
+  - builtin
+  - tool
+  - catalog
+required_tools:
+  - catalog.resolve_service
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: service_catalog
+  reference: references/guide.md

@@ -134,27 +134,13 @@ def parse_tool_plan_content(
     )
 
 
+from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumentResolver
+
+_rule_resolver = RuleStepArgumentResolver()
+
+
 def build_default_tool_arguments(tool_name: str, case_request: CaseCreateRequest) -> dict[str, Any]:
-    trace_id = str(case_request.metadata.get("trace_id", "trace-unknown"))
-    tenant = str(case_request.metadata.get("tenant", "demo"))
-    environment = str(case_request.metadata.get("environment", "prod"))
-    if tool_name == "catalog.resolve_service":
-        return {"tenant": tenant, "environment": environment, "service_name": case_request.service_name}
-    if tool_name == "catalog.get_log_sources":
-        return {"tenant": tenant, "environment": environment, "service_name": case_request.service_name}
-    if tool_name == "log.query_by_trace_id":
-        return {"trace_id": trace_id, "service_name": case_request.service_name}
-    if tool_name == "log.query_by_template":
-        return {"template_id": "default.error_window", "service_name": case_request.service_name}
-    if tool_name == "trace.get_chain":
-        return {"trace_id": trace_id}
-    if tool_name == "code.search":
-        return {"query": case_request.symptom}
-    if tool_name == "code.semantic_search":
-        return {"query": case_request.symptom, "limit": 10}
-    if tool_name == "code.read":
-        return {"path": str(case_request.metadata.get("code_path", "README.md"))}
-    return {}
+    return _rule_resolver.resolve(tool_name, case_request, step_outputs={})
 
 
 def _parse_json_object(content: str) -> dict[str, Any] | None:

@@ -1,0 +1,55 @@
+# RootSeeker V2 - Ingress (API + Admin)
+# Adjust the host and TLS for your domain
+# For local k3s/minikube: use the default ingress controller
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rootseeker-ingress
+  namespace: rootseeker
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/websocket-services: "api"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: rootseeker.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+          - path: /gateway
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+          - path: /healthz
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin
+                port:
+                  number: 8010

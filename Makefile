@@ -3,7 +3,13 @@ UVICORN ?= uvicorn
 HOST ?= 127.0.0.1
 PORT ?= 8000
 
-.PHONY: install test api admin demo demo-api worker worker-loop scheduler scheduler-loop
+.PHONY: install test api admin demo demo-api worker worker-loop scheduler scheduler-loop \
+        docker-up docker-down docker-build docker-logs docker-ps \
+        k8s-deploy k8s-remove k8s-status k8s-build
+
+# ==============================
+# Local Development
+# ==============================
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -34,3 +40,48 @@ scheduler:
 
 scheduler-loop:
 	rootseeker-scheduler --loop --interval-seconds 60 --retries 2
+
+# ==============================
+# Docker Compose
+# ==============================
+
+docker-build:
+	docker compose build
+
+docker-up:
+	@test -f .env || cp .env.docker .env
+	docker compose up -d --build
+	@echo ""
+	@echo "RootSeeker V2 is starting!"
+	@echo "  API:   http://localhost:8000"
+	@echo "  Admin: http://localhost:8010"
+	@echo "  Health: curl http://localhost:8000/healthz"
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f api
+
+docker-ps:
+	docker compose ps
+
+# ==============================
+# Kubernetes
+# ==============================
+
+k8s-build: docker-build
+	docker build -t rootseeker:latest .
+	docker build -t rootseeker-zoekt:latest -f docker/Dockerfile.zoekt docker/
+
+k8s-deploy:
+	kubectl apply -k k8s/
+	@echo ""
+	@echo "RootSeeker V2 deployed! Wait for pods:"
+	@echo "  kubectl get pods -n rootseeker -w"
+
+k8s-remove:
+	kubectl delete -k k8s/ --ignore-not-found=true
+
+k8s-status:
+	kubectl get all -n rootseeker

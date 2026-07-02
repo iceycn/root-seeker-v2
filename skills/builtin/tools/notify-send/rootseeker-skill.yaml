@@ -1,0 +1,15 @@
+slug: tools/notify-send
+skill_kind: tool
+bound_tools:
+  - notify.send
+tags:
+  - builtin
+  - tool
+  - notify
+required_tools:
+  - notify.send
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: none
+  reference: references/guide.md

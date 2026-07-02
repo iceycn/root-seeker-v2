@@ -1,159 +1,251 @@
 # RootSeeker V2 Docker Compose
-# Development and production deployment configuration
-
-version: "3.8"
+# Full-stack local deployment: docker compose up -d --build
+#
+# With proxy (China network):
+#   set HTTP_PROXY=http://host.docker.internal:10808
+#   set HTTPS_PROXY=http://host.docker.internal:10808
+#   set NO_PROXY=localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal
+#   docker compose up -d --build
+#
+# Optional profiles:
+#   --profile tracing   - add Jaeger for distributed tracing
 
 services:
-  # API Server
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: rootseeker-api
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     environment:
+      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
+      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
       - ROOTSEEKER_INTERNAL_ADAPTER_KIND=${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
-      - ROOTSEEKER_INTERNAL_HTTP_BASE_URL=${ROOTSEEKER_INTERNAL_HTTP_BASE_URL:-http://internal:9000}
-      - SLS_ACCESS_KEY_ID=${SLS_ACCESS_KEY_ID:-}
-      - SLS_ACCESS_KEY_SECRET=${SLS_ACCESS_KEY_SECRET:-}
-      - SLS_ENDPOINT=${SLS_ENDPOINT:-}
-      - SLS_PROJECT=${SLS_PROJECT:-}
-      - SLS_LOGSTORE=${SLS_LOGSTORE:-}
-      - JAEGER_ENDPOINT=${JAEGER_ENDPOINT:-}
-      - ZOEKT_ENDPOINT=${ZOEKT_ENDPOINT:-http://zoekt:6070}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=${ROOTSEEKER_ZOEKT_ENDPOINT:-http://zoekt:6070}
-      - ZOEKT_TIMEOUT_SECONDS=${ZOEKT_TIMEOUT_SECONDS:-30}
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=${ROOTSEEKER_ZOEKT_INDEX_DIR:-/data/zoekt/index}
-      - QDRANT_ENDPOINT=${QDRANT_ENDPOINT:-http://qdrant:6333}
-      - ROOTSEEKER_QDRANT_ENDPOINT=${ROOTSEEKER_QDRANT_ENDPOINT:-http://qdrant:6333}
-      - QDRANT_TIMEOUT_SECONDS=${QDRANT_TIMEOUT_SECONDS:-30}
-      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-code_chunks}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
+      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
       - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - ROOTSEEKER_QDRANT_API_KEY=${ROOTSEEKER_QDRANT_API_KEY:-}
-      - ROOTSEEKER_REPO_BASE_PATH=${ROOTSEEKER_REPO_BASE_PATH:-/data/repos}
+      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
+      - ROOTSEEKER_REPO_ENABLE_ZOEKT=true
+      - ROOTSEEKER_REPO_ENABLE_QDRANT=true
+      - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
+      - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
+      - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
+      - ROOTSEEKER_LLM_BASE_URL=${ROOTSEEKER_LLM_BASE_URL:-}
+      - ROOTSEEKER_LLM_API_KEY=${ROOTSEEKER_LLM_API_KEY:-}
+      - ROOTSEEKER_LLM_MODEL=${ROOTSEEKER_LLM_MODEL:-}
     volumes:
-      - ./skills:/app/skills:ro
-      - ./plugins:/app/plugins:ro
       - rootseeker-data:/app/data
-      - ./data/repos:/data/repos
+      - repo-data:/data/repos
       - zoekt-index:/data/zoekt/index
+      - ./skills:/app/skills:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
+    depends_on:
+      zoekt:
+        condition: service_started
+      qdrant:
+        condition: service_healthy
     networks:
-      - rootseeker-network
+      - rootseeker-net
 
-  # Worker (background task processor)
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rootseeker-admin
+    command: ["uvicorn", "apps.admin.main:app", "--host", "0.0.0.0", "--port", "8010"]
+    ports:
+      - "${ADMIN_PORT:-8010}:8010"
+    environment:
+      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
+      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
+      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
+      - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
+      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
+      - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
+      - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
+      - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
+      - ROOTSEEKER_LLM_BASE_URL=${ROOTSEEKER_LLM_BASE_URL:-}
+      - ROOTSEEKER_LLM_API_KEY=${ROOTSEEKER_LLM_API_KEY:-}
+      - ROOTSEEKER_LLM_MODEL=${ROOTSEEKER_LLM_MODEL:-}
+      - ADMIN_HOST=0.0.0.0
+      - ADMIN_PORT=8010
+    volumes:
+      - rootseeker-data:/app/data
+      - repo-data:/data/repos
+      - zoekt-index:/data/zoekt/index
+      - ./skills:/app/skills:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - rootseeker-net
+
   worker:
     build:
       context: .
       dockerfile: Dockerfile
-    command: ["rootseeker-worker", "--loop", "--interval-seconds", "5", "--max-empty-polls", "10"]
+    container_name: rootseeker-worker
+    command:
+      [
+        "rootseeker-worker",
+        "--loop",
+        "--interval-seconds",
+        "5",
+        "--max-empty-polls",
+        "0",
+        "--max-runs",
+        "0",
+      ]
     environment:
+      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
+      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
       - ROOTSEEKER_INTERNAL_ADAPTER_KIND=${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
-      - ROOTSEEKER_INTERNAL_HTTP_BASE_URL=${ROOTSEEKER_INTERNAL_HTTP_BASE_URL:-http://internal:9000}
-      - ZOEKT_ENDPOINT=${ZOEKT_ENDPOINT:-http://zoekt:6070}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=${ROOTSEEKER_ZOEKT_ENDPOINT:-http://zoekt:6070}
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=${ROOTSEEKER_ZOEKT_INDEX_DIR:-/data/zoekt/index}
-      - QDRANT_ENDPOINT=${QDRANT_ENDPOINT:-http://qdrant:6333}
-      - ROOTSEEKER_QDRANT_ENDPOINT=${ROOTSEEKER_QDRANT_ENDPOINT:-http://qdrant:6333}
-      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-code_chunks}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
+      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
       - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - ROOTSEEKER_QDRANT_API_KEY=${ROOTSEEKER_QDRANT_API_KEY:-}
-      - ROOTSEEKER_REPO_BASE_PATH=${ROOTSEEKER_REPO_BASE_PATH:-/data/repos}
+      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
+      - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
+      - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
+      - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
+      - ROOTSEEKER_LLM_BASE_URL=${ROOTSEEKER_LLM_BASE_URL:-}
+      - ROOTSEEKER_LLM_API_KEY=${ROOTSEEKER_LLM_API_KEY:-}
+      - ROOTSEEKER_LLM_MODEL=${ROOTSEEKER_LLM_MODEL:-}
     volumes:
-      - ./skills:/app/skills:ro
-      - ./plugins:/app/plugins:ro
       - rootseeker-data:/app/data
-      - ./data/repos:/data/repos
+      - repo-data:/data/repos
       - zoekt-index:/data/zoekt/index
-    depends_on:
-      - api
+      - ./skills:/app/skills:ro
     restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
-      - rootseeker-network
+      - rootseeker-net
 
-  # Scheduler (cron jobs)
   scheduler:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: rootseeker-scheduler
     command: ["rootseeker-scheduler", "--loop", "--interval-seconds", "60", "--max-runs", "0"]
     environment:
-      - ROOTSEEKER_INTERNAL_ADAPTER_KIND=${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
-      - ROOTSEEKER_INTERNAL_HTTP_BASE_URL=${ROOTSEEKER_INTERNAL_HTTP_BASE_URL:-http://internal:9000}
-      - ZOEKT_ENDPOINT=${ZOEKT_ENDPOINT:-http://zoekt:6070}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=${ROOTSEEKER_ZOEKT_ENDPOINT:-http://zoekt:6070}
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=${ROOTSEEKER_ZOEKT_INDEX_DIR:-/data/zoekt/index}
-      - QDRANT_ENDPOINT=${QDRANT_ENDPOINT:-http://qdrant:6333}
-      - ROOTSEEKER_QDRANT_ENDPOINT=${ROOTSEEKER_QDRANT_ENDPOINT:-http://qdrant:6333}
-      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-code_chunks}
-      - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
-      - ROOTSEEKER_QDRANT_API_KEY=${ROOTSEEKER_QDRANT_API_KEY:-}
-      - ROOTSEEKER_REPO_BASE_PATH=${ROOTSEEKER_REPO_BASE_PATH:-/data/repos}
+      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
+      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
+      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
+      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
+      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
     volumes:
-      - ./skills:/app/skills:ro
-      - ./plugins:/app/plugins:ro
       - rootseeker-data:/app/data
-      - ./data/repos:/data/repos
+      - repo-data:/data/repos
       - zoekt-index:/data/zoekt/index
-    depends_on:
-      - api
     restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
-      - rootseeker-network
+      - rootseeker-net
 
-  # Jaeger (optional, for trace visualization)
-  jaeger:
-    image: jaegertracing/all-in-one:latest
-    ports:
-      - "16686:16686"  # UI
-      - "14268:14268"  # Collector
-    environment:
-      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
-    profiles:
-      - tracing
-    networks:
-      - rootseeker-network
-
-  # Zoekt — 构建方式与 root_seek/root_seeker_docker/Dockerfile.zoekt 一致（zoekt-webserver -rpc）
   zoekt:
     build:
       context: ./docker
       dockerfile: Dockerfile.zoekt
+    container_name: rootseeker-zoekt
     ports:
-      - "6070:6070"
+      - "${ZOEKT_PORT:-6070}:6070"
     volumes:
       - zoekt-index:/data/index
-      - ./data/repos:/repos:ro
-    profiles:
-      - codesearch
+      - repo-data:/repos:ro
+    restart: unless-stopped
     networks:
-      - rootseeker-network
+      - rootseeker-net
 
-  # Qdrant — 与 root_seek/root_seeker_docker/docker-compose.yml 一致（镜像版本 + gRPC 6334）
   qdrant:
     image: qdrant/qdrant:v1.16.3
+    container_name: rootseeker-qdrant
     ports:
-      - "6333:6333"
+      - "${QDRANT_PORT:-6333}:6333"
       - "6334:6334"
     volumes:
       - qdrant-storage:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
-    profiles:
-      - codesearch
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q ready <&3'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
     networks:
-      - rootseeker-network
+      - rootseeker-net
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.54
+    container_name: rootseeker-jaeger
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "9411:9411"
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    profiles:
+      - tracing
+    networks:
+      - rootseeker-net
 
 volumes:
   rootseeker-data:
+    driver: local
+  repo-data:
     driver: local
   zoekt-index:
     driver: local
@@ -161,5 +253,6 @@ volumes:
     driver: local
 
 networks:
-  rootseeker-network:
+  rootseeker-net:
     driver: bridge
+    name: rootseeker

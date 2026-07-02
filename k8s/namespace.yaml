@@ -1,0 +1,8 @@
+# RootSeeker V2 Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rootseeker
+  labels:
+    app.kubernetes.io/name: rootseeker
+    app.kubernetes.io/part-of: rootseeker

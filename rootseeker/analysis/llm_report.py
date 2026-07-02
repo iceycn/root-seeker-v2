@@ -8,6 +8,8 @@ from typing import Any
 
 import httpx
 
+from rootseeker.infra_core.openai_compat import build_openai_compat_headers
+
 from rootseeker.analysis.root_cause_engine import RootCauseAnalysisResult
 from rootseeker.contracts.evidence import ContextWindow, EvidencePack, RootCauseConclusion
 from rootseeker.contracts.report import CaseReport
@@ -151,10 +153,7 @@ class OpenAICompatibleReportClient:
             with httpx.Client(**client_kwargs) as client:
                 response = client.post(
                     f"{self.config.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.config.api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=build_openai_compat_headers(self.config.api_key),
                     json={
                         "model": self.config.model,
                         "messages": messages,

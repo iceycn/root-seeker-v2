@@ -1,0 +1,57 @@
+# RootSeeker V2 - Worker Deployment (no Service needed)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: rootseeker
+  labels:
+    app.kubernetes.io/name: rootseeker-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: rootseeker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rootseeker-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rootseeker-worker
+        app.kubernetes.io/component: worker
+    spec:
+      containers:
+        - name: worker
+          image: rootseeker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["rootseeker-worker"]
+          args: ["--loop", "--interval-seconds", "5", "--max-empty-polls", "0"]
+          envFrom:
+            - configMapRef:
+                name: rootseeker-config
+            - secretRef:
+                name: rootseeker-secrets
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: repos
+              mountPath: /data/repos
+            - name: zoekt
+              mountPath: /data/zoekt/index
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rootseeker-data
+        - name: repos
+          persistentVolumeClaim:
+            claimName: repo-data
+        - name: zoekt
+          persistentVolumeClaim:
+            claimName: zoekt-index

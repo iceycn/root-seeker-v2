@@ -38,8 +38,13 @@ def test_admin_builtin_skill_content_returns_standard_skill_md() -> None:
     assert data["skill_md"].startswith("---\nname: Default log triage\n")
     assert "rootseeker-skill-spec" not in data["skill_md"]
     assert "\"slug\"" not in data["skill_md"]
-    assert data["rootseeker_skill_yaml"].startswith("slug: base/default-log-triage")
     assert data["runtime_spec"]["slug"] == "base/default-log-triage"
+    assert "flows/default-log-triage" in data["rootseeker_skill_yaml"]
+    assert "tool_parameters" in data
+    assert len(data["tool_parameters"]) > 0
+    first_tool = data["tool_parameters"][0]
+    assert "tool_name" in first_tool
+    assert "parameters_schema" in first_tool
 
 
 def test_admin_repo_register_and_list(tmp_path: Path) -> None:

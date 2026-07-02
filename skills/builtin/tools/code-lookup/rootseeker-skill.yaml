@@ -1,0 +1,17 @@
+slug: tools/code-lookup
+skill_kind: tool_group
+bound_tools:
+  - code.search
+  - code.read
+tags:
+  - builtin
+  - tool
+  - code
+required_tools:
+  - code.search
+  - code.read
+source_kind: builtin
+version: 1.0.0
+metadata:
+  evidence_type: code
+  reference: references/guide.md
