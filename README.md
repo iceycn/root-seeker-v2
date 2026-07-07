@@ -1,211 +1,129 @@
 # RootSeeker V2
 
-RootSeeker V2 is an enterprise incident troubleshooting system for production log chains.
+面向生产环境日志链路的**企业级故障排查系统**。从告警接入、日志与链路采集、代码索引检索，到根因分析与报告通知，提供可编排、可审计、可回放的全链路自动化排查能力。
 
-## Current Stage
+> **当前阶段**：MVP 主链路已在开发环境端到端跑通；核心平台模块已实现，部分能力仍在生产化加固中。详见 [实现状态](docs/implementation-status.md)。
 
-MVP chain is runnable end-to-end in development runtime. Several platform modules are now
-implemented beyond MVP, but some areas are still partial and need further production hardening.
+## 目录
 
-## Module Status Matrix
+- [核心能力](#核心能力)
+- [快速开始](#快速开始)
+- [常用命令](#常用命令)
+- [默认排查链路](#默认排查链路)
+- [API 服务](#api-服务)
+- [管理控制台](#管理控制台)
+- [代码检索（Zoekt + Qdrant）](#代码检索zoekt--qdrant)
+- [Docker 部署](#docker-部署)
+- [配置说明](#配置说明)
+- [项目结构](#项目结构)
+- [模块状态](#模块状态)
 
-Status legend:
+## 核心能力
 
-- `Completed`: implemented and covered by current tests in this repo
-- `Partial`: implemented with reduced scope or simpler defaults pending hardening
-- `Planned`: not yet implemented to the target design depth
+| 能力 | 说明 |
+| --- | --- |
+| **Skill 驱动流程** | 内置 `default-log-triage` 流程，按步骤加载工具 Skill，经 MCP Gateway 调用外部能力 |
+| **MCP 工具平面** | 统一内部/外部工具调用，内置策略守卫与审计 |
+| **证据与根因** | 证据归集、多假设推理、规则引擎 + 可选 LLM 报告增强 |
+| **代码索引** | Git 仓库同步、Zoekt 词法检索、Qdrant 语义搜索、LSP 符号查询 |
+| **多渠道接入** | Webhook / 阿里云 SLS / Prometheus 等告警归一化；飞书 / 钉钉 / 企微 / Slack 等通知 |
+| **控制平面** | Gateway WebSocket、Case/Flow/Skill/Tool 方法、审批与回放质量门禁 |
+| **持久化与回放** | SQLite 可选持久化；Case 回放与评估质量门禁 |
 
-| Ability Package | Module | Status |
-| --- | --- | --- |
-| 0-2 | Skeleton, contracts, storage/audit | Completed |
-| 3-5 | Plugin System, Skill System, MCP Plane (internal + external path) | Completed |
-| 6-8 | Service Catalog, Log Data Plane, Code Index | Completed |
-| 9-11 | Evidence, RootCauseEngine, Task/Flow Runtime | Completed |
-| 12-13 | Default flow + API/Worker/Scheduler entrypoints | Completed |
-| 14 | Replay/Evaluation + CLI/Cron replay | Completed |
-| 7 | Agent Runtime baseline (run loop, LLM tool planning, self-repair attempts, tool traces, compaction) | Partial |
-| 9 | Channel Routing (inbound/router/session/outbound/security + multi-channel normalizers) | Completed |
-| 10 | Gateway Control Plane (protocol/server/method/subscription/broadcast + WebSocket + auth/rate-limit) | Completed |
-| 13 | Infra/Observability advanced baseline (safe fs/json, network guard, secret resolver, redaction) | Completed |
-| - | LLM report enhancement (OpenAI-compatible provider + fallback metadata) | Completed |
-| - | Checkpoint step-level resume (step_outputs, execute_from_checkpoint) | Completed |
-| - | Skill auto-synthesis (DraftBuilder/Reviewer/Publisher) | Completed |
-| - | SQLite persistent storage (Case/Evidence/Report/Task/Checkpoint/Replay) | Completed |
-| - | Multi-channel adapters (Webhook/Feishu/DingTalk/WeChat/Slack/Discord) | Completed |
-| - | Approval policy baseline (write-tool approval store + gateway methods) | Partial |
-| - | Deployment policy orchestration (quality gate + manual override decision) | Partial |
+**环境要求**：Docker + Docker Compose（推荐快速体验）· Python 3.11+（本地开发与贡献代码）
 
-See `docs/implementation-status.md` for detailed scope and gaps.
+## 快速开始
 
-## Quick Start
+推荐使用 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant），无需本机安装 Python 依赖。
 
-1. Create a Python 3.11+ environment.
-2. Install project dependencies:
-
-   ```bash
-   pip install -e ".[dev]"
-   ```
-
-3. Run all tests:
-
-   ```bash
-   pytest
-   ```
-
-## Common Commands
+### 1. 准备配置
 
 ```bash
-make install
-make test
-make demo
-make api
-make admin
-make demo-api
-make worker
-make worker-loop
-make scheduler
-make scheduler-loop
-rootseeker demo
-rootseeker replay
-rootseeker-worker
-rootseeker-scheduler
+cp .env.docker .env   # 按需修改 LLM、SLS 等（不配置也可启动基础服务）
 ```
 
-`rootseeker-worker` supports `--loop --interval-seconds --max-empty-polls --max-runs --seed-demo`.
-`rootseeker-scheduler` supports `--loop --schedule --timezone --state-path --run-immediately/--no-run-immediately --interval-seconds --max-runs --retries --retry-delay-seconds`.
-
-## Admin Console
-
-RootSeeker V2 ships a standalone admin app, separate from the client/API service:
+### 2. 启动服务
 
 ```bash
-make admin
-# or
-ADMIN_PORT=8010 rootseeker-admin
-# or
-uvicorn apps.admin.main:app --host 127.0.0.1 --port 8010
+make docker-up
+# 或
+docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:8010/admin`.
+### 3. 验证
 
-Current admin capabilities:
-
-- View skills, plugins and registered MCP tools
-- Register, unregister, sync and inspect repositories
-- Trigger Zoekt/Qdrant indexing through the same repo tools used by the API
-- View and update the in-memory service catalog
-- Run Qdrant semantic code search
-- Inspect runtime health and index status
-
-Adapter switch (`composite` / `http`) via env:
+| 地址 | 说明 |
+| --- | --- |
+| http://localhost:8000/healthz | API 健康检查 |
+| http://localhost:8000/docs | Swagger API 文档 |
+| http://localhost:8010/admin | 管理控制台 |
 
 ```bash
-export ROOTSEEKER_INTERNAL_ADAPTER_KIND=composite
-export ROOTSEEKER_NOTIFY_DEFAULT_URL=https://example.com/my-webhook
-
-export ROOTSEEKER_INTERNAL_ADAPTER_KIND=http
-export ROOTSEEKER_INTERNAL_HTTP_BASE_URL=http://127.0.0.1:9000
-export ROOTSEEKER_INTERNAL_HTTP_TIMEOUT_SECONDS=5
+curl http://localhost:8000/healthz
+docker compose logs -f api    # 查看日志
+make docker-down              # 停止服务
 ```
 
-Persistent storage is opt-in. The default remains in-memory for local smoke tests:
+默认使用 SQLite 持久化 + hash embedding，**无需外部 AI 服务**即可运行。如需 LLM 报告增强，在 `.env` 中配置 `ROOTSEEKER_LLM_*`。
+
+### 本地开发（可选）
+
+贡献代码或跑单元测试时使用：
 
 ```bash
-export ROOTSEEKER_STORAGE_BACKEND=sqlite
-export ROOTSEEKER_SQLITE_DB_PATH=data/rootseeker.db
+pip install -e ".[dev]"   # 或 make install
+pytest                    # 或 make test
+make demo                 # 本地端到端演示（无需启动服务）
+make api && make demo-api # API 联调
 ```
 
-Cron scheduler state is file-backed by default:
+## 常用命令
+
+### 本地开发
+
+| 命令 | 说明 |
+| --- | --- |
+| `make install` | 安装项目及开发依赖 |
+| `make test` | 运行全部测试 |
+| `make demo` | 本地端到端演示 |
+| `make api` | 启动 API（`:8000`） |
+| `make admin` | 启动管理控制台（`:8010`） |
+| `make demo-api` | API 联调脚本 |
+| `make worker` | 单次 Worker 任务（含 demo seed） |
+| `make worker-loop` | Worker 轮询模式 |
+| `make scheduler` | 单次 Cron 调度 |
+| `make scheduler-loop` | Cron 轮询模式 |
+
+### CLI 入口
 
 ```bash
-export ROOTSEEKER_CRON_STATE_PATH=data/cron/scheduler-state.json
-rootseeker-scheduler --loop --schedule "*/5 * * * *"
+rootseeker demo          # 本地演示
+rootseeker replay        # Case 回放
+rootseeker-admin         # 管理控制台
+rootseeker-worker        # 后台任务 Worker
+rootseeker-scheduler     # 定时调度器
 ```
 
-LLM report enhancement uses an OpenAI-compatible chat completions endpoint. When these
-variables are configured, the default troubleshooting flow enhances `CaseReport.summary`
-and `CaseReport.root_cause` with model output while preserving the rule-engine result in
-report metadata:
+**Worker 常用参数**：`--loop --interval-seconds --max-empty-polls --max-runs --seed-demo`
 
-```bash
-export ROOTSEEKER_LLM_BASE_URL=https://api.openai.com/v1
-export ROOTSEEKER_LLM_API_KEY=...
-export ROOTSEEKER_LLM_MODEL=gpt-4o-mini
-# optional
-export ROOTSEEKER_LLM_PROVIDER_NAME=openai
-export ROOTSEEKER_LLM_ENABLED=false # opt out
-```
+**Scheduler 常用参数**：`--loop --schedule --timezone --state-path --run-immediately/--no-run-immediately --interval-seconds --max-runs --retries --retry-delay-seconds`
 
-## Run API Service
+### Docker
 
-```bash
-uvicorn apps.api.main:app --reload --port 8000
-```
+| 命令 | 说明 |
+| --- | --- |
+| `make docker-up` | 构建并启动全部服务 |
+| `make docker-down` | 停止服务 |
+| `make docker-logs` | 查看 API 日志 |
+| `make docker-ps` | 查看容器状态 |
 
-Useful endpoints:
+## 默认排查链路
 
-- `GET /healthz` / `GET /readyz` - Runtime health and readiness checks
-- `GET /metrics` - Prometheus text metrics
-- `GET /skills` - List available skills
-- `POST /cases/run-default` - Run default troubleshooting flow
-- `GET /cases/{case_id}` - Get case details
-- `GET /reports/{case_id}` - Get analysis report
-- `GET /evidence/{case_id}` - Get evidence pack
-- `GET /cases/{case_id}/audit` - Get audit trail
-- `GET /flows/checkpoints` - List flow checkpoints
-- `POST /webhook/{channel}` - External alert ingestion (webhook/aliyun/sls/prometheus)
-- `WebSocket /gateway/ws` - Control-plane communication
-- `GET /gateway/connections` - List active WebSocket connections
-
-Approval workflow notifications are opt-in. When configured, approval request and decision
-events are posted to the external endpoint while local approval state remains authoritative:
-
-```bash
-export ROOTSEEKER_APPROVAL_WEBHOOK_URL=https://example.com/approval-workflow
-export ROOTSEEKER_APPROVAL_WEBHOOK_TIMEOUT_SECONDS=5
-```
-
-### API Documentation
-
-FastAPI provides built-in interactive documentation:
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-- **OpenAPI JSON**: http://localhost:8000/openapi.json
-
-## Run API End-to-End Demo
-
-1. Start API server:
-
-   ```bash
-   make api
-   ```
-
-2. Run API demo in another terminal:
-
-   ```bash
-   make demo-api
-   ```
-
-The script will call health, skills, run-default, case query, and report query in sequence.
-
-## Run End-to-End Demo
-
-```bash
-python scripts/demo_default_flow.py
-```
-
-The script will:
-
-- build development runtime with builtin plugins/skills,
-- run the default troubleshooting flow from an alert-like payload,
-- print case/report/evidence/audit summary.
-
-## Default Execution Chain
+内置 Flow `default-log-triage` 按步骤执行：告警归一化 → 服务目录解析 → 日志查询 → 链路追踪 → 仓库索引 → 代码检索 → 报告通知。
 
 ```mermaid
 flowchart LR
-  A[Case] --> B[Skill]
+  A[告警/Case] --> B[Skill Flow]
   B --> C[Step]
   C --> D[Plugin Capability]
   D --> E[MCP ToolCall]
@@ -213,124 +131,252 @@ flowchart LR
   F --> G[Evidence]
   G --> H[RootCauseEngine]
   H --> I[CaseReport]
+  I --> J[Notify]
 ```
 
-## Project Layout
+运行时调用链：
 
-- `rootseeker/`: core runtime and business modules
-- `apps/`: app entrypoints (api, worker, scheduler, cli)
-- `skills/`: builtin and custom skills
-- `plugins/`: builtin and custom plugins
-- `mcp_servers/`: internal and external MCP tool implementations
-- `tests/`: unit, integration, and replay tests
-- `scripts/`: runnable helper scripts
-
-## Zoekt + Qdrant（无 Docker，推荐本机开发）
-
-不依赖容器，使用仓库内 `config/qdrant_config.yaml`，数据目录在 `./data/`。
-
-1. **安装 Zoekt（需 Go）**
-
-   ```bash
-   go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
-   go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
-   export PATH="$(go env GOPATH)/bin:$PATH"
-   ```
-
-2. **安装 Qdrant 二进制**  
-   从 [Qdrant Releases](https://github.com/qdrant/qdrant/releases) 下载对应平台，将可执行文件命名为 `qdrant` 并加入 `PATH`，或放到 `tools/qdrant/qdrant`，或通过 `export ROOTSEEKER_QDRANT_BINARY=/绝对路径/qdrant`。
-
-3. **启动与联调**
-
-   ```bash
-   ./scripts/install_local_codesearch_deps.sh # 检查/安装 Zoekt，提示安装 Qdrant
-   ./scripts/start_zoekt_qdrant.sh          # 后台启动，日志见 data/run/*.log
-   ./scripts/run_real_codesearch_smoke.sh   # 本地示例仓 + Zoekt/Qdrant + API repo sync + 语义搜索
-   ./scripts/stop_zoekt_qdrant.sh           # 停止本机 pid 方式拉起的进程
-   ```
-
-4. **Embedding 配置**
-
-   默认 `ROOTSEEKER_EMBEDDING_PROVIDER=hash`，使用本地 deterministic 向量，适合无外部服务的真实 Qdrant 写入/查询链路。需要接真实 embedding 服务时，设置：
-
-   ```bash
-   export ROOTSEEKER_EMBEDDING_PROVIDER=openai_compatible
-   export ROOTSEEKER_EMBEDDING_BASE_URL=https://api.openai.com/v1
-   export ROOTSEEKER_EMBEDDING_API_KEY=...
-   export ROOTSEEKER_EMBEDDING_MODEL=text-embedding-3-small
-   export ROOTSEEKER_EMBEDDING_DIMENSION=1536
-   ```
-
-5. **仅用 Docker 的用户**（可选）见下方 `start_zoekt_qdrant_docker.sh`。
-
-## Docker Deployment
-
-### Quick Start with Docker Compose
-
-```bash
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your configuration
-# Then start all services
-docker compose up -d
-
-# View logs
-docker compose logs -f api
-
-# Stop services
-docker compose down
+```
+Case → Skill → Step → Plugin → MCP ToolCall → Evidence → RootCauseEngine → CaseReport → notify
 ```
 
-### Available Services
-
-| Service | Port | Description |
-|---------|------|-------------|
-| api | 8000 | REST API server |
-| worker | - | Background task processor |
-| scheduler | - | Cron job scheduler |
-| jaeger | 16686 | Trace visualization (optional) |
-| zoekt | 6070 | 词法检索，`docker/Dockerfile.zoekt` 构建（`zoekt-webserver -rpc`，同 root_seek） |
-| qdrant | 6333 (gRPC 6334) | 向量库，`qdrant/qdrant:v1.16.3`（与 root_seek Docker 编排一致） |
-
-### Optional Services
+## API 服务
 
 ```bash
-# Start with Jaeger tracing
+uvicorn apps.api.main:app --reload --port 8000
+# 或
+make api
+```
+
+### 主要端点
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /healthz` · `GET /readyz` | 健康检查与就绪探针 |
+| `GET /metrics` | Prometheus 指标 |
+| `GET /skills` | 可用 Skill 列表 |
+| `POST /cases/run-default` | 执行默认排查流程 |
+| `GET /cases/{case_id}` | Case 详情 |
+| `GET /reports/{case_id}` | 分析报告 |
+| `GET /evidence/{case_id}` | 证据包 |
+| `GET /cases/{case_id}/audit` | 审计记录 |
+| `GET /flows/checkpoints` | Flow 检查点列表 |
+| `POST /webhook/{channel}` | 外部告警接入（webhook / aliyun / sls / prometheus） |
+| `WebSocket /gateway/ws` | 控制平面通信 |
+| `GET /gateway/connections` | 活跃 WebSocket 连接 |
+
+### API 文档
+
+- Swagger UI：http://localhost:8000/docs
+- ReDoc：http://localhost:8000/redoc
+- OpenAPI JSON：http://localhost:8000/openapi.json
+
+## 管理控制台
+
+独立于 API 的运维管理界面，用于 Skill/插件/MCP 工具、仓库同步、服务目录、代码语义搜索等日常操作。
+
+```bash
+make admin
+# 或
+ADMIN_PORT=8010 rootseeker-admin
+# 或
+uvicorn apps.admin.main:app --host 127.0.0.1 --port 8010
+```
+
+访问：http://127.0.0.1:8010/admin
+
+**当前能力：**
+
+- 查看 Skills、Plugins 及已注册 MCP 工具
+- 注册 / 注销 / 同步 / 检查 Git 仓库
+- 触发 Zoekt / Qdrant 索引（与 API 共用同一套 repo tools）
+- 查看与更新内存服务目录
+- Qdrant 语义代码搜索
+- 运行时健康与索引状态
+
+## 代码检索（Zoekt + Qdrant）
+
+代码索引支持 **本机二进制**（推荐本地开发）和 **Docker Compose** 两种方式。
+
+### 本机开发（无 Docker）
+
+使用仓库内 `config/qdrant_config.yaml`，数据目录为 `./data/`。
+
+**1. 安装 Zoekt（需 Go）**
+
+```bash
+go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+**2. 安装 Qdrant 二进制**
+
+从 [Qdrant Releases](https://github.com/qdrant/qdrant/releases) 下载对应平台，将可执行文件命名为 `qdrant` 并加入 `PATH`，或放到 `tools/qdrant/qdrant`，或通过 `ROOTSEEKER_QDRANT_BINARY` 指定绝对路径。
+
+**3. 启动与联调**
+
+```bash
+./scripts/install_local_codesearch_deps.sh   # 检查/安装 Zoekt，提示 Qdrant
+./scripts/start_zoekt_qdrant.sh              # 后台启动，日志见 data/run/*.log
+./scripts/run_real_codesearch_smoke.sh       # 示例仓 + 索引 + 语义搜索联调
+./scripts/stop_zoekt_qdrant.sh               # 停止本机进程
+```
+
+**4. Embedding 配置**
+
+默认 `ROOTSEEKER_EMBEDDING_PROVIDER=hash`，使用本地确定性向量，适合无外部服务的 Qdrant 写入/查询联调。接入真实 embedding 服务：
+
+```bash
+export ROOTSEEKER_EMBEDDING_PROVIDER=openai_compatible
+export ROOTSEEKER_EMBEDDING_BASE_URL=https://api.openai.com/v1
+export ROOTSEEKER_EMBEDDING_API_KEY=...
+export ROOTSEEKER_EMBEDDING_MODEL=text-embedding-3-small
+export ROOTSEEKER_EMBEDDING_DIMENSION=1536
+```
+
+### Docker 方式
+
+```bash
+docker compose --profile codesearch up -d --build zoekt qdrant
+# 或使用脚本
+./scripts/start_zoekt_qdrant_docker.sh
+```
+
+## Docker 部署
+
+快速启动见上文 [快速开始](#快速开始)。以下为服务说明与可选组件。
+
+### 服务一览
+
+| 服务 | 端口 | 说明 |
+| --- | --- | --- |
+| api | 8000 | REST API |
+| admin | 8010 | 管理控制台 |
+| worker | — | 后台任务处理 |
+| scheduler | — | Cron 定时调度 |
+| zoekt | 6070 | 词法代码检索 |
+| qdrant | 6333 (gRPC 6334) | 向量语义检索 |
+| jaeger | 16686 | 链路追踪可视化（可选） |
+
+### 可选 Profile
+
+```bash
+# 链路追踪
 docker compose --profile tracing up -d
 
-# Zoekt + Qdrant（Docker 可选；无 Docker 时用本机二进制，见上文「无 Docker」小节）
+# 代码检索
 docker compose --profile codesearch up -d --build zoekt qdrant
 
-# 本机二进制启动（无 Docker）
-./scripts/start_zoekt_qdrant.sh
-
-# 仅当使用 Docker Compose 起索引服务时：
-# ./scripts/start_zoekt_qdrant_docker.sh
-
-# 一键真实联调（本机 zoekt-index + 探测；不调用 Docker）
-./scripts/run_real_codesearch_smoke.sh
-
-# Start all services
+# 全部可选服务
 docker compose --profile tracing --profile codesearch up -d
 ```
 
-### Environment Variables
+## 配置说明
 
-See `.env.example` for all available configuration options. Key variables:
+- **Docker 部署**：以 [`.env.docker`](.env.docker) 为模板（`cp .env.docker .env`）
+- **本地开发 / 全量参考**：见 [`.env.example`](.env.example)
 
-| Variable | Description |
-|----------|-------------|
-| `ROOTSEEKER_INTERNAL_ADAPTER_KIND` | `composite` (default: SLS/Jaeger/Zoekt + RepoSync), `http` (delegate internal tools to `ROOTSEEKER_INTERNAL_HTTP_BASE_URL`) |
-| `ROOTSEEKER_NOTIFY_DEFAULT_URL` | Webhook URL for `notify.send` when using composite (optional; skips send if unset) |
-| `ZOEKT_ENDPOINT` / `ROOTSEEKER_ZOEKT_ENDPOINT` | Zoekt HTTP API (`root_seek`: `zoekt.api_base_url`, e.g. `http://127.0.0.1:6070`) |
-| `QDRANT_ENDPOINT` / `ROOTSEEKER_QDRANT_ENDPOINT` | Qdrant REST (`root_seek`: `qdrant.url`) |
-| `QDRANT_COLLECTION_NAME` / `ROOTSEEKER_QDRANT_COLLECTION_NAME` | Vector collection (`root_seek`: `qdrant.collection`, default `code_chunks`) |
-| `QDRANT_API_KEY` / `ROOTSEEKER_QDRANT_API_KEY` | Optional; Qdrant Cloud (`root_seek`: `qdrant.api_key`) |
-| `ROOTSEEKER_ZOEKT_INDEX_DIR` | Local zoekt-index output dir, default `data/zoekt/index` |
-| `ROOTSEEKER_ZOEKT_WEBSERVER` / `ROOTSEEKER_ZOEKT_INDEX_BINARY` | Optional explicit local Zoekt binaries |
-| `ROOTSEEKER_QDRANT_BINARY` | Optional explicit local Qdrant binary |
-| `ROOTSEEKER_EMBEDDING_PROVIDER` | `hash` (default) or `openai_compatible` / `http` |
-| `ROOTSEEKER_EMBEDDING_*` | Embedding dimension, base URL, API key, model and timeout |
-| `SLS_*` | Alibaba Cloud SLS configuration |
-| `JAEGER_ENDPOINT` | Jaeger API endpoint |
+以下为常用配置分组。
+
+### 内部适配器
+
+```bash
+# composite（默认）：SLS / Jaeger / Zoekt + RepoSync
+export ROOTSEEKER_INTERNAL_ADAPTER_KIND=composite
+export ROOTSEEKER_NOTIFY_DEFAULT_URL=https://example.com/my-webhook
+
+# http：将内部工具委托给外部 HTTP 服务
+export ROOTSEEKER_INTERNAL_ADAPTER_KIND=http
+export ROOTSEEKER_INTERNAL_HTTP_BASE_URL=http://127.0.0.1:9000
+```
+
+### 持久化存储
+
+默认内存存储，适合本地冒烟测试。启用 SQLite：
+
+```bash
+export ROOTSEEKER_STORAGE_BACKEND=sqlite
+export ROOTSEEKER_SQLITE_DB_PATH=data/rootseeker.db
+```
+
+### Cron 调度状态
+
+```bash
+export ROOTSEEKER_CRON_STATE_PATH=data/cron/scheduler-state.json
+rootseeker-scheduler --loop --schedule "*/5 * * * *"
+```
+
+### LLM 报告增强
+
+配置 OpenAI 兼容接口后，默认排查流程会用模型增强 `CaseReport.summary` 与 `root_cause`，规则引擎结果保留在 report metadata 中：
+
+```bash
+export ROOTSEEKER_LLM_BASE_URL=https://api.openai.com/v1
+export ROOTSEEKER_LLM_API_KEY=...
+export ROOTSEEKER_LLM_MODEL=gpt-4o-mini
+# 可选
+export ROOTSEEKER_LLM_PROVIDER_NAME=openai
+export ROOTSEEKER_LLM_ENABLED=false   # 关闭 LLM 增强
+```
+
+### 审批工作流通知
+
+```bash
+export ROOTSEEKER_APPROVAL_WEBHOOK_URL=https://example.com/approval-workflow
+export ROOTSEEKER_APPROVAL_WEBHOOK_TIMEOUT_SECONDS=5
+```
+
+### 代码检索关键变量
+
+| 变量 | 说明 |
+| --- | --- |
+| `ZOEKT_ENDPOINT` / `ROOTSEEKER_ZOEKT_ENDPOINT` | Zoekt HTTP API |
+| `QDRANT_ENDPOINT` / `ROOTSEEKER_QDRANT_ENDPOINT` | Qdrant REST |
+| `QDRANT_COLLECTION_NAME` | 向量集合名（默认 `code_chunks`） |
+| `ROOTSEEKER_ZOEKT_INDEX_DIR` | zoekt-index 输出目录 |
+| `ROOTSEEKER_EMBEDDING_PROVIDER` | `hash`（默认）或 `openai_compatible` |
+| `SLS_*` | 阿里云 SLS 日志服务 |
+| `JAEGER_ENDPOINT` | Jaeger 链路追踪 |
+
+## 项目结构
+
+```
+rootseeker/     # 核心运行时与业务模块
+apps/           # 应用入口（api / admin / worker / scheduler / cli）
+skills/         # 内置与自定义 Skill
+plugins/        # 内置与自定义 Plugin
+mcp_servers/    # 内部与外部 MCP 工具实现
+tests/          # 单元、集成与回放测试
+scripts/        # 可运行辅助脚本
+docs/           # 架构与实现状态文档
+k8s/            # Kubernetes 部署清单
+```
+
+## 模块状态
+
+状态说明：`Completed` 已实现并有测试覆盖 · `Partial` 已实现但待加固 · `Planned` 尚未达到目标设计深度
+
+| 模块 | 状态 |
+| --- | --- |
+| 骨架、契约、存储/审计 | Completed |
+| Plugin / Skill / MCP 平面 | Completed |
+| 服务目录、日志平面、代码索引 | Completed |
+| 证据、根因引擎、Task/Flow 运行时 | Completed |
+| 默认 Flow + API/Worker/Scheduler 入口 | Completed |
+| 回放/评估 + CLI/Cron 回放 | Completed |
+| 渠道路由（多渠道归一化与通知） | Completed |
+| Gateway 控制平面（WebSocket + 鉴权/限流） | Completed |
+| 基础设施（安全文件、网络守卫、脱敏） | Completed |
+| LLM 报告增强、检查点恢复、Skill 自动合成 | Completed |
+| SQLite 持久化、多渠道适配器 | Completed |
+| Agent Runtime（LLM 工具规划、自修复） | Partial |
+| 审批策略、部署策略编排 | Partial |
+
+详细范围与缺口见 [docs/implementation-status.md](docs/implementation-status.md)。
+
+## 相关文档
+
+- [实现状态与缺口](docs/implementation-status.md)
+- [Case 状态机](docs/architecture/case-state-machine.md)
+- [状态机总览](docs/architecture/state-machines.md)
