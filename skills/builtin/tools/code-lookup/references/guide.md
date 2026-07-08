@@ -4,6 +4,7 @@
 
 - `code.search`
 - `code.read`
+- `code.find_callers`
 
 ## 搜索准则
 
@@ -14,6 +15,11 @@
 
 - 优先 `code-search` 命中路径。
 - 无目标则跳过 read。
+
+## find_callers 准则
+
+- 依赖 `normalize-incident.extracted.call_chain`。
+- 可结合 `service_name` / `code-search` 的 repo 缩小范围。
 
 ## 前序步骤
 

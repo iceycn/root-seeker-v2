@@ -10,6 +10,7 @@ mcp_tools:
   - code.search
   - code.semantic_search
   - code.read
+  - code.find_callers
   - index.get_status
   - repo.register
   - repo.unregister

@@ -49,6 +49,48 @@
 
 .admin-content {
   padding: 26px 42px 44px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.repo-page {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.admin-table-card .ant-card-body {
+  overflow-x: auto;
+}
+
+.admin-table-card .ant-table-wrapper {
+  min-width: 0;
+}
+
+.table-cell-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.repo-discover-form.ant-form-inline {
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 12px;
+  column-gap: 12px;
+}
+
+.repo-discover-form.ant-form-inline .ant-form-item {
+  margin-inline-end: 0;
+}
+
+@media (max-width: 960px) {
+  .admin-content {
+    padding: 20px 16px 32px;
+  }
 }
 
 .topbar {

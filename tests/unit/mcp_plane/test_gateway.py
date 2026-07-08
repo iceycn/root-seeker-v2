@@ -23,7 +23,7 @@ def test_gateway_invoke_success_appends_audit() -> None:
     req = ToolCallRequest(
         case_id="c1",
         step_id="s1",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="catalog.resolve_service",
         arguments={"service_name": "order-service", "tenant": "t1"},
     )
@@ -42,7 +42,7 @@ def test_gateway_unknown_tool_audits_failure() -> None:
     req = ToolCallRequest(
         case_id="c1",
         step_id="s1",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="does.not.exist",
         arguments={},
     )
@@ -65,7 +65,7 @@ def test_policy_deny_write_blocks_notify() -> None:
     req = ToolCallRequest(
         case_id="c1",
         step_id="s1",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="notify.send",
         arguments={"channel": "x"},
     )
@@ -93,7 +93,7 @@ def test_policy_requires_approval_for_write_tool_then_allows_retry() -> None:
     req = ToolCallRequest(
         case_id="c1",
         step_id="write",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="internal.write",
         arguments={"value": "hello"},
     )
@@ -130,7 +130,7 @@ def test_gateway_invoke_external_tool_via_external_client() -> None:
     req = ToolCallRequest(
         case_id="c-ext",
         step_id="s-ext",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="external.demo.echo",
         arguments={"x": "ok"},
     )

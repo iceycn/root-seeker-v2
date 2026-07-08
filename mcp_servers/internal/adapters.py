@@ -35,6 +35,9 @@ class InternalToolAdapter(Protocol):
     def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
         ...
 
+    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
     def get_index_status(self) -> dict[str, Any]:
         ...
 
@@ -179,6 +182,9 @@ class HttpInternalToolAdapter:
 
     def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
         return self._post(self.route_code_read, {"path": path, **({"repo": repo} if repo else {})})
+
+    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/code/find_callers", args)
 
     def get_index_status(self) -> dict[str, Any]:
         return self._post(self.route_index_status, {})

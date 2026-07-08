@@ -7,7 +7,6 @@ from rootseeker.skill_system.publisher import PublishedSkill, PublishStatus, Ski
 from rootseeker.skill_system.registry import (
     DEFAULT_BUILTIN_SKILL_SLUG,
     DEFAULT_FLOW_SKILL_SLUG,
-    LEGACY_SKILL_SLUG_ALIAS,
     SkillRegistry,
     build_registry_from_builtin_skills,
     get_default_log_triage_skill,
@@ -17,7 +16,6 @@ from rootseeker.skill_system.review import ReviewStatus, SkillReview, SkillRevie
 __all__ = [
     "DEFAULT_BUILTIN_SKILL_SLUG",
     "DEFAULT_FLOW_SKILL_SLUG",
-    "LEGACY_SKILL_SLUG_ALIAS",
     "PublishStatus",
     "PublishedSkill",
     "ReviewStatus",

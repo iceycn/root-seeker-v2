@@ -144,6 +144,34 @@ class CompositeProductionAdapter:
         """Read file via Zoekt."""
         return self._zoekt.read_file(path, repo=repo)
 
+    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Trace method callers across indexed repositories."""
+        from rootseeker.analysis.find_callers import analyze_call_chain
+
+        call_chain = _coerce_call_chain_arg(args)
+
+        def search_fn(query: str, limit: int, repo_filter: str | None) -> dict[str, Any]:
+            return self._zoekt.search_code(query, num_results=limit, repo_filter=repo_filter)
+
+        def read_fn(
+            path: str,
+            repo: str | None = None,
+            *,
+            start_line: int = 1,
+            end_line: int | None = None,
+        ) -> dict[str, Any]:
+            return self._zoekt.read_file(path, repo=repo, start_line=start_line, end_line=end_line)
+
+        return analyze_call_chain(
+            call_chain,
+            search_code=search_fn,
+            read_code=read_fn,
+            repo=str(args.get("repo") or "") or None,
+            service_name=str(args.get("service_name") or "") or None,
+            max_depth=int(args.get("max_depth", 5)),
+            limit_per_query=int(args.get("limit", 30)),
+        )
+
     def get_index_status(self) -> dict[str, Any]:
         """Get index status via Zoekt."""
         return self._zoekt.get_index_status()
@@ -232,3 +260,16 @@ class CompositeProductionAdapter:
             catalog=catalog or MemoryServiceCatalog.seeded_default(),
             repo_sync_service=repo_sync_service or RepoSyncService(),
         )
+
+
+def _coerce_call_chain_arg(args: dict[str, Any]) -> list[str]:
+    raw = args.get("call_chain")
+    if isinstance(raw, list):
+        return [str(item).strip() for item in raw if str(item).strip()]
+    class_name = str(args.get("class_name") or "").strip()
+    method_name = str(args.get("method_name") or "").strip()
+    file_path = str(args.get("file_path") or "").strip()
+    line = args.get("line")
+    if class_name and method_name and file_path and line:
+        return [f"{class_name}.{method_name} ({file_path}:{int(line)})"]
+    return []

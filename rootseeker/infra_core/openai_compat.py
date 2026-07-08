@@ -24,8 +24,11 @@ __all__ = [
     "MIMO_PLATFORM_URL",
     "MIMO_TOKEN_PLAN_CN_ANTHROPIC_BASE_URL",
     "MIMO_TOKEN_PLAN_CN_OPENAI_BASE_URL",
+    "build_openai_compat_chat_payload",
     "build_openai_compat_headers",
+    "is_kimi_coding_endpoint",
     "is_mimo_token_plan_key",
+    "resolve_chat_completion_temperature",
     "resolve_mimo_base_url",
     "test_openai_compatible_connection",
 ]
@@ -33,6 +36,46 @@ __all__ = [
 
 def is_mimo_token_plan_key(api_key: str) -> bool:
     return (api_key or "").strip().startswith("tp-")
+
+
+def is_kimi_coding_endpoint(base_url: str) -> bool:
+    return "api.kimi.com/coding" in _normalized(base_url).lower()
+
+
+def resolve_chat_completion_temperature(
+    *,
+    base_url: str,
+    model: str,
+    temperature: float,
+) -> float | None:
+    """Kimi Coding API rejects custom temperature; omit it and use server default."""
+    _ = model
+    if is_kimi_coding_endpoint(base_url):
+        return None
+    return temperature
+
+
+def build_openai_compat_chat_payload(
+    *,
+    base_url: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        **extra,
+    }
+    resolved = resolve_chat_completion_temperature(
+        base_url=base_url,
+        model=model,
+        temperature=temperature,
+    )
+    if resolved is not None:
+        payload["temperature"] = resolved
+    return payload
 
 
 def build_openai_compat_headers(api_key: str, *, include_json: bool = True) -> dict[str, str]:
@@ -102,11 +145,13 @@ def test_openai_compatible_connection(
                 response = client.post(
                     f"{endpoint}/chat/completions",
                     headers=post_headers,
-                    json={
-                        "model": probe_model,
-                        "messages": [{"role": "user", "content": "ping"}],
-                        "max_completion_tokens": 8,
-                    },
+                    json=build_openai_compat_chat_payload(
+                        base_url=endpoint,
+                        model=probe_model,
+                        messages=[{"role": "user", "content": "ping"}],
+                        temperature=0.2,
+                        max_completion_tokens=8,
+                    ),
                 )
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             ok = 200 <= response.status_code < 300

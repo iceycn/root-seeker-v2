@@ -5,7 +5,7 @@ description: "搜索并读取与故障相关的代码片段。"
 
 # Code lookup
 
-工具组：`code.search`、`code.read`。根据日志、trace 或症状中的线索定位代码。
+工具组：`code.search`、`code.read`、`code.find_callers`。根据日志、trace 或症状定位代码，并跨仓库追踪 caller。根据日志、trace 或症状中的线索定位代码。
 
 详细准则见 `references/guide.md`。
 
@@ -19,3 +19,9 @@ description: "搜索并读取与故障相关的代码片段。"
 - 优先 `code-search` 步骤 hits[0] 的 path/repo。
 - 其次 metadata.code_path、extracted.code_path、症状中的 `Foo.java:42`。
 - 无明确目标时 `skip: true`。
+
+## code.find_callers
+
+- 输入 `normalize-incident.extracted.call_chain`。
+- 跨已索引仓库搜索 caller，与运行时堆栈对齐；识别 `*Controller` HTTP 入口。
+- 无 call_chain 时 `skip: true`。

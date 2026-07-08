@@ -8,7 +8,10 @@ from typing import Any
 
 import httpx
 
-from rootseeker.infra_core.openai_compat import build_openai_compat_headers
+from rootseeker.infra_core.openai_compat import (
+    build_openai_compat_chat_payload,
+    build_openai_compat_headers,
+)
 
 from rootseeker.analysis.root_cause_engine import RootCauseAnalysisResult
 from rootseeker.contracts.evidence import ContextWindow, EvidencePack, RootCauseConclusion
@@ -20,6 +23,7 @@ __all__ = [
     "LlmReportResult",
     "OpenAICompatibleReportClient",
     "apply_llm_report_result",
+    "build_llm_http_timeout",
     "parse_llm_report_content",
 ]
 
@@ -37,10 +41,11 @@ class LlmReportConfig:
     api_key: str
     model: str
     provider_name: str = "openai_compatible"
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 180.0
     temperature: float = 0.2
     max_evidence_items: int = 8
     enabled: bool = True
+    max_retries: int = 1
 
     @classmethod
     def from_settings(cls, settings: RootSeekerSettings | None = None) -> LlmReportConfig | None:
@@ -142,42 +147,68 @@ class OpenAICompatibleReportClient:
                 model=self.config.model,
                 reason="disabled",
             )
+        request_payload = build_openai_compat_chat_payload(
+            base_url=self.config.base_url,
+            model=self.config.model,
+            messages=messages,
+            temperature=self.config.temperature,
+        )
+        http_timeout = build_llm_http_timeout(self.config.timeout_seconds)
+        max_attempts = max(1, int(self.config.max_retries) + 1)
         client_kwargs: dict[str, Any] = {
-            "timeout": self.config.timeout_seconds,
+            "timeout": http_timeout,
             "trust_env": False,
         }
         if self._transport is not None:
             client_kwargs["transport"] = self._transport
-        try:
-            started = time.perf_counter()
-            with httpx.Client(**client_kwargs) as client:
-                response = client.post(
-                    f"{self.config.base_url}/chat/completions",
-                    headers=build_openai_compat_headers(self.config.api_key),
-                    json={
-                        "model": self.config.model,
-                        "messages": messages,
-                        "temperature": self.config.temperature,
-                    },
+        last_error: str | None = None
+        for attempt in range(max_attempts):
+            try:
+                started = time.perf_counter()
+                with httpx.Client(**client_kwargs) as client:
+                    response = client.post(
+                        f"{self.config.base_url}/chat/completions",
+                        headers=build_openai_compat_headers(self.config.api_key),
+                        json=request_payload,
+                    )
+                    elapsed_ms = int((time.perf_counter() - started) * 1000)
+                    response.raise_for_status()
+                    data = response.json()
+                return LlmReportResult(
+                    ok=True,
+                    provider=self.config.provider_name,
+                    model=self.config.model,
+                    elapsed_ms=elapsed_ms,
+                    content=_extract_message_content(data),
+                    raw=data,
                 )
-                elapsed_ms = int((time.perf_counter() - started) * 1000)
-                response.raise_for_status()
-                data = response.json()
-            return LlmReportResult(
-                ok=True,
-                provider=self.config.provider_name,
-                model=self.config.model,
-                elapsed_ms=elapsed_ms,
-                content=_extract_message_content(data),
-                raw=data,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return LlmReportResult(
-                ok=False,
-                provider=self.config.provider_name,
-                model=self.config.model,
-                error=str(exc),
-            )
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.text[:500] if exc.response is not None else ""
+                return LlmReportResult(
+                    ok=False,
+                    provider=self.config.provider_name,
+                    model=self.config.model,
+                    error=f"{exc}. body: {detail}",
+                )
+            except (httpx.ReadTimeout, httpx.TimeoutException) as exc:
+                last_error = str(exc)
+                if attempt + 1 < max_attempts:
+                    continue
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc)
+                break
+        return LlmReportResult(
+            ok=False,
+            provider=self.config.provider_name,
+            model=self.config.model,
+            error=last_error or "LLM request failed",
+        )
+
+
+def build_llm_http_timeout(read_seconds: float) -> httpx.Timeout:
+    """Use a generous read timeout for slow coding-model responses."""
+    read_timeout = max(30.0, float(read_seconds))
+    return httpx.Timeout(connect=30.0, read=read_timeout, write=30.0, pool=30.0)
 
 
 def build_llm_report_messages(

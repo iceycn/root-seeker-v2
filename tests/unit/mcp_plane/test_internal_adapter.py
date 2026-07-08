@@ -74,7 +74,7 @@ def test_register_internal_tools_with_custom_adapter() -> None:
     req = ToolCallRequest(
         case_id="c1",
         step_id="s1",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="catalog.resolve_service",
         arguments={"tenant": "t1", "environment": "prod", "service_name": "svc-a"},
     )

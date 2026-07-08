@@ -73,6 +73,51 @@ class StubInternalToolAdapter:
     def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
         return {"path": path, "repo": repo, "content": "# stub file content\n"}
 
+    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
+        call_chain = args.get("call_chain") if isinstance(args.get("call_chain"), list) else []
+        aligned_path = [
+            str(item).split(" (", 1)[0]
+            for item in call_chain
+            if str(item).strip()
+        ]
+        entrypoints: list[dict[str, Any]] = []
+        for frame in reversed(call_chain):
+            summary = str(frame).split(" (", 1)[0]
+            if "." not in summary:
+                continue
+            class_name, method_name = summary.split(".", 1)
+            if class_name.endswith("Controller"):
+                entrypoints.append(
+                    {
+                        "type": "http",
+                        "class_name": class_name,
+                        "method_name": method_name,
+                        "mapping": "/stub",
+                    }
+                )
+                break
+        target = None
+        if call_chain:
+            first = str(call_chain[0])
+            summary = first.split(" (", 1)[0]
+            if "." in summary:
+                class_name, method_name = summary.split(".", 1)
+                target = {"class_name": class_name, "method_name": method_name, "summary": first}
+        return {
+            "target": target,
+            "runtime_chain": call_chain,
+            "static_callers": [],
+            "aligned": {
+                "matched": bool(aligned_path),
+                "aligned_path": aligned_path,
+                "fault_method": aligned_path[0] if aligned_path else None,
+                "entry_method": aligned_path[-1] if aligned_path else None,
+            },
+            "entrypoints": entrypoints,
+            "queries": [],
+            "notes": "stub",
+        }
+
     def get_index_status(self) -> dict[str, Any]:
         return {"ready": True, "indexes": [{"name": "stub-zoekt", "ready": True}]}
 

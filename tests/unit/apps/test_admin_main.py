@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -31,14 +32,14 @@ def test_admin_health_status_and_page(tmp_path: Path) -> None:
 def test_admin_builtin_skill_content_returns_standard_skill_md() -> None:
     client = TestClient(create_app(_repo_root()))
 
-    response = client.get("/api/skills/base/default-log-triage/content")
+    response = client.get("/api/skills/flows/default-log-triage/content")
 
     assert response.status_code == 200
     data = response.json()
     assert data["skill_md"].startswith("---\nname: Default log triage\n")
     assert "rootseeker-skill-spec" not in data["skill_md"]
     assert "\"slug\"" not in data["skill_md"]
-    assert data["runtime_spec"]["slug"] == "base/default-log-triage"
+    assert data["runtime_spec"]["slug"] == "flows/default-log-triage"
     assert "flows/default-log-triage" in data["rootseeker_skill_yaml"]
     assert "tool_parameters" in data
     assert len(data["tool_parameters"]) > 0
@@ -125,6 +126,173 @@ def test_admin_repo_remote_normalizes_generic_to_custom(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json()["remote"]["provider"] == "custom"
+
+
+def test_admin_yunxiao_repo_api_path_supports_region_and_central_editions() -> None:
+    from apps.admin.main import AdminDiscoverReposRequest, _repo_api_path
+
+    region_req = AdminDiscoverReposRequest(provider="yunxiao", owner="")
+    central_req = AdminDiscoverReposRequest(provider="yunxiao", owner="org-1")
+
+    assert _repo_api_path(region_req) == "/repositories"
+    assert _repo_api_path(central_req) == "/organizations/org-1/repositories"
+
+
+def test_admin_yunxiao_repository_detail_path() -> None:
+    from apps.admin.main import _yunxiao_repository_detail_path
+
+    assert _yunxiao_repository_detail_path("", 2813489) == "/repositories/2813489"
+    assert (
+        _yunxiao_repository_detail_path("org-1", "org-1/DemoRepo")
+        == "/organizations/org-1/repositories/org-1%2FDemoRepo"
+    )
+
+
+def test_admin_enrich_yunxiao_repo_merges_default_branch_and_clone_url() -> None:
+    from apps.admin.main import _enrich_yunxiao_repo
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, str]:
+            return {
+                "defaultBranch": "master",
+                "httpUrlToRepo": "https://codeup.aliyun.com/org/repo.git",
+                "webUrl": "https://codeup.aliyun.com/org/repo",
+            }
+
+    class FakeClient:
+        pass
+
+    repo = {
+        "name": "repo",
+        "full_name": "org/repo",
+        "clone_url": "",
+        "default_branch": "",
+        "raw": {"id": 2813489, "pathWithNamespace": "org/repo"},
+    }
+
+    with patch("apps.admin.main.get_with_retry", return_value=FakeResponse()):
+        enriched = _enrich_yunxiao_repo(
+            repo,
+            base="https://openapi-rdc.aliyuncs.com/oapi/v1/codeup",
+            owner="org-1",
+            token="pt-token",
+            client=FakeClient(),  # type: ignore[arg-type]
+        )
+
+    assert enriched["default_branch"] == "master"
+    assert enriched["clone_url"] == "https://codeup.aliyun.com/org/repo.git"
+    assert "raw" in enriched
+
+
+def test_admin_discover_yunxiao_uses_list_payload_without_enrichment() -> None:
+    from apps.admin.main import AdminDiscoverReposRequest, _discover_remote_repos
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, list[dict[str, str]]]:
+            return {
+                "repositories": [
+                    {
+                        "id": 2813489,
+                        "name": "repo",
+                        "pathWithNamespace": "org/repo",
+                        "httpUrlToRepo": "https://codeup.aliyun.com/org/repo.git",
+                        "webUrl": "https://codeup.aliyun.com/org/repo",
+                        "visibility": "private",
+                    }
+                ]
+            }
+
+    req = AdminDiscoverReposRequest(
+        provider="yunxiao",
+        token="pt-token",
+        owner="org-1",
+        page=1,
+        per_page=50,
+    )
+
+    with patch("apps.admin.main.get_with_retry", return_value=FakeResponse()) as get_with_retry_mock:
+        with patch("apps.admin.main._enrich_yunxiao_repos_parallel") as enrich_mock:
+            result = _discover_remote_repos(req)
+
+    enrich_mock.assert_not_called()
+    assert get_with_retry_mock.call_count == 1
+    assert result["total"] == 1
+    assert result["repos"][0]["clone_url"] == "https://codeup.aliyun.com/org/repo.git"
+    assert result["repos"][0]["full_name"] == "org/repo"
+    assert "raw" not in result["repos"][0]
+
+
+def test_admin_public_discovered_repo_strips_raw_payload() -> None:
+    from apps.admin.main import _public_discovered_repo
+
+    payload = _public_discovered_repo({"name": "demo", "default_branch": "master", "raw": {"id": 1}})
+    assert "raw" not in payload
+    assert payload["default_branch"] == "master"
+
+
+def test_admin_annotate_discovered_repo_import_status_matches_full_name_and_url() -> None:
+    from rootseeker.contracts.repository import RepositoryRef, RepoSyncState, RepoSyncStatus
+
+    from apps.admin.main import _annotate_discovered_repos_import_status
+
+    registered = [
+        RepositoryRef(
+            name="org__repo",
+            url="https://codeup.aliyun.com/org/repo.git",
+            default_branch="main",
+            sync_status=RepoSyncStatus(state=RepoSyncState.COMPLETED),
+            metadata={"full_name": "org/repo", "source": "remote"},
+        )
+    ]
+    repos = [
+        {
+            "full_name": "org/repo",
+            "clone_url": "https://codeup.aliyun.com/org/repo.git",
+            "provider": "yunxiao",
+        },
+        {
+            "full_name": "org/other",
+            "clone_url": "https://codeup.aliyun.com/org/other.git",
+            "provider": "yunxiao",
+        },
+    ]
+
+    annotated = _annotate_discovered_repos_import_status(repos, registered)
+
+    assert annotated[0]["imported"] is True
+    assert annotated[0]["registered_name"] == "org__repo"
+    assert annotated[0]["sync_state"] == "completed"
+    assert annotated[0]["reimportable"] is False
+    assert annotated[1]["imported"] is False
+
+
+def test_admin_annotate_discovered_repo_marks_failed_as_reimportable() -> None:
+    from rootseeker.contracts.repository import RepositoryRef, RepoSyncState, RepoSyncStatus
+
+    from apps.admin.main import _annotate_discovered_repos_import_status
+
+    registered = [
+        RepositoryRef(
+            name="org__repo",
+            url="https://codeup.aliyun.com/org/repo.git",
+            default_branch="main",
+            sync_status=RepoSyncStatus(state=RepoSyncState.FAILED, error_message="clone failed"),
+            metadata={"full_name": "org/repo", "source": "remote"},
+        )
+    ]
+    repos = [{"full_name": "org/repo", "clone_url": "https://codeup.aliyun.com/org/repo.git", "provider": "yunxiao"}]
+
+    annotated = _annotate_discovered_repos_import_status(repos, registered)
+
+    assert annotated[0]["imported"] is True
+    assert annotated[0]["sync_state"] == "failed"
+    assert annotated[0]["reimportable"] is True
 
 
 def test_admin_discover_requires_existing_repo_remote(tmp_path: Path) -> None:
@@ -264,3 +432,69 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     assert history["items"][0]["case"]["case_id"] == item["case"]["case_id"]
     assert history["items"][0]["flow_run_id"] == item["flow_run_id"]
     assert history["items"][0]["evidence_items"] == item["evidence_items"]
+
+
+def test_build_llm_error_chat_payload_stays_under_kimi_limit() -> None:
+    import json
+    from types import SimpleNamespace
+
+    from apps.admin.main import KIMI_MESSAGE_BYTE_LIMIT, _build_llm_error_chat_payload
+
+    huge = "x" * 20000
+    steps = [
+        {
+            "step_id": f"step-{index}",
+            "name": f"step-{index}",
+            "tool_name": "log.query",
+            "status": "completed",
+            "inputs": {"query": huge},
+            "outputs": {"lines": [huge]},
+        }
+        for index in range(12)
+    ]
+    evidence_items = [
+        {
+            "item_id": f"ev-{index}",
+            "type": "log",
+            "source": "tool",
+            "content": huge,
+        }
+        for index in range(8)
+    ]
+
+    def _evidence_namespace(item: dict[str, Any]) -> SimpleNamespace:
+        return SimpleNamespace(model_dump=lambda mode="json", payload=item: payload)
+
+    flow_result = SimpleNamespace(
+        case=SimpleNamespace(
+            model_dump=lambda mode="json": {
+                "case_id": "case-huge",
+                "title": "huge case",
+                "selected_skills": ["flows/default-log-triage"],
+                "symptom": huge,
+                "steps": steps,
+            }
+        ),
+        report=SimpleNamespace(
+            model_dump=lambda mode="json": {
+                "summary": "rule summary",
+                "root_cause": {
+                    "title": "candidate",
+                    "narrative": huge,
+                    "confidence": 0.5,
+                    "contributing_factors": ["factor"],
+                },
+                "metadata": {},
+            }
+        ),
+        evidence_pack=SimpleNamespace(
+            items=[_evidence_namespace(item) for item in evidence_items]
+        ),
+    )
+
+    payload = _build_llm_error_chat_payload(content=huge, flow_result=flow_result)
+    serialized = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    assert len(serialized) <= KIMI_MESSAGE_BYTE_LIMIT
+    assert "call_chain" in payload
+    assert payload["case"]["step_count"] == 12
+    assert "inputs" not in payload["case"]["steps"][0]

@@ -8,7 +8,7 @@ import time
 import httpx
 
 BASE = "http://127.0.0.1:8010"
-EXPECTED_SKILL = "base/default-log-triage"
+EXPECTED_SKILL = "flows/default-log-triage"
 EXPECTED_ACTIONS = [
     "incident.normalize",
     "catalog.resolve_service",

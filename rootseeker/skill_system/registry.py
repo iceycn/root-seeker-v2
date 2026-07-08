@@ -9,20 +9,13 @@ from rootseeker.skill_system.parser import load_skill_from_path
 __all__ = [
     "DEFAULT_BUILTIN_SKILL_SLUG",
     "DEFAULT_FLOW_SKILL_SLUG",
-    "LEGACY_SKILL_SLUG_ALIAS",
     "SkillRegistry",
     "build_registry_from_builtin_skills",
     "get_default_log_triage_skill",
 ]
 
 DEFAULT_FLOW_SKILL_SLUG = "flows/default-log-triage"
-LEGACY_SKILL_SLUG_ALIAS = "base/default-log-triage"
-DEFAULT_BUILTIN_SKILL_SLUG = LEGACY_SKILL_SLUG_ALIAS
-
-
-SLUG_ALIASES: dict[str, str] = {
-    LEGACY_SKILL_SLUG_ALIAS: DEFAULT_FLOW_SKILL_SLUG,
-}
+DEFAULT_BUILTIN_SKILL_SLUG = DEFAULT_FLOW_SKILL_SLUG
 
 
 class SkillRegistry:
@@ -46,36 +39,19 @@ class SkillRegistry:
         self._index_bound_tools(spec)
 
     def unregister(self, slug: str) -> bool:
-        canonical = self._canonical_slug(slug)
-        spec = self._by_slug.pop(canonical, None)
+        spec = self._by_slug.pop(slug, None)
         if spec is None:
             return False
         for action in spec.bound_tools:
-            if self._tool_action_index.get(action) == canonical:
+            if self._tool_action_index.get(action) == slug:
                 self._tool_action_index.pop(action, None)
         return True
 
     def get(self, slug: str) -> SkillSpec | None:
-        canonical = self._canonical_slug(slug)
-        spec = self._by_slug.get(canonical)
-        if spec is None:
-            return None
-        if canonical != slug:
-            return spec.model_copy(update={"slug": slug})
-        return spec
-
-    def _canonical_slug(self, slug: str) -> str:
-        return SLUG_ALIASES.get(slug, slug)
+        return self._by_slug.get(slug)
 
     def list_skills(self) -> list[SkillSpec]:
-        items = list(self._by_slug.values())
-        for alias, canonical in SLUG_ALIASES.items():
-            if alias in self._by_slug:
-                continue
-            spec = self._by_slug.get(canonical)
-            if spec is not None:
-                items.append(spec.model_copy(update={"slug": alias}))
-        return items
+        return list(self._by_slug.values())
 
     def list_by_kind(self, kind: SkillKind) -> list[SkillSpec]:
         return [spec for spec in self._by_slug.values() if spec.skill_kind == kind]
@@ -113,9 +89,7 @@ def build_registry_from_builtin_skills(builtin_skills_root: Path) -> SkillRegist
 
 
 def get_default_log_triage_skill(registry: SkillRegistry) -> SkillSpec:
-    spec = registry.get(LEGACY_SKILL_SLUG_ALIAS) or registry.get(DEFAULT_FLOW_SKILL_SLUG)
+    spec = registry.get(DEFAULT_FLOW_SKILL_SLUG)
     if spec is None:
-        raise ValueError(
-            f"Builtin flow skill not found: {DEFAULT_FLOW_SKILL_SLUG} or {LEGACY_SKILL_SLUG_ALIAS}"
-        )
+        raise ValueError(f"Builtin flow skill not found: {DEFAULT_FLOW_SKILL_SLUG}")
     return spec

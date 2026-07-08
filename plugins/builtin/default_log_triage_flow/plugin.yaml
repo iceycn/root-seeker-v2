@@ -1,7 +1,7 @@
 id: builtin.default_log_triage_flow
 name: Default log triage flow
 version: 1.0.0
-description: Bundled default troubleshooting flow for base/default-log-triage skill
+description: Bundled default troubleshooting flow for flows/default-log-triage skill
 kind: flow
 enabled_by_default: true
 capabilities:
@@ -9,4 +9,4 @@ capabilities:
 mcp_tools: []
 config_schema: {}
 metadata:
-  skill_slug: base/default-log-triage
+  skill_slug: flows/default-log-triage

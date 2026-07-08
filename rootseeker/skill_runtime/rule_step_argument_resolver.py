@@ -80,6 +80,21 @@ class RuleStepArgumentResolver:
             if repo:
                 payload["repo"] = repo
             return payload
+        if action == "code.find_callers":
+            extracted = step_outputs.get("normalize-incident", {}).get("extracted")
+            call_chain = extracted.get("call_chain") if isinstance(extracted, dict) else None
+            if not isinstance(call_chain, list) or not call_chain:
+                return {"_skip_reason": "No call_chain from normalize-incident."}
+            payload = {
+                "call_chain": call_chain,
+                "service_name": service_name,
+                "max_depth": 5,
+                "limit": 30,
+            }
+            repo = _repo_from_code_search(step_outputs) or service_name
+            if repo:
+                payload["repo"] = repo
+            return payload
         if action in {"index.get_status", "repo.list"}:
             return {}
         return {}

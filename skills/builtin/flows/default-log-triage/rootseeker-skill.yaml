@@ -19,6 +19,7 @@ required_tools:
   - repo.list
   - code.search
   - code.read
+  - code.find_callers
   - notify.send
 source_kind: builtin
 version: 2.0.0
@@ -28,7 +29,7 @@ steps:
     name: Normalize incident input
     action: incident.normalize
     tool_skill_slug: tools/incident-normalize
-    description: Extract service, tenant, environment, trace id, symptom, source, time window, and code hints
+    description: Extract service, tenant, environment, trace id, symptom, source, time window, code hints, exception summary, and call-chain main methods
   - step_id: resolve-service
     name: Resolve service catalog
     action: catalog.resolve_service
@@ -74,6 +75,11 @@ steps:
     action: code.read
     tool_skill_slug: tools/code-lookup
     description: Read the selected file hit or explicit file path from the incident
+  - step_id: find-callers
+    name: Trace callers across repositories
+    action: code.find_callers
+    tool_skill_slug: tools/code-lookup
+    description: Cross-repo static caller tracing aligned with runtime call_chain
   - step_id: notify
     name: Send notification
     action: notify.send

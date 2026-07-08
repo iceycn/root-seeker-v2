@@ -70,6 +70,24 @@ INTERNAL_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["path"],
     },
+    "code.find_callers": {
+        "type": "object",
+        "properties": {
+            "call_chain": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Runtime call-chain frames from incident.normalize",
+            },
+            "class_name": {"type": "string"},
+            "method_name": {"type": "string"},
+            "file_path": {"type": "string"},
+            "line": {"type": "integer"},
+            "repo": {"type": "string"},
+            "service_name": {"type": "string"},
+            "max_depth": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+    },
     "index.get_status": {"type": "object", "properties": {}},
     "repo.list": {"type": "object", "properties": {}},
     "notify.send": {

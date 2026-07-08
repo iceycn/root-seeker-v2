@@ -40,7 +40,7 @@ def test_plugin_flow_task_roundtrip_json() -> None:
     flow = FlowSpec(
         flow_id="builtin.default_log_triage_flow",
         plugin_id="builtin.default_log_triage_flow",
-        skill_slug="base/default-log-triage",
+        skill_slug="flows/default-log-triage",
         steps=[
             FlowStepSpec(
                 step_id="s1",
@@ -100,14 +100,14 @@ def test_replay_and_execution_trace() -> None:
     step = CaseStep(
         step_id="st-1",
         name="n",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         action="catalog.resolve_service",
         status=StepStatus.COMPLETED,
     )
     ex = ExecutionTrace(
         execution_id="ex-1",
         case_id="c-9",
-        skill_slug="base/default-log-triage",
+        skill_slug="flows/default-log-triage",
         steps=[
             StepExecutionRecord(
                 step_id=step.step_id,

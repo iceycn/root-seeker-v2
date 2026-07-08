@@ -26,6 +26,8 @@
 
 - 输出 `case_request`，供后续步骤统一使用。
 - 输出 `extracted`，包含服务、租户、环境、trace、症状、来源、严重级别、时间窗口、代码路径、代码符号。
+- 输出 `exception_summary` 与 `call_chain`：从堆栈中提取异常摘要和业务调用链主方法（过滤 Spring/Tomcat/MyBatis 等框架帧）。
+- `call_chain` 示例：`PopRecordService.insertPopRecordLogic (PopRecordService.java:60)`。
 - 输出 `missing_fields`，明确哪些关键字段缺失。
 - 缺失字段只代表未知输入，不能作为系统健康或无故障的证据。
 

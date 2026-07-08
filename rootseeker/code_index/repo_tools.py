@@ -77,7 +77,8 @@ def create_repo_handlers(sync_service: RepoSyncService | None = None) -> dict[st
             return {"ok": False, "error": "name is required"}
 
         trigger_index = args.get("trigger_index", True)
-        result = service.sync(str(name), trigger_index=trigger_index)
+        force_reclone = bool(args.get("force_reclone", False))
+        result = service.sync(str(name), trigger_index=trigger_index, force_reclone=force_reclone)
 
         response: dict[str, Any] = {
             "ok": result.success,

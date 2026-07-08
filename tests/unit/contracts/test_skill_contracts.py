@@ -20,7 +20,7 @@ def test_skill_spec_can_build_from_skill_md_shape() -> None:
     )
     spec = SkillSpec(
         name="Default Log Triage",
-        slug="base/default-log-triage",
+        slug="flows/default-log-triage",
         description="Builtin troubleshooting skill",
         tags=["builtin", "triage"],
         triggers=["webhook_alarm"],
@@ -30,7 +30,7 @@ def test_skill_spec_can_build_from_skill_md_shape() -> None:
         version="1.0.0",
     )
     payload = spec.model_dump(mode="json")
-    assert payload["slug"] == "base/default-log-triage"
+    assert payload["slug"] == "flows/default-log-triage"
     assert payload["steps"][0]["action"] == "catalog.resolve_service"
 
 
@@ -41,7 +41,7 @@ def test_skill_execution_plan_and_generated_draft_can_serialize() -> None:
         action="log.query_by_trace_id",
     )
     plan = SkillExecutionPlan(
-        skill_slug="base/default-log-triage",
+        skill_slug="flows/default-log-triage",
         steps=[step],
     )
     spec = SkillSpec(
@@ -57,5 +57,5 @@ def test_skill_execution_plan_and_generated_draft_can_serialize() -> None:
         source_case_ids=["case-a", "case-b"],
         generated_reason="Repeated incident pattern",
     )
-    assert plan.skill_slug == "base/default-log-triage"
+    assert plan.skill_slug == "flows/default-log-triage"
     assert draft.spec.source_kind == SkillSourceKind.GENERATED

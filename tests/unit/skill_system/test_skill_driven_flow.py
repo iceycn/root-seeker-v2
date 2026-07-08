@@ -8,7 +8,6 @@ from rootseeker.skill_system.composer import SkillComposer
 from rootseeker.skill_system.content_loader import SkillContentLoader
 from rootseeker.skill_system.registry import (
     DEFAULT_FLOW_SKILL_SLUG,
-    LEGACY_SKILL_SLUG_ALIAS,
     build_registry_from_builtin_skills,
 )
 from rootseeker.skill_runtime.llm_step_argument_planner import parse_step_argument_content
@@ -25,8 +24,7 @@ def test_registry_loads_flow_and_tool_skills() -> None:
     assert flow is not None
     assert flow.skill_kind == SkillKind.FLOW
     assert len(flow.steps) == 11
-    assert registry.get(LEGACY_SKILL_SLUG_ALIAS) is not None
-    assert registry.get(LEGACY_SKILL_SLUG_ALIAS).slug == LEGACY_SKILL_SLUG_ALIAS
+    assert registry.get("base/default-log-triage") is None
     tool = registry.resolve_tool_skill("code.search")
     assert tool is not None
     assert tool.slug == "tools/code-lookup"

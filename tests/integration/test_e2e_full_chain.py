@@ -71,7 +71,7 @@ def test_e2e_full_chain_with_sqlite_persistence() -> None:
 
     # Verify case
     assert result.case.status == CaseStatus.COMPLETED
-    assert result.case.selected_skills == ["base/default-log-triage"]
+    assert result.case.selected_skills == ["flows/default-log-triage"]
     assert result.case.service_name == "payment-service"
     assert all(step.status == StepStatus.COMPLETED for step in result.case.steps)
 
@@ -120,7 +120,7 @@ def test_e2e_full_chain_with_sqlite_persistence() -> None:
     # Verify audit trail
     audit_events = runtime.audit_log.list_events(case_id=result.case.case_id)
     assert audit_events
-    assert all(evt.detail.get("skill_name") == "base/default-log-triage" for evt in audit_events)
+    assert all(evt.detail.get("skill_name") == "flows/default-log-triage" for evt in audit_events)
 
     # Cleanup
     db_path.unlink(missing_ok=True)
@@ -192,7 +192,7 @@ def test_e2e_sqlite_task_and_checkpoint_persistence() -> None:
         {
             "case_id": "case-e2e-001",
             "flow_id": "builtin.default_log_triage_flow",
-            "skill_slug": "base/default-log-triage",
+            "skill_slug": "flows/default-log-triage",
             "step_index": 3,
             "status": "completed",
             "step_outputs": {"s1": {"result": "ok"}},

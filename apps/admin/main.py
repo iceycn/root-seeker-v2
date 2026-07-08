@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException
@@ -13,13 +16,22 @@ from pydantic import BaseModel, Field
 
 from apps.admin.config_store import AdminConfigStore
 from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
+from rootseeker.analysis.call_chain import (
+    extract_call_chain_summary,
+    extract_exception_summary,
+    merge_call_chain_summaries,
+)
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
-from rootseeker.contracts.repository import RepositoryRef
+from rootseeker.code_index.git_auth import GitCredentials
+from rootseeker.code_index.repo_tools import set_repo_sync_service
+from rootseeker.code_index.repo_sync import RepoSyncService
+from rootseeker.contracts.repository import RepositoryRef, RepoSyncState
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.flow_runtime import build_execution_trace
+from rootseeker.infra_core import RootSeekerSettings
 from rootseeker.infra_core.http_client import get_with_retry, outbound_http_client
 from rootseeker.infra_core.openai_compat import (
     resolve_mimo_base_url,
@@ -257,6 +269,7 @@ class AdminRepoRemoteRequest(BaseModel):
     base_url: str = ""
     token: str = ""
     owner: str = ""
+    git_username: str = ""
     api_path: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -272,6 +285,7 @@ class AdminDiscoverReposFromRemoteRequest(BaseModel):
 
 class AdminSyncRepoRequest(BaseModel):
     trigger_index: bool = True
+    force_reclone: bool = False
 
 
 class AdminSemanticSearchRequest(BaseModel):
@@ -370,6 +384,29 @@ def _invoke_admin_tool(runtime: DevRuntime, tool_name: str, arguments: dict[str,
     return result.content
 
 
+def _migrate_repo_remotes_git_username(store: AdminConfigStore) -> None:
+    env_username = os.getenv("ROOTSEEKER_CODEUP_GIT_USERNAME", "").strip()
+    if not env_username:
+        return
+    for remote in store.list_repo_remotes():
+        provider = _normalize_repo_provider(str(remote.get("provider") or ""))
+        if provider != "yunxiao":
+            continue
+        if str(remote.get("git_username") or "").strip():
+            continue
+        store.upsert_repo_remote({**remote, "git_username": env_username})
+
+
+def _resolve_repo_remote_git_username(req: AdminRepoRemoteRequest, existing: dict[str, Any]) -> str:
+    git_username = (req.git_username or str(existing.get("git_username") or "")).strip()
+    if git_username:
+        return git_username
+    provider = _normalize_repo_provider(req.provider)
+    if provider == "yunxiao":
+        return os.getenv("ROOTSEEKER_CODEUP_GIT_USERNAME", "").strip()
+    return ""
+
+
 def _persist_repo_state(store: AdminConfigStore, runtime: DevRuntime, repo_name: str) -> None:
     result = _invoke_admin_tool(runtime, "repo.get", {"name": repo_name})
     repo_payload = result.get("repo")
@@ -377,24 +414,55 @@ def _persist_repo_state(store: AdminConfigStore, runtime: DevRuntime, repo_name:
         store.upsert_repo(RepositoryRef.model_validate(repo_payload))
 
 
-def _load_admin_config(runtime: DevRuntime, store: AdminConfigStore) -> None:
+def _admin_repo_credential_resolver(store: AdminConfigStore):
+    def resolve(repo: RepositoryRef) -> GitCredentials | None:
+        metadata = dict(repo.metadata or {})
+        remote_name = str(metadata.get("remote_name") or "").strip()
+        if not remote_name:
+            return None
+        remote = next((item for item in store.list_repo_remotes() if item.get("name") == remote_name), None)
+        if remote is None:
+            return None
+        token = str(remote.get("token") or "").strip()
+        if not token:
+            return None
+        provider = str(remote.get("provider") or metadata.get("provider") or "custom")
+        username = str(remote.get("git_username") or metadata.get("git_username") or "").strip()
+        return GitCredentials(username=username, token=token, provider=provider)
+
+    return resolve
+
+
+def _create_admin_runtime(config_root: Path, store: AdminConfigStore) -> DevRuntime:
+    runtime_root = config_root if (config_root / "plugins" / "builtin").exists() else Path.cwd()
+    settings = RootSeekerSettings()
+    repo_sync_service = RepoSyncService(
+        base_path=settings.repo_base_path,
+        zoekt_endpoint=settings.zoekt_endpoint,
+        qdrant_endpoint=settings.qdrant_endpoint,
+        qdrant_collection_name=settings.qdrant_collection_name,
+        qdrant_api_key=settings.qdrant_api_key,
+        zoekt_timeout_seconds=settings.zoekt_timeout_seconds,
+        qdrant_timeout_seconds=settings.qdrant_timeout_seconds,
+        enable_zoekt=settings.repo_enable_zoekt,
+        enable_qdrant=settings.repo_enable_qdrant,
+        credential_resolver=_admin_repo_credential_resolver(store),
+    )
+    set_repo_sync_service(repo_sync_service)
+    runtime = create_dev_runtime(
+        runtime_root,
+        repo_sync_service=repo_sync_service,
+    )
+    return runtime, repo_sync_service
+
+
+def _load_admin_config(
+    runtime: DevRuntime,
+    store: AdminConfigStore,
+    repo_sync_service: RepoSyncService,
+) -> None:
     for repo in store.list_repos():
-        runtime.gateway.invoke(
-            ToolCallRequest(
-                case_id=ADMIN_CASE_ID,
-                step_id="load-config",
-                skill_name=ADMIN_SKILL,
-                tool_name="repo.register",
-                arguments={
-                    "name": repo.name,
-                    "url": repo.url,
-                    "branch": repo.default_branch or "main",
-                    "metadata": repo.metadata,
-                },
-            ),
-            actor="admin-config-loader",
-            plugin_id=CODE_INDEX_PLUGIN_ID,
-        )
+        repo_sync_service.register(repo)
     for entry in store.list_catalog():
         runtime.service_catalog.upsert(entry)
     for skill in store.list_skills():
@@ -520,9 +588,10 @@ def _repo_api_path(req: AdminDiscoverReposRequest) -> str:
     if provider == "gitee":
         return f"/orgs/{req.owner}/repos" if req.owner else "/user/repos"
     if provider == "yunxiao":
-        if not req.owner:
-            raise HTTPException(status_code=400, detail="organizationId is required for Yunxiao Codeup")
-        return f"/organizations/{req.owner}/repositories"
+        if req.owner:
+            return f"/organizations/{req.owner}/repositories"
+        # Region 版 Codeup 无需 organizationId；中心版请在 owner 中填写组织 ID。
+        return "/repositories"
     raise HTTPException(status_code=400, detail="api_path is required for this provider")
 
 
@@ -598,11 +667,242 @@ def _normalize_remote_repo(provider: str, item: Any) -> dict[str, Any] | None:
         "full_name": str(full_name or name),
         "clone_url": str(clone_url or ""),
         "ssh_url": str(ssh_url or ""),
-        "web_url": str(item.get("html_url") or item.get("web_url") or ""),
-        "default_branch": str(item.get("default_branch") or item.get("defaultBranch") or "main"),
+        "web_url": str(item.get("html_url") or item.get("web_url") or item.get("webUrl") or ""),
+        "default_branch": _normalize_default_branch(provider, item),
         "private": bool(item.get("private") or item.get("visibility") == "private"),
         "raw": item,
     }
+
+
+def _normalize_default_branch(provider: str, item: dict[str, Any]) -> str:
+    branch = item.get("default_branch") or item.get("defaultBranch") or item.get("default_branch_name")
+    if branch:
+        return str(branch)
+    if _normalize_repo_provider(provider) == "yunxiao":
+        return ""
+    return "main"
+
+
+def _yunxiao_repository_detail_path(owner: str, repository_id: str | int) -> str:
+    repo_ref = quote(str(repository_id), safe="")
+    if owner:
+        return f"/organizations/{owner}/repositories/{repo_ref}"
+    return f"/repositories/{repo_ref}"
+
+
+def _yunxiao_repository_branches_path(owner: str, repository_id: str | int) -> str:
+    repo_ref = quote(str(repository_id), safe="")
+    if owner:
+        return f"/organizations/{owner}/repositories/{repo_ref}/branches"
+    return f"/repositories/{repo_ref}/branches"
+
+
+def _fetch_yunxiao_repository_detail(
+    *,
+    base: str,
+    owner: str,
+    repository_id: str | int,
+    token: str,
+    client: httpx.Client,
+) -> dict[str, Any]:
+    detail_url = _join_url(base, _yunxiao_repository_detail_path(owner, repository_id))
+    try:
+        response = get_with_retry(
+            client,
+            detail_url,
+            headers=_repo_auth_headers("yunxiao", token),
+        )
+        response.raise_for_status()
+        detail = response.json()
+        if isinstance(detail, dict):
+            return detail
+    except Exception:
+        pass
+    return {}
+
+
+def _fetch_yunxiao_default_branch(
+    *,
+    base: str,
+    owner: str,
+    repository_id: str | int,
+    token: str,
+    client: httpx.Client,
+    detail: dict[str, Any] | None = None,
+) -> str:
+    detail = detail if detail is not None else _fetch_yunxiao_repository_detail(
+        base=base,
+        owner=owner,
+        repository_id=repository_id,
+        token=token,
+        client=client,
+    )
+    branch = detail.get("defaultBranch") or detail.get("default_branch")
+    if branch:
+        return str(branch)
+
+    branches_url = _join_url(base, _yunxiao_repository_branches_path(owner, repository_id))
+    try:
+        response = get_with_retry(
+            client,
+            branches_url,
+            headers=_repo_auth_headers("yunxiao", token),
+            params={"page": 1, "perPage": 100},
+        )
+        response.raise_for_status()
+        data = response.json()
+        items = _extract_repo_items(data)
+        for item in items:
+            if isinstance(item, dict) and item.get("defaultBranch"):
+                name = item.get("name")
+                if name:
+                    return str(name)
+    except Exception:
+        pass
+    return ""
+
+
+def _enrich_yunxiao_repo(
+    repo: dict[str, Any],
+    *,
+    base: str,
+    owner: str,
+    token: str,
+    client: httpx.Client,
+) -> dict[str, Any]:
+    raw = repo.get("raw")
+    if not isinstance(raw, dict):
+        return repo
+    repository_id = raw.get("id") or raw.get("pathWithNamespace") or raw.get("path_with_namespace")
+    if not repository_id:
+        return repo
+    detail = _fetch_yunxiao_repository_detail(
+        base=base,
+        owner=owner,
+        repository_id=repository_id,
+        token=token,
+        client=client,
+    )
+    default_branch = _fetch_yunxiao_default_branch(
+        base=base,
+        owner=owner,
+        repository_id=repository_id,
+        token=token,
+        client=client,
+        detail=detail,
+    )
+    enriched = dict(repo)
+    if default_branch:
+        enriched["default_branch"] = default_branch
+    clone_url = detail.get("httpUrlToRepo") or detail.get("http_url_to_repo")
+    if clone_url:
+        enriched["clone_url"] = str(clone_url)
+    ssh_url = detail.get("sshUrlToRepo") or detail.get("ssh_url_to_repo")
+    if ssh_url:
+        enriched["ssh_url"] = str(ssh_url)
+    web_url = detail.get("webUrl") or detail.get("web_url")
+    if web_url:
+        enriched["web_url"] = str(web_url)
+    return enriched
+
+
+def _public_discovered_repo(repo: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(repo)
+    payload.pop("raw", None)
+    return payload
+
+
+def _remote_repo_registry_name(full_name: str) -> str:
+    return re.sub(r"[/:]+", "__", full_name.strip())
+
+
+def _normalize_repo_match_url(url: str) -> str:
+    value = (url or "").strip().lower()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if parsed.username or parsed.password:
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        value = urlunparse(parsed._replace(netloc=host))
+    if value.endswith(".git"):
+        value = value[:-4]
+    return value.rstrip("/")
+
+
+def _find_registered_repo_match(
+    discovered: dict[str, Any],
+    registered: list[RepositoryRef],
+) -> RepositoryRef | None:
+    full_name = str(discovered.get("full_name") or "").strip().lower()
+    registry_name = _remote_repo_registry_name(str(discovered.get("full_name") or ""))
+    candidate_urls = {
+        _normalize_repo_match_url(str(discovered.get("clone_url") or "")),
+        _normalize_repo_match_url(str(discovered.get("ssh_url") or "")),
+        _normalize_repo_match_url(str(discovered.get("web_url") or "")),
+    } - {""}
+
+    for repo in registered:
+        metadata = repo.metadata or {}
+        meta_full_name = str(metadata.get("full_name") or "").strip().lower()
+        if full_name and meta_full_name and full_name == meta_full_name:
+            return repo
+        if registry_name and repo.name == registry_name:
+            return repo
+        registered_url = _normalize_repo_match_url(str(repo.url or ""))
+        if registered_url and registered_url in candidate_urls:
+            return repo
+    return None
+
+
+def _annotate_discovered_repo_import_status(
+    repo: dict[str, Any],
+    registered: list[RepositoryRef],
+) -> dict[str, Any]:
+    payload = dict(repo)
+    matched = _find_registered_repo_match(payload, registered)
+    if matched is None:
+        payload["imported"] = False
+        return payload
+    payload["imported"] = True
+    payload["registered_name"] = matched.name
+    payload["sync_state"] = matched.sync_status.state.value
+    payload["reimportable"] = matched.sync_status.state == RepoSyncState.FAILED
+    return payload
+
+
+def _annotate_discovered_repos_import_status(
+    repos: list[dict[str, Any]],
+    registered: list[RepositoryRef],
+) -> list[dict[str, Any]]:
+    return [_annotate_discovered_repo_import_status(repo, registered) for repo in repos]
+
+
+def _enrich_yunxiao_repos_parallel(
+    repos: list[dict[str, Any]],
+    *,
+    base: str,
+    owner: str,
+    token: str,
+    max_workers: int = 8,
+) -> list[dict[str, Any]]:
+    if not repos:
+        return repos
+
+    def enrich_one(repo: dict[str, Any]) -> dict[str, Any]:
+        with outbound_http_client(timeout=30.0) as client:
+            return _enrich_yunxiao_repo(
+                repo,
+                base=base,
+                owner=owner,
+                token=token,
+                client=client,
+            )
+
+    workers = min(max_workers, len(repos))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(enrich_one, repos))
 
 
 def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
@@ -623,11 +923,11 @@ def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
         )
         response.raise_for_status()
         data = response.json()
-    repos = [
-        repo
-        for repo in (_normalize_remote_repo(provider, item) for item in _extract_repo_items(data))
-        if repo is not None
-    ]
+        repos = [
+            repo
+            for repo in (_normalize_remote_repo(provider, item) for item in _extract_repo_items(data))
+            if repo is not None
+        ]
     query = req.query.strip().lower()
     if query:
         repos = [
@@ -635,7 +935,7 @@ def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
             for repo in repos
             if query in str(repo.get("name", "")).lower() or query in str(repo.get("full_name", "")).lower()
         ]
-    return {"ok": True, "provider": provider, "url": url, "repos": repos, "total": len(repos)}
+    return {"ok": True, "provider": provider, "url": url, "repos": [_public_discovered_repo(repo) for repo in repos], "total": len(repos)}
 
 
 def _mask_secret(value: str) -> str:
@@ -655,21 +955,36 @@ def _public_repo_remote(remote: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _discover_repos_from_remote(store: AdminConfigStore, req: AdminDiscoverReposFromRemoteRequest) -> dict[str, Any]:
+def _discover_repos_from_remote(
+    store: AdminConfigStore,
+    req: AdminDiscoverReposFromRemoteRequest,
+    registered: list[RepositoryRef] | None = None,
+) -> dict[str, Any]:
     remote = next((item for item in store.list_repo_remotes() if item.get("name") == req.remote_name), None)
     if remote is None:
         raise HTTPException(status_code=404, detail="repo remote not found")
+    provider = _normalize_repo_provider(str(remote.get("provider") or "github"))
+    owner = str(req.owner or "").strip()
+    remote_owner = str(remote.get("owner") or "").strip()
+    if provider == "yunxiao" and remote_owner:
+        owner = remote_owner
     discover_req = AdminDiscoverReposRequest(
-        provider=str(remote.get("provider") or "github"),
+        provider=provider,
         base_url=str(remote.get("base_url") or ""),
         token=str(remote.get("token") or ""),
-        owner=req.owner or str(remote.get("owner") or ""),
+        owner=owner,
         api_path=req.api_path or str(remote.get("api_path") or ""),
         query=req.query,
         page=req.page,
         per_page=req.per_page,
     )
-    return _discover_remote_repos(discover_req)
+    result = _discover_remote_repos(discover_req)
+    registered_repos = registered if registered is not None else store.list_repos()
+    result["repos"] = [
+        _public_discovered_repo(repo)
+        for repo in _annotate_discovered_repos_import_status(result["repos"], registered_repos)
+    ]
+    return result
 
 
 def _configured_ai_provider(store: AdminConfigStore) -> dict[str, Any] | None:
@@ -702,6 +1017,234 @@ def _has_ready_ai_provider(store: AdminConfigStore) -> bool:
     return bool(str(provider.get("base_url") or "").strip() and str(provider.get("api_key") or "").strip() and _configured_ai_model(store, provider))
 
 
+KIMI_MESSAGE_BYTE_LIMIT = 1_900_000
+
+
+def _truncate_text(value: Any, *, max_chars: int) -> Any:
+    if not isinstance(value, str):
+        return value
+    if len(value) <= max_chars:
+        return value
+    omitted = len(value) - max_chars
+    return f"{value[:max_chars]}\n...[truncated {omitted} chars]"
+
+
+def _compact_case_for_llm(case: dict[str, Any]) -> dict[str, Any]:
+    steps = case.get("steps") or []
+    compact_steps: list[dict[str, Any]] = []
+    if isinstance(steps, list):
+        for step in steps[:12]:
+            if not isinstance(step, dict):
+                continue
+            compact_steps.append(
+                {
+                    "step_id": step.get("step_id"),
+                    "name": step.get("name"),
+                    "tool_name": step.get("tool_name"),
+                    "status": step.get("status"),
+                }
+            )
+    return {
+        "case_id": case.get("case_id"),
+        "title": case.get("title"),
+        "selected_skills": case.get("selected_skills"),
+        "symptom": _truncate_text(str(case.get("symptom") or ""), max_chars=4000),
+        "step_count": len(steps) if isinstance(steps, list) else 0,
+        "steps": compact_steps,
+    }
+
+
+def _compact_report_for_llm(report: dict[str, Any]) -> dict[str, Any]:
+    root_cause = report.get("root_cause") if isinstance(report.get("root_cause"), dict) else {}
+    return {
+        "summary": _truncate_text(str(report.get("summary") or ""), max_chars=2000),
+        "root_cause": {
+            "title": root_cause.get("title"),
+            "narrative": _truncate_text(str(root_cause.get("narrative") or ""), max_chars=2000),
+            "confidence": root_cause.get("confidence"),
+            "contributing_factors": root_cause.get("contributing_factors"),
+        },
+        "metadata": report.get("metadata"),
+    }
+
+
+def _compact_evidence_for_llm(
+    items: list[dict[str, Any]],
+    *,
+    max_items: int = 5,
+    max_content_chars: int = 2000,
+) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in items[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if isinstance(content, dict):
+            compact_content = {
+                key: _truncate_text(str(value), max_chars=max_content_chars // 2)
+                if isinstance(value, str)
+                else value
+                for key, value in content.items()
+            }
+        else:
+            compact_content = _truncate_text(str(content or ""), max_chars=max_content_chars)
+        compact.append(
+            {
+                "item_id": item.get("item_id"),
+                "type": item.get("type"),
+                "source": item.get("source"),
+                "content": compact_content,
+            }
+        )
+    return compact
+
+
+def _call_chain_from_flow(flow_result: Any, content: str) -> list[str]:
+    case = flow_result.case.model_dump(mode="json")
+    symptom = str(case.get("symptom") or "")
+    chains = merge_call_chain_summaries(
+        extract_call_chain_summary(content),
+        extract_call_chain_summary(symptom),
+    )
+    for step in case.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        if step.get("tool_name") not in {"incident.normalize"} and step.get("action") not in {
+            "incident.normalize"
+        }:
+            continue
+        outputs = step.get("outputs") or {}
+        extracted = outputs.get("extracted") if isinstance(outputs, dict) else {}
+        if isinstance(extracted, dict) and isinstance(extracted.get("call_chain"), list):
+            chains = merge_call_chain_summaries(chains, extracted["call_chain"])
+    return chains
+
+
+def _caller_trace_from_flow(flow_result: Any) -> dict[str, Any] | None:
+    for step in flow_result.case.steps:
+        if step.step_id != "find-callers" and step.action != "code.find_callers":
+            continue
+        outputs = step.outputs if isinstance(step.outputs, dict) else {}
+        if outputs.get("skipped"):
+            return None
+        if outputs.get("target") or outputs.get("aligned") or outputs.get("static_callers"):
+            return _compact_caller_trace(outputs)
+    return None
+
+
+def _compact_caller_trace(outputs: dict[str, Any]) -> dict[str, Any]:
+    aligned = outputs.get("aligned") if isinstance(outputs.get("aligned"), dict) else {}
+    static_callers = outputs.get("static_callers") if isinstance(outputs.get("static_callers"), list) else []
+    compact_callers: list[dict[str, Any]] = []
+    for item in static_callers[:8]:
+        if not isinstance(item, dict):
+            continue
+        compact_callers.append(
+            {
+                "repo": item.get("repo"),
+                "caller": f"{item.get('caller_class')}.{item.get('caller_method')}",
+                "callee": f"{item.get('callee_class')}.{item.get('callee_method')}",
+                "runtime_match": item.get("runtime_match"),
+                "path": item.get("path"),
+                "line": item.get("line"),
+            }
+        )
+    entrypoints = outputs.get("entrypoints") if isinstance(outputs.get("entrypoints"), list) else []
+    compact_entrypoints: list[dict[str, Any]] = []
+    for item in entrypoints[:3]:
+        if not isinstance(item, dict):
+            continue
+        compact_entrypoints.append(
+            {
+                "type": item.get("type"),
+                "api": f"{item.get('class_name')}.{item.get('method_name')}",
+                "mapping": item.get("mapping"),
+            }
+        )
+    target = outputs.get("target") if isinstance(outputs.get("target"), dict) else {}
+    return {
+        "target": (
+            f"{target.get('class_name')}.{target.get('method_name')}"
+            if target.get("class_name") and target.get("method_name")
+            else None
+        ),
+        "aligned_path": aligned.get("aligned_path"),
+        "fault_method": aligned.get("fault_method"),
+        "entry_method": aligned.get("entry_method"),
+        "entrypoints": compact_entrypoints,
+        "static_callers": compact_callers,
+        "queries": (outputs.get("queries") or [])[:5],
+    }
+
+
+def _build_llm_error_chat_payload(
+    *,
+    content: str,
+    flow_result: Any,
+    byte_limit: int = KIMI_MESSAGE_BYTE_LIMIT,
+) -> dict[str, Any]:
+    case = flow_result.case.model_dump(mode="json")
+    report = flow_result.report.model_dump(mode="json")
+    evidence_preview = [
+        item.model_dump(mode="json")
+        for item in flow_result.evidence_pack.items[:8]
+    ]
+    call_chain = _call_chain_from_flow(flow_result, content)
+    caller_trace = _caller_trace_from_flow(flow_result)
+    exception_summary = extract_exception_summary(content) or extract_exception_summary(
+        str(case.get("symptom") or "")
+    )
+    error_limit = 6000 if call_chain else 12000
+    evidence_limits = [(5, 2000), (3, 1000), (2, 500)]
+    for max_items, max_content_chars in evidence_limits:
+        payload = {
+            "exception_summary": exception_summary,
+            "call_chain": call_chain,
+            "caller_trace": caller_trace,
+            "error_excerpt": _truncate_text(content, max_chars=error_limit),
+            "case": _compact_case_for_llm(case),
+            "report": _compact_report_for_llm(report),
+            "evidence_preview": _compact_evidence_for_llm(
+                evidence_preview,
+                max_items=max_items,
+                max_content_chars=max_content_chars,
+            ),
+        }
+        if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) <= byte_limit:
+            return payload
+        error_limit = max(2000, error_limit // 2)
+    payload["truncation"] = {
+        "reason": "payload_too_large",
+        "byte_limit": byte_limit,
+    }
+    return payload
+
+
+def _error_chat_llm_timeout_seconds(store: AdminConfigStore, provider: dict[str, Any]) -> float:
+    raw = provider.get("timeout_seconds")
+    if raw is not None:
+        try:
+            return max(30.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    settings_raw = store.get_settings().get("ROOTSEEKER_LLM_TIMEOUT_SECONDS")
+    if settings_raw is not None:
+        try:
+            return max(30.0, float(settings_raw))
+        except (TypeError, ValueError):
+            pass
+    env_timeout = (os.getenv("ROOTSEEKER_LLM_TIMEOUT_SECONDS") or "").strip()
+    if env_timeout:
+        try:
+            return max(30.0, float(env_timeout))
+        except ValueError:
+            pass
+    base_url = str(provider.get("base_url") or "").lower()
+    if "kimi.com" in base_url or "moonshot" in base_url:
+        return 180.0
+    return 120.0
+
+
 def _run_llm_analysis(
     *,
     store: AdminConfigStore,
@@ -721,33 +1264,26 @@ def _run_llm_analysis(
         api_key=api_key,
         model=str(model),
         provider_name=str(provider.get("name") or provider.get("provider_type") or "admin"),
-        timeout_seconds=60.0,
+        timeout_seconds=_error_chat_llm_timeout_seconds(store, provider),
         temperature=0.2,
+        max_retries=1,
     )
 
-    evidence_preview = [
-        item.model_dump(mode="json")
-        for item in flow_result.evidence_pack.items[:8]
-    ]
+    llm_payload = _build_llm_error_chat_payload(content=content, flow_result=flow_result)
+    user_content = json.dumps(llm_payload, ensure_ascii=False)
     messages = [
         {
             "role": "system",
             "content": (
-                "你是 RootSeeker 错误排查助手。请基于用户提交的错误信息、排查流程产生的 "
-                "case/report/evidence，给出简洁的根因判断、排查证据和下一步建议。"
+                "你是 RootSeeker 错误排查助手。请优先依据 exception_summary、call_chain（运行时调用链）"
+                "与 caller_trace（跨仓库静态 caller 追踪、HTTP 入口）判断根因，"
+                "再结合 case/report/evidence 摘要给出排查证据和下一步建议。"
+                "不要依赖完整堆栈或工具原始输出。"
             ),
         },
         {
             "role": "user",
-            "content": json.dumps(
-                {
-                    "error": content,
-                    "case": flow_result.case.model_dump(mode="json"),
-                    "report": flow_result.report.model_dump(mode="json"),
-                    "evidence_preview": evidence_preview,
-                },
-                ensure_ascii=False,
-            ),
+            "content": user_content,
         },
     ]
     result = OpenAICompatibleReportClient(config).complete(messages)
@@ -798,11 +1334,12 @@ def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
 def create_app(repo_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="RootSeeker Admin", version="0.1.0")
     config_root = Path(repo_root or Path.cwd())
-    runtime_root = config_root if (config_root / "plugins" / "builtin").exists() else Path.cwd()
-    runtime = create_dev_runtime(runtime_root)
-    store = AdminConfigStore(config_root / "data" / "admin" / "config.json")
+    config_path = config_root / "data" / "admin" / "config.json"
+    store = AdminConfigStore(config_path)
+    _migrate_repo_remotes_git_username(store)
+    runtime, repo_sync_service = _create_admin_runtime(config_root, store)
     history_store = build_error_history_store(config_root)
-    _load_admin_config(runtime, store)
+    _load_admin_config(runtime, store, repo_sync_service)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -1177,9 +1714,21 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     def upsert_repo_remote(req: AdminRepoRemoteRequest) -> dict[str, Any]:
         existing = next((item for item in store.list_repo_remotes() if item.get("name") == req.name), {})
         token = req.token or str(existing.get("token") or "")
+        git_username = _resolve_repo_remote_git_username(req, existing)
+        provider = _normalize_repo_provider(str(req.provider or "github"))
+        if provider == "yunxiao" and not git_username:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "云效 Codeup 必须配置 HTTPS 克隆账号。"
+                    "请在表单中填写 git_username，或在 .env 设置 ROOTSEEKER_CODEUP_GIT_USERNAME。"
+                    "克隆账号位于：Codeup → 个人设置 → HTTPS 密码。"
+                ),
+            )
         payload = req.model_dump(mode="json")
-        payload["provider"] = _normalize_repo_provider(str(payload.get("provider") or "github"))
-        payload["base_url"] = payload.get("base_url") or _default_repo_base_url(str(payload["provider"]))
+        payload["provider"] = provider
+        payload["base_url"] = payload.get("base_url") or _default_repo_base_url(provider)
+        payload["git_username"] = git_username
         remote = store.upsert_repo_remote({**payload, "token": token})
         return {"ok": True, "remote": _public_repo_remote(remote)}
 
@@ -1191,7 +1740,12 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     @app.post("/api/repos/discover")
     def discover_repos(req: AdminDiscoverReposFromRemoteRequest) -> dict[str, Any]:
         try:
-            return _discover_repos_from_remote(store, req)
+            runtime_repos = [
+                RepositoryRef.model_validate(repo)
+                for repo in _invoke_admin_tool(runtime, "repo.list", {}).get("repos", [])
+                if isinstance(repo, dict)
+            ]
+            return _discover_repos_from_remote(store, req, registered=runtime_repos)
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=e.response.text) from e
         except httpx.HTTPError as e:
@@ -1256,7 +1810,15 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/api/repos/{repo_name}/sync")
     def sync_repo(repo_name: str, req: AdminSyncRepoRequest) -> dict[str, Any]:
-        result = _invoke_admin_tool(runtime, "repo.sync", {"name": repo_name, "trigger_index": req.trigger_index})
+        result = _invoke_admin_tool(
+            runtime,
+            "repo.sync",
+            {
+                "name": repo_name,
+                "trigger_index": req.trigger_index,
+                "force_reclone": req.force_reclone,
+            },
+        )
         _persist_repo_state(store, runtime, repo_name)
         if not result.get("ok"):
             message = str(result.get("message") or result.get("error") or "repo sync failed")

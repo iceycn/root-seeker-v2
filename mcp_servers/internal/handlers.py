@@ -5,6 +5,7 @@ from typing import Any
 
 from mcp_servers.internal.tool_schemas import parameter_schema_for
 from mcp_servers.internal.adapters import InternalToolAdapter
+from rootseeker.analysis.call_chain import extract_call_chain_summary, extract_exception_summary
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.tool import ToolPermissionLevel, ToolScope, ToolSpec
 from rootseeker.mcp_plane.registry import ToolRegistry
@@ -26,6 +27,9 @@ def register_internal_tools(
             payload = dict(args)
         case_request = webhook_payload_to_case_create(payload)
         metadata = dict(case_request.metadata)
+        symptom_text = str(case_request.symptom or "")
+        message_text = str(payload.get("message") or payload.get("content") or "")
+        source_text = "\n".join(part for part in (message_text, symptom_text) if part)
         extracted = {
             "service_name": case_request.service_name,
             "tenant": metadata.get("tenant"),
@@ -35,8 +39,10 @@ def register_internal_tools(
             "source": case_request.source,
             "severity": metadata.get("severity"),
             "time_window": metadata.get("time_window") or metadata.get("start_time") or metadata.get("end_time"),
-            "code_path": metadata.get("code_path") or _extract_code_path(case_request.symptom),
+            "code_path": metadata.get("code_path") or _extract_code_path(symptom_text),
             "code_symbol": metadata.get("code_symbol"),
+            "exception_summary": extract_exception_summary(source_text),
+            "call_chain": extract_call_chain_summary(source_text),
         }
         missing_fields = [
             field
@@ -95,6 +101,9 @@ def register_internal_tools(
             str(args.get("path", "README.md")),
             repo=str(repo) if repo else None,
         )
+
+    def _invoke_code_find_callers(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.find_callers(args)
 
     def _invoke_index_status(_args: dict[str, Any]) -> dict[str, Any]:
         return adapter.get_index_status()
@@ -241,6 +250,17 @@ def register_internal_tools(
                 parameters_schema=parameter_schema_for("code.read"),
             ),
             _invoke_code_read,
+        ),
+        (
+            ToolSpec(
+                name="code.find_callers",
+                description="Trace method callers across indexed repositories",
+                server_name=server,
+                scope=internal,
+                tags=["code", "analysis"],
+                parameters_schema=parameter_schema_for("code.find_callers"),
+            ),
+            _invoke_code_find_callers,
         ),
         (
             ToolSpec(

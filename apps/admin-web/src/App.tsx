@@ -34,6 +34,7 @@ import {
   Table,
   Tag,
   Tabs,
+  Tooltip,
   Typography,
   message,
 } from 'antd'
@@ -154,6 +155,10 @@ type RemoteRepoRecord = ApiRecord & {
   web_url?: string
   default_branch?: string
   private?: boolean
+  imported?: boolean
+  reimportable?: boolean
+  registered_name?: string
+  sync_state?: string
 }
 
 type RepoRemoteRecord = ApiRecord & {
@@ -161,6 +166,7 @@ type RepoRemoteRecord = ApiRecord & {
   provider: string
   base_url: string
   owner?: string
+  git_username?: string
   api_path?: string
   has_token?: boolean
   masked_token?: string
@@ -274,6 +280,69 @@ const parameterSchemaColumns = [
   { title: '必填', dataIndex: 'required', width: 60, render: (value: boolean) => (value ? '是' : '否') },
   { title: '说明', dataIndex: 'description' },
 ]
+
+function renderEllipsisCell(value?: string | null) {
+  const text = value?.trim() || '-'
+  return (
+    <Tooltip title={text}>
+      <span className="table-cell-ellipsis">{text}</span>
+    </Tooltip>
+  )
+}
+
+const repoSyncStateLabels: Record<string, { color: string; text: string }> = {
+  pending: { color: 'default', text: '待同步' },
+  syncing: { color: 'processing', text: '同步中' },
+  indexing: { color: 'processing', text: '索引中' },
+  completed: { color: 'success', text: '已完成' },
+  failed: { color: 'error', text: '失败' },
+}
+
+function canImportRemoteRepo(record: RemoteRepoRecord) {
+  return !record.imported || record.reimportable || record.sync_state === 'failed'
+}
+
+function mergeRemoteRepoImportStatus(record: RemoteRepoRecord, registeredRepos: RepoRecord[]): RemoteRepoRecord {
+  const registryName = record.registered_name || record.full_name.replace(/[/:]+/g, '__')
+  const matched = registeredRepos.find(
+    (repo) =>
+      repo.name === registryName ||
+      String(repo.metadata?.full_name || '') === record.full_name,
+  )
+  if (!matched) {
+    return record
+  }
+  const sync_state = matched.sync_status?.state || record.sync_state
+  return {
+    ...record,
+    imported: true,
+    registered_name: matched.name,
+    sync_state,
+    reimportable: sync_state === 'failed',
+  }
+}
+
+function renderRemoteRepoImportStatus(record: RemoteRepoRecord) {
+  if (!record.imported) {
+    return <Tag>未导入</Tag>
+  }
+  const state = record.sync_state || 'pending'
+  const item = repoSyncStateLabels[state] || { color: 'default', text: state }
+  return (
+    <Space size={4} wrap>
+      <Tag color="blue">已导入</Tag>
+      <Tag color={item.color}>{item.text}</Tag>
+      {record.reimportable || record.sync_state === 'failed' ? (
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>可重新导入</Typography.Text>
+      ) : null}
+    </Space>
+  )
+}
+
+const responsiveTableProps = {
+  tableLayout: 'fixed' as const,
+  style: { width: '100%' },
+}
 
 function ParameterSchemaTable({ schema }: { schema?: JsonSchema }) {
   const rows = schemaPropertyRows(schema)
@@ -400,6 +469,9 @@ function App() {
   const [repoForm] = Form.useForm()
   const [repoRemoteForm] = Form.useForm()
   const [remoteRepoForm] = Form.useForm()
+  const repoRemoteProvider = Form.useWatch('provider', repoRemoteForm)
+  const selectedRemoteName = Form.useWatch('remote_name', remoteRepoForm)
+  const selectedRemoteProvider = repoRemotes.find((item) => item.name === selectedRemoteName)?.provider
   const [localRepoForm] = Form.useForm()
   const [catalogForm] = Form.useForm()
   const [callbackForm] = Form.useForm()
@@ -622,9 +694,15 @@ function App() {
   const discoverRemoteRepos = async () => {
     try {
       const values = await remoteRepoForm.validateFields()
+      const remote = repoRemotes.find((item) => item.name === values.remote_name)
+      const payload = { ...values }
+      if (remote?.provider === 'yunxiao' && remote.owner) {
+        payload.owner = remote.owner
+      }
+      setRemoteRepos([])
       const data = await api<{ repos: RemoteRepoRecord[] }>('/api/repos/discover', {
         method: 'POST',
-        body: JSON.stringify(values),
+        body: JSON.stringify(payload),
       })
       setRemoteRepos(data.repos || [])
       setSelectedRemoteRepoKeys([])
@@ -638,12 +716,18 @@ function App() {
     try {
       const values = await remoteRepoForm.validateFields()
       const remote = repoRemotes.find((item) => item.name === values.remote_name)
-      if (!selected.length) {
-        apiMessage.warning('请先选择要导入的远端仓库')
+      const pending = selected.filter((repo) => canImportRemoteRepo(repo))
+      if (!pending.length) {
+        apiMessage.warning('所选仓库均已导入且状态正常')
         return
       }
-      for (const repo of selected) {
-        const name = repo.full_name.replace(/[/:]+/g, '__')
+      let reimportCount = 0
+      for (const repo of pending) {
+        const reimport = Boolean(repo.imported && (repo.reimportable || repo.sync_state === 'failed'))
+        const name = repo.registered_name || repo.full_name.replace(/[/:]+/g, '__')
+        if (reimport) {
+          reimportCount += 1
+        }
         await api('/api/repos', {
           method: 'POST',
           body: JSON.stringify({
@@ -652,10 +736,11 @@ function App() {
             branch: repo.default_branch || 'main',
             metadata: {
               source: 'remote',
-              provider: repo.provider,
+              provider: repo.provider || remote?.provider,
               full_name: repo.full_name,
               remote_name: remote?.name || values.remote_name,
               remote_base_url: remote?.base_url,
+              git_username: remote?.git_username,
               web_url: repo.web_url,
             },
           }),
@@ -663,19 +748,37 @@ function App() {
         if (values.trigger_sync) {
           await api(`/api/repos/${encodeURIComponent(name)}/sync`, {
             method: 'POST',
-            body: JSON.stringify({ trigger_index: true }),
+            body: JSON.stringify({ trigger_index: true, force_reclone: reimport }),
           })
         }
       }
-      apiMessage.success(`已导入 ${selected.length} 个仓库`)
+      const importedFullNames = new Set(pending.map((repo) => repo.full_name))
+      setRemoteRepos((prev) =>
+        prev.map((repo) => {
+          if (!importedFullNames.has(repo.full_name)) {
+            return repo
+          }
+          return {
+            ...repo,
+            imported: true,
+            reimportable: false,
+            registered_name: repo.registered_name || repo.full_name.replace(/[/:]+/g, '__'),
+            sync_state: values.trigger_sync ? 'syncing' : 'pending',
+          }
+        }),
+      )
+      setSelectedRemoteRepoKeys((prev) => prev.filter((key) => !importedFullNames.has(String(key))))
+      apiMessage.success(reimportCount > 0 ? `已重新导入 ${pending.length} 个仓库` : `已导入 ${pending.length} 个仓库`)
       await refreshRepos()
     } catch (error) {
+      await refreshRepos()
       apiMessage.error(String(error))
     }
   }
 
   const importSelectedRemoteRepos = async () => {
-    await importRemoteRepoRecords(remoteRepos.filter((repo) => selectedRemoteRepoKeys.includes(repo.full_name)))
+    const merged = remoteRepos.map((record) => mergeRemoteRepoImportStatus(record, repos))
+    await importRemoteRepoRecords(merged.filter((repo) => selectedRemoteRepoKeys.includes(repo.full_name)))
   }
 
   const importLocalRepo = async () => {
@@ -1333,7 +1436,7 @@ function App() {
     }
     if (active === 'repos') {
       return (
-        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+        <Space direction="vertical" size={16} style={{ width: '100%' }} className="repo-page">
           <Tabs
             items={[
               {
@@ -1343,20 +1446,24 @@ function App() {
                   <Card
                     title="远端源列表"
                     bordered={false}
+                    className="admin-table-card"
                     extra={<Button type="primary" icon={<PlusOutlined />} onClick={() => openRepoRemoteModal()}>新增远端源</Button>}
                   >
                     <Table
+                      {...responsiveTableProps}
                       rowKey="name"
                       dataSource={repoRemotes}
                       columns={[
-                        { title: '名称', dataIndex: 'name' },
-                        { title: '类型', dataIndex: 'provider' },
-                        { title: '域名', dataIndex: 'base_url' },
-                        { title: '默认组织', dataIndex: 'owner' },
-                        { title: 'API Path', dataIndex: 'api_path' },
-                        { title: 'Token', render: (_: unknown, r: RepoRemoteRecord) => r.has_token ? r.masked_token : '-' },
+                        { title: '名称', dataIndex: 'name', width: 120, ellipsis: true },
+                        { title: '类型', dataIndex: 'provider', width: 90 },
+                        { title: '域名', dataIndex: 'base_url', width: 180, ellipsis: true, render: renderEllipsisCell },
+                        { title: '默认组织', dataIndex: 'owner', width: 160, ellipsis: true, render: renderEllipsisCell },
+                        { title: '克隆账号', dataIndex: 'git_username', width: 120, ellipsis: true, render: renderEllipsisCell },
+                        { title: 'API Path', dataIndex: 'api_path', width: 120, ellipsis: true, render: renderEllipsisCell },
+                        { title: 'Token', width: 140, render: (_: unknown, r: RepoRemoteRecord) => r.has_token ? r.masked_token : '-' },
                         {
                           title: '操作',
+                          width: 160,
                           render: (_: unknown, r: RepoRemoteRecord) => (
                             <Space>
                               <Button icon={<EditOutlined />} onClick={() => openRepoRemoteModal(r)}>编辑</Button>
@@ -1374,8 +1481,8 @@ function App() {
                 label: '从远端导入',
                 children: (
                   <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                    <Card title="从远端搜索并导入" bordered={false}>
-                      <Form form={remoteRepoForm} layout="inline" initialValues={{ per_page: 50, page: 1, trigger_sync: true }}>
+                    <Card title="从远端搜索并导入" bordered={false} className="repo-discover-card">
+                      <Form form={remoteRepoForm} layout="inline" className="repo-discover-form" initialValues={{ per_page: 50, page: 1, trigger_sync: true }}>
                         <Form.Item name="remote_name" rules={[{ required: true }]}>
                           <Select
                             placeholder="选择远端源"
@@ -1383,35 +1490,67 @@ function App() {
                             options={repoRemotes.map((remote) => ({ label: `${remote.name} (${remote.provider})`, value: remote.name }))}
                             onChange={(name) => {
                               const remote = repoRemotes.find((item) => item.name === name)
-                              if (remote?.owner) {
-                                remoteRepoForm.setFieldValue('owner', remote.owner)
-                              }
+                              remoteRepoForm.setFieldValue('owner', remote?.owner || '')
+                              setRemoteRepos([])
+                              setSelectedRemoteRepoKeys([])
                             }}
                           />
                         </Form.Item>
                         <Form.Item name="query"><Input placeholder="搜索仓库名，可空" style={{ width: 220 }} /></Form.Item>
-                        <Form.Item name="owner"><Input placeholder="覆盖组织/Group" style={{ width: 180 }} /></Form.Item>
+                        <Form.Item
+                          name="owner"
+                          label={
+                            selectedRemoteProvider === 'yunxiao'
+                              ? 'organizationId（中心版必填）'
+                              : '覆盖组织 / Group'
+                          }
+                        >
+                          <Input
+                            placeholder={
+                              selectedRemoteProvider === 'yunxiao'
+                                ? '中心版填组织 ID；Region 版可留空'
+                                : '覆盖组织/Group'
+                            }
+                            style={{ width: 220 }}
+                          />
+                        </Form.Item>
                         <Form.Item name="api_path"><Input placeholder="覆盖 API path" style={{ width: 180 }} /></Form.Item>
                         <Form.Item name="trigger_sync" valuePropName="checked"><Switch checkedChildren="导入后同步" unCheckedChildren="只注册" /></Form.Item>
                         <Form.Item><Button type="primary" icon={<SearchOutlined />} onClick={discoverRemoteRepos}>搜索</Button></Form.Item>
                         <Form.Item><Button icon={<FolderOpenOutlined />} onClick={importSelectedRemoteRepos}>导入选中</Button></Form.Item>
                       </Form>
                     </Card>
-                    <Card title="远端仓库列表" bordered={false}>
+                    <Card title="远端仓库列表" bordered={false} className="admin-table-card">
                       <Table
+                        {...responsiveTableProps}
                         rowKey="full_name"
-                        dataSource={remoteRepos}
+                        dataSource={remoteRepos.map((record) => mergeRemoteRepoImportStatus(record, repos))}
                         rowSelection={{
                           selectedRowKeys: selectedRemoteRepoKeys,
                           onChange: (keys) => setSelectedRemoteRepoKeys(keys.map(String)),
+                          getCheckboxProps: (record: RemoteRepoRecord) => ({
+                            disabled: !canImportRemoteRepo(record),
+                          }),
                         }}
                         columns={[
-                          { title: '仓库', dataIndex: 'full_name' },
-                          { title: 'Provider', dataIndex: 'provider' },
-                          { title: '默认分支', dataIndex: 'default_branch' },
-                          { title: 'Clone URL', dataIndex: 'clone_url' },
-                          { title: '可见性', render: (_: unknown, r: RemoteRepoRecord) => r.private ? <Tag color="red">private</Tag> : <Tag>public</Tag> },
-                          { title: '操作', render: (_: unknown, r: RemoteRepoRecord) => <Button onClick={() => importRemoteRepoRecords([r])}>导入</Button> },
+                          { title: '仓库', dataIndex: 'full_name', width: 280, ellipsis: true, render: renderEllipsisCell },
+                          { title: 'Provider', dataIndex: 'provider', width: 100 },
+                          { title: 'Clone URL', dataIndex: 'clone_url', ellipsis: true, render: renderEllipsisCell },
+                          { title: '状态', width: 160, render: (_: unknown, record: RemoteRepoRecord) => renderRemoteRepoImportStatus(record) },
+                          { title: '可见性', width: 90, render: (_: unknown, r: RemoteRepoRecord) => r.private ? <Tag color="red">private</Tag> : <Tag>public</Tag> },
+                          {
+                            title: '操作',
+                            width: 100,
+                            render: (_: unknown, r: RemoteRepoRecord) => {
+                              if (!canImportRemoteRepo(r)) {
+                                return <Button disabled>已导入</Button>
+                              }
+                              if (r.imported && (r.reimportable || r.sync_state === 'failed')) {
+                                return <Button type="primary" danger onClick={() => importRemoteRepoRecords([r])}>重新导入</Button>
+                              }
+                              return <Button onClick={() => importRemoteRepoRecords([r])}>导入</Button>
+                            },
+                          },
                         ]}
                       />
                     </Card>
@@ -1449,35 +1588,36 @@ function App() {
               },
             ]}
           />
-          <Card title="已注册仓库" bordered={false}>
+          <Card title="已注册仓库" bordered={false} className="admin-table-card">
             <Table
+              {...responsiveTableProps}
               rowKey="name"
               dataSource={repos}
               columns={[
-                { title: '名称', dataIndex: 'name' },
-                { title: 'URL', dataIndex: 'url' },
-                { title: '本地路径', dataIndex: 'local_path' },
-                { title: '分支', dataIndex: 'default_branch' },
-                { title: '来源', render: (_: unknown, r: RepoRecord) => String(r.metadata?.source || '-') },
-                { title: '状态', render: (_: unknown, r: RepoRecord) => {
+                { title: '名称', dataIndex: 'name', width: 220, ellipsis: true, render: renderEllipsisCell },
+                { title: 'URL', dataIndex: 'url', ellipsis: true, render: renderEllipsisCell },
+                { title: '本地路径', dataIndex: 'local_path', width: 180, ellipsis: true, render: renderEllipsisCell },
+                { title: '分支', dataIndex: 'default_branch', width: 90 },
+                { title: '来源', width: 90, render: (_: unknown, r: RepoRecord) => String(r.metadata?.source || '-') },
+                { title: '状态', width: 160, render: (_: unknown, r: RepoRecord) => {
                   const state = r.sync_status?.state || 'pending'
-                  const labels: Record<string, { color: string; text: string }> = {
-                    pending: { color: 'default', text: '待同步' },
-                    syncing: { color: 'processing', text: '同步中' },
-                    indexing: { color: 'processing', text: '索引中' },
-                    completed: { color: 'success', text: '已完成' },
-                    failed: { color: 'error', text: '失败' },
-                  }
-                  const item = labels[state] || { color: 'default', text: state }
+                  const item = repoSyncStateLabels[state] || { color: 'default', text: state }
+                  const errorMessage = r.sync_status?.error_message
                   return (
-                    <Space direction="vertical" size={0}>
+                    <Space direction="vertical" size={0} style={{ maxWidth: '100%' }}>
                       <Tag color={item.color}>{item.text}</Tag>
                       {state === 'pending' ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>仅注册，需点「同步/索引」</Typography.Text> : null}
-                      {r.sync_status?.error_message ? <Typography.Text type="danger" style={{ fontSize: 12 }}>{r.sync_status.error_message}</Typography.Text> : null}
+                      {errorMessage ? (
+                        <Tooltip title={errorMessage}>
+                          <Typography.Text type="danger" style={{ fontSize: 12 }} className="table-cell-ellipsis">
+                            {errorMessage}
+                          </Typography.Text>
+                        </Tooltip>
+                      ) : null}
                     </Space>
                   )
                 } },
-                { title: '操作', render: (_: unknown, r: RepoRecord) => <Space><Button onClick={() => syncRepo(r.name)}>同步/索引</Button><Button danger onClick={() => deleteRepo(r.name)}>删除</Button></Space> },
+                { title: '操作', width: 160, render: (_: unknown, r: RepoRecord) => <Space><Button onClick={() => syncRepo(r.name)}>同步/索引</Button><Button danger onClick={() => deleteRepo(r.name)}>删除</Button></Space> },
               ]}
             />
           </Card>
@@ -1522,9 +1662,41 @@ function App() {
                 <Form.Item name="token" label="Token">
                   <Input.Password placeholder="留空则保留已有 Token" />
                 </Form.Item>
-                <Form.Item name="owner" label="默认组织 / Group">
-                  <Input placeholder="可空" />
+                <Form.Item
+                  name="owner"
+                  label={
+                    repoRemoteProvider === 'yunxiao'
+                      ? 'organizationId（中心版必填）'
+                      : '默认组织 / Group'
+                  }
+                  extra={
+                    repoRemoteProvider === 'yunxiao'
+                      ? '云效中心版 API 列表用；Region 版可留空'
+                      : undefined
+                  }
+                >
+                  <Input
+                    placeholder={
+                      repoRemoteProvider === 'yunxiao'
+                        ? '例如 60de7a6852743a5162b5f957'
+                        : 'GitHub/Gitee 可空'
+                    }
+                  />
                 </Form.Item>
+                {repoRemoteProvider === 'yunxiao' ? (
+                  <Form.Item
+                    name="git_username"
+                    label="HTTPS 克隆账号"
+                    extra="Codeup → 个人设置 → HTTPS 密码 → 克隆账号（不是 organizationId）"
+                    rules={[{ required: true, message: '请填写 Codeup HTTPS 克隆账号' }]}
+                  >
+                    <Input placeholder="克隆账号" />
+                  </Form.Item>
+                ) : (
+                  <Form.Item name="git_username" hidden>
+                    <Input />
+                  </Form.Item>
+                )}
                 <Form.Item name="api_path" label="自定义 API path">
                   <Input placeholder="云效/私有平台可填" />
                 </Form.Item>

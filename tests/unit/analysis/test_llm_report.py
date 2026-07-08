@@ -5,6 +5,7 @@ import json
 import httpx
 
 from rootseeker.analysis import LlmReportConfig, OpenAICompatibleReportClient, build_case_report
+from rootseeker.analysis.llm_report import build_llm_http_timeout
 from rootseeker.contracts.evidence import EvidenceItem, EvidencePack, EvidenceType
 from rootseeker.infra_core.settings import RootSeekerSettings
 
@@ -112,6 +113,40 @@ def test_build_case_report_uses_llm_to_enhance_report() -> None:
     assert report.metadata["llm"]["ok"] is True
     assert report.metadata["llm"]["provider"] == "unit-provider"
     assert "rule_root_cause" in report.metadata
+
+
+def test_build_llm_http_timeout_uses_long_read_window() -> None:
+    timeout = build_llm_http_timeout(180.0)
+    assert timeout.read == 180.0
+    assert timeout.connect == 30.0
+
+
+def test_complete_retries_once_on_read_timeout() -> None:
+    attempts = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise httpx.ReadTimeout("The read operation timed out", request=request)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok after retry"}}]},
+        )
+
+    client = OpenAICompatibleReportClient(
+        LlmReportConfig(
+            base_url="https://llm.example/v1",
+            api_key="secret",
+            model="triage-model",
+            timeout_seconds=30.0,
+            max_retries=1,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+    result = client.complete([{"role": "user", "content": "hi"}])
+    assert result.ok is True
+    assert result.content == "ok after retry"
+    assert attempts["count"] == 2
 
 
 def test_build_case_report_marks_llm_disabled() -> None:

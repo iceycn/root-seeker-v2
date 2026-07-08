@@ -27,7 +27,7 @@ from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumen
 from rootseeker.skill_runtime.step_argument_validation import validate_step_arguments
 from rootseeker.skill_system.composer import SkillComposer
 from rootseeker.skill_system.content_loader import SkillContentLoader
-from rootseeker.skill_system.registry import DEFAULT_FLOW_SKILL_SLUG, LEGACY_SKILL_SLUG_ALIAS, SkillRegistry, get_default_log_triage_skill
+from rootseeker.skill_system.registry import SkillRegistry, get_default_log_triage_skill
 
 DEFAULT_FLOW_PLUGIN_ID = "builtin.default_log_triage_flow"
 
@@ -152,9 +152,6 @@ def execute_skill_flow(
         plan = None
 
     skill_slug = flow_skill.slug
-    selected_slug = skill_slug
-    if skill_slug == DEFAULT_FLOW_SKILL_SLUG and skill_registry.get(LEGACY_SKILL_SLUG_ALIAS) is not None:
-        selected_slug = LEGACY_SKILL_SLUG_ALIAS
     case_id = prior_case_id or new_id("case-")
     case = CaseRecord(
         case_id=case_id,
@@ -163,14 +160,14 @@ def execute_skill_flow(
         service_name=case_request.service_name,
         source=case_request.source,
         status=CaseStatus.RUNNING,
-        selected_skills=[selected_slug],
+        selected_skills=[skill_slug],
         metadata=dict(case_request.metadata),
     )
     case.steps = [
         CaseStep(
             step_id=step.step_id,
             name=step.name,
-            skill_name=selected_slug,
+            skill_name=skill_slug,
             action=step.action,
             status=StepStatus.PENDING,
             tool_name=step.action,
@@ -190,7 +187,7 @@ def execute_skill_flow(
     step_traces: list[dict[str, Any]] = []
     step_outputs = dict(prior_outputs)
     deferred_steps: list[tuple[SkillStepDefinition, CaseStep]] = []
-    display_skill_slug = selected_slug
+    display_skill_slug = skill_slug
 
     for flow_step, case_step in zip(flow_skill.steps, case.steps, strict=True):
         if case_step.status == StepStatus.COMPLETED:

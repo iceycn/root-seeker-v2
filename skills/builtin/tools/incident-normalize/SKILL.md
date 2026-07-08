@@ -17,5 +17,5 @@ description: "将原始告警载荷规整为统一事件字段，供后续排查
 ## 输出
 
 - `case_request`：后续步骤统一使用的归一化 Case。
-- `extracted`：服务、租户、环境、trace、症状、代码路径等。
+- `extracted`：服务、租户、环境、trace、症状、代码路径，以及 `exception_summary` / `call_chain`（调用链主方法）。
 - `missing_fields`：缺失字段列表（不代表系统健康）。

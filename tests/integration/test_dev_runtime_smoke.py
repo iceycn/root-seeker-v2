@@ -18,7 +18,7 @@ def test_dev_runtime_catalog_tool_and_evidence_report() -> None:
     req = ToolCallRequest(
         case_id="c-int",
         step_id="s1",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="catalog.resolve_service",
         arguments={"tenant": "demo", "environment": "prod", "service_name": "order-service"},
     )

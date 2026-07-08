@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from rootseeker.code_index.chunker import chunk_code_files
 from rootseeker.code_index.file_scanner import scan_code_files
+from rootseeker.code_index.git_auth import GitCredentials, build_authenticated_git_url, mask_git_url
 from rootseeker.code_index.qdrant_indexer import QdrantIndexer
 from rootseeker.code_index.zoekt_indexer import ZoektIndexer
 from rootseeker.contracts.common import utc_now
@@ -34,6 +38,34 @@ def _get_default_base_path() -> Path:
     """从环境变量获取默认基础路径"""
     base_path = os.getenv("ROOTSEEKER_REPO_BASE_PATH", "repos")
     return Path(base_path)
+
+
+def detect_remote_default_branch(url: str) -> str | None:
+    """通过 git ls-remote 解析远端默认分支。"""
+    result = subprocess.run(
+        ["git", "ls-remote", "--symref", url, "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=_git_subprocess_env(),
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("ref: refs/heads/"):
+            return line.split("refs/heads/", 1)[1].split("\t", 1)[0].strip() or None
+    return None
+
+
+def _is_missing_remote_branch_error(stderr: str) -> bool:
+    lowered = stderr.lower()
+    if "remote branch" in lowered and "not found" in lowered:
+        return True
+    if "couldn't find remote ref" in lowered:
+        return True
+    if "not found in upstream origin" in lowered:
+        return True
+    return False
 
 
 class RepoSyncResult:
@@ -67,6 +99,7 @@ class RepoSyncService:
         qdrant_timeout_seconds: float | None = None,
         enable_zoekt: bool | None = None,
         enable_qdrant: bool | None = None,
+        credential_resolver: Callable[[RepositoryRef], GitCredentials | None] | None = None,
     ) -> None:
         """
         初始化仓库同步服务
@@ -103,6 +136,7 @@ class RepoSyncService:
             if self.enable_qdrant
             else None
         )
+        self.credential_resolver = credential_resolver
 
     def register(self, repo: RepositoryRef) -> None:
         """注册仓库"""
@@ -131,6 +165,7 @@ class RepoSyncService:
         self,
         repo_name: str,
         trigger_index: bool = True,
+        force_reclone: bool = False,
     ) -> RepoSyncResult:
         """
         同步仓库（Git clone 或 pull）
@@ -138,6 +173,7 @@ class RepoSyncService:
         Args:
             repo_name: 仓库名称
             trigger_index: 是否触发索引
+            force_reclone: 是否删除本地目录后重新 clone
 
         Returns:
             RepoSyncResult: 同步结果
@@ -151,6 +187,9 @@ class RepoSyncService:
             )
 
         local_path = Path(repo.local_path) if repo.local_path else self.base_path / repo.name
+        if force_reclone and local_path.exists():
+            shutil.rmtree(local_path)
+            repo.sync_status.error_message = None
         is_local_repo = local_path.exists() and (local_path / ".git").exists()
         if not repo.url and not is_local_repo:
             return RepoSyncResult(
@@ -169,11 +208,17 @@ class RepoSyncService:
             if is_local_repo and not repo.url:
                 commit_hash = self._get_commit_hash(local_path)
             elif local_path.exists() and (local_path / ".git").exists():
-                # 执行 git pull
-                commit_hash = self._git_pull(local_path, branch)
+                clone_url = self._authenticated_git_url(repo) if repo.url else None
+                local_branch = self._get_current_branch(local_path)
+                if local_branch:
+                    branch = local_branch
+                commit_hash, branch = self._git_pull(local_path, branch, url=clone_url)
+                repo.default_branch = branch
             else:
                 # 执行 git clone
-                commit_hash = self._git_clone(repo.url, local_path, branch)
+                clone_url = self._authenticated_git_url(repo)
+                commit_hash, branch = self._git_clone(clone_url, local_path, branch)
+                repo.default_branch = branch
 
             # 更新同步状态
             repo.sync_status.state = RepoSyncState.INDEXING if trigger_index else RepoSyncState.COMPLETED
@@ -225,6 +270,12 @@ class RepoSyncService:
                 qdrant_status=qdrant_status,
             )
 
+        except ValueError as e:
+            error_msg = str(e)
+            repo.sync_status.state = RepoSyncState.FAILED
+            repo.sync_status.error_message = error_msg
+            logger.error(f"Sync failed for {repo_name}: {error_msg}")
+            return RepoSyncResult(repo=repo, success=False, message=error_msg)
         except subprocess.CalledProcessError as e:
             error_msg = f"Git operation failed: {e.stderr or str(e)}"
             repo.sync_status.state = RepoSyncState.FAILED
@@ -255,43 +306,130 @@ class RepoSyncService:
             results.append(self.sync(repo_name, trigger_index=trigger_index))
         return results
 
-    def _git_clone(self, url: str, path: Path, branch: str) -> str:
-        """执行 git clone"""
-        logger.info(f"Cloning {url} to {path}")
+    def _resolve_git_credentials(self, repo: RepositoryRef) -> GitCredentials | None:
+        metadata = dict(repo.metadata or {})
+        token = str(metadata.get("git_token") or "").strip()
+        username = str(metadata.get("git_username") or "").strip()
+        provider = str(metadata.get("provider") or "custom")
+        if token:
+            return GitCredentials(username=username, token=token, provider=provider)
+        if self.credential_resolver is not None:
+            return self.credential_resolver(repo)
+        return None
 
-        subprocess.run(
-            ["git", "clone", "--branch", branch, "--single-branch", url, str(path)],
-            capture_output=True,
-            text=True,
-            check=True,
-            env=_git_subprocess_env(),
+    def _authenticated_git_url(self, repo: RepositoryRef) -> str:
+        url = str(repo.url or "")
+        if not url or url.startswith("git@"):
+            return url
+        if not url.startswith("http://") and not url.startswith("https://"):
+            return url
+        credentials = self._resolve_git_credentials(repo)
+        if credentials is None:
+            return url
+        return build_authenticated_git_url(
+            url,
+            provider=credentials.provider,
+            username=credentials.username,
+            token=credentials.token,
         )
 
-        return self._get_commit_hash(path)
+    def _get_current_branch(self, path: Path) -> str | None:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_subprocess_env(),
+        )
+        if result.returncode != 0:
+            return None
+        branch = (result.stdout or "").strip()
+        return branch or None
 
-    def _git_pull(self, path: Path, branch: str) -> str:
-        """执行 git pull"""
-        logger.info(f"Pulling updates in {path}")
+    def _git_pull(self, path: Path, branch: str, *, url: str | None = None) -> tuple[str, str]:
+        """执行 git pull，若指定分支不存在则自动探测并重试。"""
+        logger.info(f"Pulling updates in {path} (branch={branch})")
 
-        # Fetch and reset to latest
-        subprocess.run(
+        error = self._run_git_fetch_reset(path, branch)
+        if error is None:
+            return self._get_commit_hash(path), branch
+
+        if _is_missing_remote_branch_error(error):
+            detected = self._get_current_branch(path)
+            if not detected and url:
+                detected = detect_remote_default_branch(url)
+            if detected and detected != branch:
+                logger.info(f"Remote branch {branch} missing, retrying pull with {detected}")
+                retry_error = self._run_git_fetch_reset(path, detected)
+                if retry_error is None:
+                    return self._get_commit_hash(path), detected
+
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd=["git", "fetch", "origin", branch],
+            stderr=error,
+        )
+
+    def _run_git_fetch_reset(self, path: Path, branch: str) -> str | None:
+        fetch = subprocess.run(
             ["git", "fetch", "origin", branch],
             cwd=str(path),
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
             env=_git_subprocess_env(),
         )
-        subprocess.run(
+        if fetch.returncode != 0:
+            return fetch.stderr or fetch.stdout or f"git fetch failed with exit code {fetch.returncode}"
+
+        reset = subprocess.run(
             ["git", "reset", "--hard", f"origin/{branch}"],
             cwd=str(path),
             capture_output=True,
             text=True,
-            check=True,
+            check=False,
             env=_git_subprocess_env(),
         )
+        if reset.returncode != 0:
+            return reset.stderr or reset.stdout or f"git reset failed with exit code {reset.returncode}"
+        return None
 
-        return self._get_commit_hash(path)
+    def _git_clone(self, url: str, path: Path, branch: str) -> tuple[str, str]:
+        """执行 git clone，若指定分支不存在则自动探测远端默认分支并重试。"""
+        logger.info(f"Cloning {mask_git_url(url)} to {path} (branch={branch})")
+
+        error = self._run_git_clone(url, path, branch)
+        if error is None:
+            return self._get_commit_hash(path), branch
+
+        if _is_missing_remote_branch_error(error):
+            detected = detect_remote_default_branch(url)
+            if detected and detected != branch:
+                logger.info(f"Remote branch {branch} missing, retrying clone with {detected}")
+                if path.exists():
+                    shutil.rmtree(path)
+                retry_error = self._run_git_clone(url, path, detected)
+                if retry_error is None:
+                    return self._get_commit_hash(path), detected
+
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd=["git", "clone", "--branch", branch, url, str(path)],
+            stderr=error,
+        )
+
+    def _run_git_clone(self, url: str, path: Path, branch: str) -> str | None:
+        result = subprocess.run(
+            ["git", "clone", "--branch", branch, "--single-branch", url, str(path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_subprocess_env(),
+        )
+        if result.returncode == 0:
+            return None
+        return result.stderr or result.stdout or f"git clone failed with exit code {result.returncode}"
 
     def _get_commit_hash(self, path: Path) -> str:
         """获取当前 commit hash"""

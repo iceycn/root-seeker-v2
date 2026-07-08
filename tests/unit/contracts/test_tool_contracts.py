@@ -33,7 +33,7 @@ def test_tool_call_request_and_result_can_serialize() -> None:
     request = ToolCallRequest(
         case_id="case-1",
         step_id="step-1",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         tool_name="log.query_by_trace_id",
         arguments={"trace_id": "abc123"},
     )

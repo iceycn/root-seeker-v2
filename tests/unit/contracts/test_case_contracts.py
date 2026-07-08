@@ -24,7 +24,7 @@ def test_case_record_serialization_contains_status_and_steps() -> None:
     step = CaseStep(
         step_id="step-1",
         name="resolve service",
-        skill_name="base/default-log-triage",
+        skill_name="flows/default-log-triage",
         action="catalog.resolve_service",
         status=StepStatus.PENDING,
     )
@@ -35,7 +35,7 @@ def test_case_record_serialization_contains_status_and_steps() -> None:
         service_name="order-service",
         source="webhook",
         status=CaseStatus.PLANNED,
-        selected_skills=["base/default-log-triage"],
+        selected_skills=["flows/default-log-triage"],
         steps=[step],
     )
     payload = case.model_dump(mode="json")
@@ -47,7 +47,7 @@ def test_case_plan_snapshot_can_build() -> None:
     snapshot = CasePlanSnapshot(
         case_id="case-2",
         status=CaseStatus.PLANNED,
-        selected_skill="base/default-log-triage",
+        selected_skill="flows/default-log-triage",
     )
     assert snapshot.case_id == "case-2"
     assert snapshot.status == CaseStatus.PLANNED
