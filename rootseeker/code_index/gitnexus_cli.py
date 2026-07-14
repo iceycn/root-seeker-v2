@@ -372,7 +372,7 @@ class GitNexusCli:
             "timeout_seconds": timeout,
         }
         try:
-            with httpx.Client(timeout=timeout + 5.0) as client:
+            with httpx.Client(timeout=timeout + 5.0, trust_env=False) as client:
                 response = client.post(f"{base}/v1/exec", json=payload)
                 response.raise_for_status()
                 body = response.json()

@@ -382,12 +382,19 @@ def _build_executor(repo_root: Path, *, admin_store: AdminConfigStore | None = N
             service = _build_repo_sync_service(repo_root, store)
             payload = repo_sync_changed_tool(service, {"trigger_index": True})
             ok = bool(payload.get("ok", False))
+            failed_checks = payload.get("failed_checks") or []
+            if ok and failed_checks:
+                message = f"synced with {len(failed_checks)} check warning(s)"
+            elif ok:
+                message = ""
+            else:
+                message = "one or more changed repos failed to sync"
             return JobRunResult(
                 job_id=job.job_id,
                 status=JobRunStatus.SUCCEEDED if ok else JobRunStatus.FAILED,
                 started_at=started_at,
                 finished_at=utc_now(),
-                message="" if ok else "one or more changed repos failed to sync",
+                message=message,
                 payload=payload,
             )
         if handler == REPO_SYNC_ALL_HANDLER:

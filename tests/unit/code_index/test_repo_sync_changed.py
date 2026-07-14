@@ -83,6 +83,7 @@ def test_sync_passes_force_gitnexus_to_indexer(tmp_path: Path) -> None:
     )
     service.gitnexus_indexer = gitnexus
     service._get_commit_hash = lambda _path: "abc123"  # type: ignore[method-assign]
+    service._is_usable_git_repo = lambda _path: True  # type: ignore[method-assign]
 
     result = service.sync("local-only", trigger_index=True, force_gitnexus=True)
     assert result.success is True

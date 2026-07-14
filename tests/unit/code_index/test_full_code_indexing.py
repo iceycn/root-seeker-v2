@@ -123,7 +123,10 @@ def test_repo_sync_service_indexes_local_repo(tmp_path: Path) -> None:
     (local / ".git").mkdir()
     (local / "README.md").write_text("hello readme\n", encoding="utf-8")
 
-    with patch.object(service, "_git_pull", return_value=("abc123", "main")):
+    with (
+        patch.object(service, "_is_usable_git_repo", return_value=True),
+        patch.object(service, "_git_pull", return_value=("abc123", "main")),
+    ):
         result = service.sync("repo", trigger_index=True)
 
     assert result.success

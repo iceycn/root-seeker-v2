@@ -6,10 +6,27 @@ $env:ROOTSEEKER_SQLITE_DB_PATH = "data/rootseeker.db"
 $env:ROOTSEEKER_ZOEKT_ENDPOINT = "http://127.0.0.1:6070"
 $env:ROOTSEEKER_ZOEKT_INDEX_ENDPOINT = "http://127.0.0.1:6071"
 $env:ROOTSEEKER_QDRANT_ENDPOINT = "http://127.0.0.1:6333"
-$env:ROOTSEEKER_REPO_BASE_PATH = "repos"
 $env:ROOTSEEKER_REPO_ENABLE_GITNEXUS = "true"
 $env:ROOTSEEKER_GITNEXUS_ENDPOINT = "http://127.0.0.1:7474"
-New-Item -ItemType Directory -Force -Path "repos" | Out-Null
+
+# Prefer project ./repos. If empty but Windows translated /data/repos clones exist
+# (E:\data\repos), junction them so Zoekt/GitNexus hybrid mounts see the same trees.
+$projectRepos = Join-Path (Get-Location) "repos"
+$dataRepos = Join-Path ((Get-Location).Drive.Name + ":\") "data\repos"
+if (-not (Test-Path $projectRepos)) {
+    New-Item -ItemType Directory -Force -Path $projectRepos | Out-Null
+}
+$projectCount = @(Get-ChildItem $projectRepos -Directory -ErrorAction SilentlyContinue).Count
+$dataCount = if (Test-Path $dataRepos) { @(Get-ChildItem $dataRepos -Directory -ErrorAction SilentlyContinue).Count } else { 0 }
+$reposItem = Get-Item $projectRepos -Force
+$isJunction = [bool]($reposItem.Attributes -band [IO.FileAttributes]::ReparsePoint)
+if ($projectCount -eq 0 -and $dataCount -gt 0 -and -not $isJunction) {
+    Write-Host "Linking empty ./repos -> $dataRepos (existing host clones from /data/repos)"
+    Remove-Item $projectRepos -Force
+    cmd /c "mklink /J `"$projectRepos`" `"$dataRepos`"" | Out-Host
+}
+
+$env:ROOTSEEKER_REPO_BASE_PATH = "repos"
 $reposAbs = (Resolve-Path "repos").Path
 $env:ROOTSEEKER_GITNEXUS_PATH_MAP = "${reposAbs}:/data/repos"
 $env:ROOTSEEKER_ZOEKT_PATH_MAP = "${reposAbs}:/repos"
@@ -40,6 +57,7 @@ Start-Process -FilePath $python -ArgumentList @(
 ) -WorkingDirectory (Get-Location) -WindowStyle Hidden
 
 Write-Host "Started API (:8000) and Admin (:8010)"
+Write-Host "Repo base: $reposAbs"
 Write-Host "Zoekt search: $env:ROOTSEEKER_ZOEKT_ENDPOINT"
 Write-Host "Zoekt index:  $env:ROOTSEEKER_ZOEKT_INDEX_ENDPOINT"
 Write-Host "Zoekt path map: $env:ROOTSEEKER_ZOEKT_PATH_MAP"

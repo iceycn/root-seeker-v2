@@ -42,6 +42,20 @@ def _git_subprocess_env() -> dict[str, str]:
     return env
 
 
+def _run_git(args: list[str], *, cwd: str | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run a git command with UTF-8 decoding (Windows GBK-safe)."""
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=check,
+        env=_git_subprocess_env(),
+    )
+
+
 def _get_default_base_path() -> Path:
     """从环境变量获取默认基础路径"""
     base_path = os.getenv("ROOTSEEKER_REPO_BASE_PATH", "repos")
@@ -50,13 +64,7 @@ def _get_default_base_path() -> Path:
 
 def detect_remote_default_branch(url: str) -> str | None:
     """通过 git ls-remote 解析远端默认分支。"""
-    result = subprocess.run(
-        ["git", "ls-remote", "--symref", url, "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=_git_subprocess_env(),
-    )
+    result = _run_git(["git", "ls-remote", "--symref", url, "HEAD"], check=False)
     if result.returncode != 0:
         return None
     for line in result.stdout.splitlines():
@@ -74,6 +82,17 @@ def _is_missing_remote_branch_error(stderr: str) -> bool:
     if "not found in upstream origin" in lowered:
         return True
     return False
+
+
+def _is_container_style_repo_path(value: str) -> bool:
+    """Detect Docker-style ``/data/repos/...`` paths (incl. Windows ``\\data\\repos``)."""
+    norm = (value or "").replace("\\", "/").lower()
+    while "//" in norm:
+        norm = norm.replace("//", "/")
+    # Strip Windows drive prefix: e:/data/repos/foo -> /data/repos/foo
+    if len(norm) >= 3 and norm[1] == ":" and norm[2] == "/":
+        norm = norm[2:]
+    return norm == "/data/repos" or norm.startswith("/data/repos/")
 
 
 class RepoSyncResult:
@@ -162,10 +181,77 @@ class RepoSyncService:
 
     def register(self, repo: RepositoryRef) -> None:
         """注册仓库"""
-        if not repo.local_path:
-            repo.local_path = str(self.base_path / repo.name)
+        repo.local_path = str(self._resolve_local_path(repo))
         self._repos[repo.name] = repo
         logger.info(f"Registered repository: {repo.name}")
+
+    def _resolve_local_path(self, repo: RepositoryRef) -> Path:
+        """Resolve on-disk clone path for the current host.
+
+        Admin configs often store Docker paths like ``/data/repos/<name>``. On Windows
+        hybrid hosts those become ``E:\\data\\repos\\...``. Prefer ``base_path / name``
+        whenever that directory exists (including via junction to legacy clones).
+
+        Return an absolute path that does **not** follow junctions/symlinks, so Zoekt /
+        GitNexus path maps keyed on the project ``repos`` directory still match.
+        """
+        preferred = (self.base_path / repo.name).absolute()
+        configured = (repo.local_path or "").strip()
+        if preferred.exists():
+            return preferred
+        if configured:
+            configured_path = Path(configured)
+            configured_abs = configured_path.absolute()
+            try:
+                if configured_path.exists() and preferred.resolve() == configured_path.resolve():
+                    return preferred
+            except OSError:
+                pass
+            if self._is_usable_git_repo(configured_path):
+                # Prefer the project base path form when it is the same checkout.
+                try:
+                    if preferred.exists() or preferred.parent.exists():
+                        if configured_path.resolve() == preferred.resolve():
+                            return preferred
+                except OSError:
+                    pass
+                return configured_abs
+            # Keep broken checkouts so sync can force-reclone in place.
+            if configured_path.exists() and (configured_path / ".git").exists():
+                try:
+                    if configured_path.resolve() == preferred.resolve():
+                        return preferred
+                except OSError:
+                    pass
+                return configured_abs
+            if _is_container_style_repo_path(configured):
+                return preferred
+            return configured_abs if configured_path.is_absolute() else preferred
+        return preferred
+
+    def _remove_checkout(self, path: Path) -> None:
+        """Remove a local checkout, clearing Windows read-only bits when needed."""
+        if not path.exists():
+            return
+
+        def _onexc(func: Any, p: str, exc: BaseException) -> None:  # noqa: ANN401
+            try:
+                Path(p).chmod(0o700)
+            except OSError:
+                pass
+            try:
+                func(p)
+            except OSError as retry_exc:
+                raise retry_exc from exc
+
+        shutil.rmtree(path, onexc=_onexc)
+
+    def _is_usable_git_repo(self, path: Path) -> bool:
+        """True when path is a git work tree with a resolvable HEAD commit."""
+        if not path.exists() or not (path / ".git").exists():
+            return False
+        result = _run_git(["git", "rev-parse", "HEAD"], cwd=str(path), check=False)
+        return result.returncode == 0 and bool((result.stdout or "").strip())
 
     def unregister(self, repo_name: str) -> bool:
         """注销仓库"""
@@ -211,11 +297,20 @@ class RepoSyncService:
                 message=f"Repository not found: {repo_name}",
             )
 
-        local_path = Path(repo.local_path) if repo.local_path else self.base_path / repo.name
+        local_path = self._resolve_local_path(repo)
         if force_reclone and local_path.exists():
-            shutil.rmtree(local_path)
+            self._remove_checkout(local_path)
             repo.sync_status.error_message = None
-        is_local_repo = local_path.exists() and (local_path / ".git").exists()
+        # Corrupt/empty clones (`.git` present but no HEAD) must be re-cloned.
+        if (
+            not force_reclone
+            and local_path.exists()
+            and (local_path / ".git").exists()
+            and not self._is_usable_git_repo(local_path)
+        ):
+            logger.warning("Removing unusable git checkout before reclone: %s", local_path)
+            self._remove_checkout(local_path)
+        is_local_repo = self._is_usable_git_repo(local_path)
         if not repo.url and not is_local_repo:
             return RepoSyncResult(
                 repo=repo,
@@ -232,7 +327,7 @@ class RepoSyncService:
 
             if is_local_repo and not repo.url:
                 commit_hash = self._get_commit_hash(local_path)
-            elif local_path.exists() and (local_path / ".git").exists():
+            elif is_local_repo:
                 clone_url = self._authenticated_git_url(repo) if repo.url else None
                 local_branch = self._get_current_branch(local_path)
                 if local_branch:
@@ -355,9 +450,10 @@ class RepoSyncService:
         repo = self._repos.get(repo_name)
         if not repo:
             raise KeyError(f"Repository not found: {repo_name}")
-        local_path = Path(repo.local_path) if repo.local_path else self.base_path / repo.name
-        if not local_path.exists() or not (local_path / ".git").exists():
-            # Not cloned yet — treat as needing sync.
+        local_path = self._resolve_local_path(repo)
+        repo.local_path = str(local_path)
+        if not self._is_usable_git_repo(local_path):
+            # Missing or corrupt checkout — treat as needing sync/reclone.
             return bool(repo.url)
         if not repo.url:
             return False
@@ -365,28 +461,14 @@ class RepoSyncService:
         clone_url = self._authenticated_git_url(repo)
         self._set_origin_url(local_path, clone_url)
         branch = self._get_current_branch(local_path) or repo.default_branch or "main"
-        fetch = subprocess.run(
-            ["git", "fetch", "origin", branch],
-            cwd=str(local_path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        fetch = _run_git(["git", "fetch", "origin", branch], cwd=str(local_path), check=False)
         if fetch.returncode != 0:
             # Missing remote branch: try default detection once.
             if _is_missing_remote_branch_error(fetch.stderr or fetch.stdout or ""):
                 detected = detect_remote_default_branch(clone_url)
                 if detected and detected != branch:
                     branch = detected
-                    fetch = subprocess.run(
-                        ["git", "fetch", "origin", branch],
-                        cwd=str(local_path),
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                        env=_git_subprocess_env(),
-                    )
+                    fetch = _run_git(["git", "fetch", "origin", branch], cwd=str(local_path), check=False)
             if fetch.returncode != 0:
                 detail = fetch.stderr or fetch.stdout or "git fetch failed"
                 raise subprocess.CalledProcessError(
@@ -424,11 +506,28 @@ class RepoSyncService:
                 skipped.append(repo_name)
                 continue
             changed.append(repo_name)
-            results.append(
-                self.sync(repo_name, trigger_index=trigger_index, force_gitnexus=True)
-            )
+            result = self.sync(repo_name, trigger_index=trigger_index, force_gitnexus=True)
+            # Empty / branchless remotes are configuration problems, not transient sync
+            # failures — surface them as check warnings so the cron job can still succeed.
+            if (not result.success) and _is_missing_remote_branch_error(result.message or ""):
+                failed_checks.append(
+                    {
+                        "repo_name": repo_name,
+                        "error": sanitize_git_error_message(result.message or "remote branch missing"),
+                    }
+                )
+                logger.warning(
+                    "sync skipped for branchless remote %s: %s",
+                    repo_name,
+                    result.message,
+                )
+                continue
+            results.append(result)
 
         synced = [r.repo.name for r in results if r.success]
+        sync_failed = [r.repo.name for r in results if not r.success]
+        # Check failures are warnings; job hard-fails only when an attempted sync fails.
+        ok = not sync_failed
         return {
             "checked": checked,
             "changed": changed,
@@ -436,18 +535,12 @@ class RepoSyncService:
             "skipped": skipped,
             "failed_checks": failed_checks,
             "results": results,
-            "ok": not failed_checks and all(r.success for r in results),
+            "ok": ok,
+            "total_changed": len(changed),
         }
 
     def _remote_commit_hash(self, path: Path, branch: str) -> str | None:
-        result = subprocess.run(
-            ["git", "rev-parse", f"origin/{branch}"],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        result = _run_git(["git", "rev-parse", f"origin/{branch}"], cwd=str(path), check=False)
         if result.returncode != 0:
             return None
         return (result.stdout or "").strip() or None
@@ -481,14 +574,7 @@ class RepoSyncService:
         )
 
     def _get_current_branch(self, path: Path) -> str | None:
-        result = subprocess.run(
-            ["git", "branch", "--show-current"],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        result = _run_git(["git", "branch", "--show-current"], cwd=str(path), check=False)
         if result.returncode != 0:
             return None
         branch = (result.stdout or "").strip()
@@ -522,25 +608,11 @@ class RepoSyncService:
 
     def _set_origin_url(self, path: Path, url: str) -> None:
         """Refresh origin so incremental sync uses the latest HTTPS credentials."""
-        result = subprocess.run(
-            ["git", "remote", "set-url", "origin", url],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        result = _run_git(["git", "remote", "set-url", "origin", url], cwd=str(path), check=False)
         if result.returncode == 0:
             return
         # Fresh clones should already have origin; add it when missing.
-        add = subprocess.run(
-            ["git", "remote", "add", "origin", url],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        add = _run_git(["git", "remote", "add", "origin", url], cwd=str(path), check=False)
         if add.returncode != 0:
             detail = add.stderr or result.stderr or "failed to set origin url"
             raise subprocess.CalledProcessError(
@@ -550,25 +622,11 @@ class RepoSyncService:
             )
 
     def _run_git_fetch_reset(self, path: Path, branch: str) -> str | None:
-        fetch = subprocess.run(
-            ["git", "fetch", "origin", branch],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        fetch = _run_git(["git", "fetch", "origin", branch], cwd=str(path), check=False)
         if fetch.returncode != 0:
             return fetch.stderr or fetch.stdout or f"git fetch failed with exit code {fetch.returncode}"
 
-        reset = subprocess.run(
-            ["git", "reset", "--hard", f"origin/{branch}"],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        reset = _run_git(["git", "reset", "--hard", f"origin/{branch}"], cwd=str(path), check=False)
         if reset.returncode != 0:
             return reset.stderr or reset.stdout or f"git reset failed with exit code {reset.returncode}"
         return None
@@ -582,14 +640,22 @@ class RepoSyncService:
             return self._get_commit_hash(path), branch
 
         if _is_missing_remote_branch_error(error):
+            candidates: list[str] = []
             detected = detect_remote_default_branch(url)
-            if detected and detected != branch:
-                logger.info(f"Remote branch {branch} missing, retrying clone with {detected}")
+            for candidate in (detected, "master", "develop", "release"):
+                if candidate and candidate != branch and candidate not in candidates:
+                    candidates.append(candidate)
+            for candidate in candidates:
+                logger.info(f"Remote branch {branch} missing, retrying clone with {candidate}")
                 if path.exists():
-                    shutil.rmtree(path)
-                retry_error = self._run_git_clone(url, path, detected)
+                    self._remove_checkout(path)
+                retry_error = self._run_git_clone(url, path, candidate)
                 if retry_error is None:
-                    return self._get_commit_hash(path), detected
+                    return self._get_commit_hash(path), candidate
+                if not _is_missing_remote_branch_error(retry_error):
+                    error = retry_error
+                    break
+                error = retry_error
 
         raise subprocess.CalledProcessError(
             returncode=1,
@@ -598,27 +664,14 @@ class RepoSyncService:
         )
 
     def _run_git_clone(self, url: str, path: Path, branch: str) -> str | None:
-        result = subprocess.run(
-            ["git", "clone", "--branch", branch, "--single-branch", url, str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=_git_subprocess_env(),
-        )
+        result = _run_git(["git", "clone", "--branch", branch, "--single-branch", url, str(path)], check=False)
         if result.returncode == 0:
             return None
         return result.stderr or result.stdout or f"git clone failed with exit code {result.returncode}"
 
     def _get_commit_hash(self, path: Path) -> str:
         """获取当前 commit hash"""
-        result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(path),
-            capture_output=True,
-            text=True,
-            check=True,
-            env=_git_subprocess_env(),
-        )
+        result = _run_git(["git", "rev-parse", "HEAD"], cwd=str(path), check=True)
         return result.stdout.strip()
 
     def get_index_status(self, repo_name: str) -> dict[str, IndexStatus]:
@@ -641,8 +694,8 @@ class RepoSyncService:
         if self.gitnexus_indexer:
             repo = self._repos.get(repo_name)
             local_path = None
-            if repo and repo.local_path:
-                local_path = repo.local_path
+            if repo:
+                local_path = str(self._resolve_local_path(repo))
             elif repo_name:
                 local_path = str(self.base_path / repo_name)
             result["gitnexus"] = self.gitnexus_indexer.get_status(repo_name, local_path=local_path)
