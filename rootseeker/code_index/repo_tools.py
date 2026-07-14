@@ -71,6 +71,7 @@ def create_repo_handlers(sync_service: RepoSyncService | None = None) -> dict[st
         Args:
             name: 仓库名称
             trigger_index: 是否触发索引（可选，默认 True）
+            force_reclone: 是否删除本地目录后重新 clone（可选，默认 False）
         """
         name = args.get("name")
         if not name:
@@ -78,7 +79,11 @@ def create_repo_handlers(sync_service: RepoSyncService | None = None) -> dict[st
 
         trigger_index = args.get("trigger_index", True)
         force_reclone = bool(args.get("force_reclone", False))
-        result = service.sync(str(name), trigger_index=trigger_index, force_reclone=force_reclone)
+        result = service.sync(
+            str(name),
+            trigger_index=bool(trigger_index),
+            force_reclone=force_reclone,
+        )
 
         response: dict[str, Any] = {
             "ok": result.success,

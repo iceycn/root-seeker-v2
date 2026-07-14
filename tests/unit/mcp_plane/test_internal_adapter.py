@@ -39,6 +39,12 @@ class FixedAdapter:
     def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
         return {"path": path, "content": ""}
 
+    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"target": None, "runtime_chain": [], "static_callers": [], "aligned": None, "entrypoints": []}
+
+    def semantic_search_code(self, query: str, repo_name: str | None = None, limit: int = 10) -> dict[str, Any]:
+        return {"ok": True, "query": query, "hits": [], "limit": limit}
+
     def get_index_status(self) -> dict[str, Any]:
         return {"ready": True, "indexes": []}
 
@@ -64,6 +70,21 @@ class FixedAdapter:
         return {"ok": True, "total": 0, "results": []}
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": False, "error": "not wired"}
+
+    def repo_semantic_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "hits": []}
+
+    def lsp_references(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": False, "error": "not wired"}
+
+    def lsp_definition(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": False, "error": "not wired"}
+
+    def lsp_hover(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": False, "error": "not wired"}
+
+    def lsp_symbols(self, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "not wired"}
 
 

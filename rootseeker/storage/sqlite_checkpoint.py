@@ -116,3 +116,8 @@ class SqliteCheckpointStore:
             )
             for row in rows
         ]
+
+    def count(self) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT COUNT(*) FROM checkpoints").fetchone()
+        return int(row[0] if row else 0)

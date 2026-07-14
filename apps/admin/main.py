@@ -905,6 +905,22 @@ def _enrich_yunxiao_repos_parallel(
         return list(pool.map(enrich_one, repos))
 
 
+def _yunxiao_repo_needs_enrichment(repo: dict[str, Any]) -> bool:
+    """List payloads sometimes omit clone URL / default branch or fall back to webUrl."""
+    clone_url = str(repo.get("clone_url") or "").strip()
+    web_url = str(repo.get("web_url") or "").strip()
+    if not clone_url:
+        return True
+    # Exact web URL fallback (do not compare after stripping .git).
+    if web_url and clone_url.rstrip("/") == web_url.rstrip("/"):
+        return True
+    if not clone_url.endswith(".git"):
+        return True
+    if not str(repo.get("default_branch") or "").strip():
+        return True
+    return False
+
+
 def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
     provider = _normalize_repo_provider(req.provider)
     base = _repo_api_base(provider, req.base_url)
@@ -928,6 +944,22 @@ def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
             for repo in (_normalize_remote_repo(provider, item) for item in _extract_repo_items(data))
             if repo is not None
         ]
+    if provider == "yunxiao" and repos:
+        need_enrichment = [repo for repo in repos if _yunxiao_repo_needs_enrichment(repo)]
+        if need_enrichment:
+            enriched_by_name = {
+                str(item.get("full_name") or item.get("name") or ""): item
+                for item in _enrich_yunxiao_repos_parallel(
+                    need_enrichment,
+                    base=base,
+                    owner=str(req.owner or "").strip(),
+                    token=str(req.token or ""),
+                )
+            }
+            repos = [
+                enriched_by_name.get(str(repo.get("full_name") or repo.get("name") or ""), repo)
+                for repo in repos
+            ]
     query = req.query.strip().lower()
     if query:
         repos = [
@@ -964,10 +996,9 @@ def _discover_repos_from_remote(
     if remote is None:
         raise HTTPException(status_code=404, detail="repo remote not found")
     provider = _normalize_repo_provider(str(remote.get("provider") or "github"))
+    # Request/form owner is authoritative (including empty for Region edition).
+    # Remote owner is only a UI default filled into the search form.
     owner = str(req.owner or "").strip()
-    remote_owner = str(remote.get("owner") or "").strip()
-    if provider == "yunxiao" and remote_owner:
-        owner = remote_owner
     discover_req = AdminDiscoverReposRequest(
         provider=provider,
         base_url=str(remote.get("base_url") or ""),
@@ -1121,10 +1152,26 @@ def _call_chain_from_flow(flow_result: Any, content: str) -> list[str]:
 
 
 def _caller_trace_from_flow(flow_result: Any) -> dict[str, Any] | None:
-    for step in flow_result.case.steps:
-        if step.step_id != "find-callers" and step.action != "code.find_callers":
+    case = getattr(flow_result, "case", None)
+    raw_steps = getattr(case, "steps", None)
+    if raw_steps is None and hasattr(case, "model_dump"):
+        dumped = case.model_dump(mode="json")
+        raw_steps = dumped.get("steps") if isinstance(dumped, dict) else None
+    if not isinstance(raw_steps, list):
+        return None
+
+    for step in raw_steps:
+        if isinstance(step, dict):
+            step_id = str(step.get("step_id") or "")
+            action = str(step.get("action") or step.get("tool_name") or "")
+            outputs = step.get("outputs") if isinstance(step.get("outputs"), dict) else {}
+        else:
+            step_id = str(getattr(step, "step_id", "") or "")
+            action = str(getattr(step, "action", "") or getattr(step, "tool_name", "") or "")
+            outputs = getattr(step, "outputs", {})
+            outputs = outputs if isinstance(outputs, dict) else {}
+        if step_id != "find-callers" and action != "code.find_callers":
             continue
-        outputs = step.outputs if isinstance(step.outputs, dict) else {}
         if outputs.get("skipped"):
             return None
         if outputs.get("target") or outputs.get("aligned") or outputs.get("static_callers"):
@@ -1196,6 +1243,7 @@ def _build_llm_error_chat_payload(
     )
     error_limit = 6000 if call_chain else 12000
     evidence_limits = [(5, 2000), (3, 1000), (2, 500)]
+    payload: dict[str, Any] = {}
     for max_items, max_content_chars in evidence_limits:
         payload = {
             "exception_summary": exception_summary,
@@ -1213,10 +1261,41 @@ def _build_llm_error_chat_payload(
         if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) <= byte_limit:
             return payload
         error_limit = max(2000, error_limit // 2)
+
+    # Hard fallback: keep shrinking until under the provider byte limit.
     payload["truncation"] = {
         "reason": "payload_too_large",
         "byte_limit": byte_limit,
     }
+    shrink_steps = (
+        ("evidence_preview", []),
+        ("caller_trace", None),
+        ("call_chain", (call_chain or [])[:3]),
+        ("call_chain", []),
+        ("report", {"summary": _truncate_text(str((report.get("summary") or "")), max_chars=500)}),
+        ("case", {"case_id": case.get("case_id"), "title": case.get("title")}),
+    )
+    for key, value in shrink_steps:
+        if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) <= byte_limit:
+            return payload
+        payload[key] = value
+
+    excerpt = str(payload.get("error_excerpt") or "")
+    while len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > byte_limit and len(excerpt) > 200:
+        excerpt = _truncate_text(excerpt, max_chars=max(200, len(excerpt) // 2))
+        payload["error_excerpt"] = excerpt
+
+    if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > byte_limit:
+        payload = {
+            "exception_summary": _truncate_text(str(exception_summary or ""), max_chars=500),
+            "error_excerpt": _truncate_text(str(content or ""), max_chars=500),
+            "case": {"case_id": case.get("case_id"), "title": case.get("title")},
+            "report": {"summary": _truncate_text(str((report.get("summary") or "")), max_chars=300)},
+            "truncation": {
+                "reason": "payload_hard_truncated",
+                "byte_limit": byte_limit,
+            },
+        }
     return payload
 
 

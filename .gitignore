@@ -67,6 +67,7 @@ venv.bak/
 
 # Project specific
 data/
+repos/
 .qdrant-initialized
 tools/qdrant/
 *.db

@@ -6,6 +6,7 @@ from rootseeker.contracts.evidence import EvidencePack, EvidenceType
 from rootseeker.contracts.log_query import LogQueryResult
 from rootseeker.contracts.skill import SkillSpec
 from rootseeker.evidence import append_log_query_evidence, append_tool_json_evidence
+from rootseeker.skill_runtime.result_sanitize import sanitize_tool_result_for_evidence
 
 __all__ = ["map_tool_result_to_evidence"]
 
@@ -38,7 +39,14 @@ def map_tool_result_to_evidence(
         log_result = LogQueryResult.model_validate(content)
         append_log_query_evidence(pack, tool_name=action, result=log_result)
         return
-    append_tool_json_evidence(pack, tool_name=action, evidence_type=evidence_type, content=content)
+    # Evidence does not need full search corpora — keep a compact preview.
+    evidence_content = sanitize_tool_result_for_evidence(action, content)
+    append_tool_json_evidence(
+        pack,
+        tool_name=action,
+        evidence_type=evidence_type,
+        content=evidence_content,
+    )
 
 
 def _evidence_type_for_action(action: str, tool_skill: SkillSpec | None) -> EvidenceType | None:

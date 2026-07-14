@@ -166,7 +166,9 @@ class QdrantIndexer:
                     detail={"chunks_indexed": 0, "message": "no indexable chunks"},
                 )
 
-            embeddings = self.embedding_provider.embed_documents([chunk.content for chunk in chunks])
+            embeddings = self.embedding_provider.embed_documents(
+                [self._embed_text(chunk.path, chunk.content) for chunk in chunks]
+            )
             if len(embeddings) != len(chunks):
                 raise RuntimeError(
                     f"embedding count mismatch: chunks={len(chunks)} embeddings={len(embeddings)}"
@@ -334,10 +336,77 @@ class QdrantIndexer:
         query: str,
         repo_name: str | None = None,
         limit: int = 10,
+        *,
+        min_score: float = 0.12,
+        candidate_multiplier: int = 5,
     ) -> dict:
-        """Embed a text query and search indexed code chunks."""
+        """Embed a text query and search indexed code chunks.
+
+        Vector hits are re-ranked with lexical overlap against path/preview so
+        weak hash embeddings do not surface unrelated corpora.
+        """
+        from rootseeker.code_index.search_query import extract_code_identifiers, lexical_overlap_score
+
+        fetch_limit = max(limit, min(100, max(limit, 1) * max(1, candidate_multiplier)))
         vector = self.embedding_provider.embed_query(query)
-        return self.search_similar(vector, repo_name=repo_name, limit=limit)
+        raw = self.search_similar(vector, repo_name=repo_name, limit=fetch_limit)
+        if "error" in raw:
+            return raw
+
+        points = raw.get("result") or []
+        if not isinstance(points, list):
+            return raw
+
+        ranked: list[dict] = []
+        noise_markers = (
+            "fuzzdb/",
+            "zaphomefiles/",
+            "/static/",
+            "webjars/",
+            "node_modules/",
+            ".min.js",
+            ".min.css",
+            "messages_",
+            "chunk-",
+        )
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            payload = point.get("payload") or {}
+            if not isinstance(payload, dict):
+                payload = {}
+            vector_score = float(point.get("score") or 0.0)
+            path = str(payload.get("path") or "")
+            path_norm = path.replace("\\", "/").lower()
+            if any(marker in path_norm for marker in noise_markers):
+                continue
+            preview = str(payload.get("content_preview") or payload.get("content") or "")
+            lexical = lexical_overlap_score(query, path, preview)
+            combined = (0.45 * vector_score) + (0.55 * lexical)
+            # Drop weak vector-only noise when the query looks like a code symbol.
+            if lexical <= 0.0 and extract_code_identifiers(query):
+                continue
+            if lexical <= 0.0 and vector_score < max(min_score, 0.25):
+                continue
+            if combined < min_score and lexical < 0.34:
+                continue
+            enriched = dict(point)
+            enriched["score"] = combined
+            enriched["vector_score"] = vector_score
+            enriched["lexical_score"] = lexical
+            ranked.append(enriched)
+
+        ranked.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+        return {
+            **raw,
+            "result": ranked[:limit],
+            "candidates": len(points),
+            "reranked": True,
+        }
+
+    @staticmethod
+    def _embed_text(path: str, content: str) -> str:
+        return f"{path}\n{content}"
 
     def get_status(self, repo_name: str | None = None) -> IndexStatus:
         """获取索引状态"""

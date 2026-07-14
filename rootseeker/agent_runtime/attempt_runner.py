@@ -14,6 +14,10 @@ from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.evidence import append_tool_json_evidence
 from rootseeker.flow_runtime import FlowRuntime
 from rootseeker.infra_core import RootSeekerSettings
+from rootseeker.skill_runtime.result_sanitize import (
+    sanitize_tool_result_for_evidence,
+    sanitize_tool_result_for_persistence,
+)
 
 from .context_compactor import ContextCompactor
 from .history_builder import build_attempt_history_summary
@@ -226,14 +230,17 @@ class AttemptRunner:
             record = records_by_step_id.get(step.step_id)
             if record is None:
                 continue
-            step.outputs = dict(record.result.content)
+            step.outputs = sanitize_tool_result_for_persistence(record.result.content)
             if record.result.ok:
                 step.status = StepStatus.COMPLETED
                 append_tool_json_evidence(
                     pack,
                     tool_name=record.result.tool_name,
                     evidence_type=_evidence_type_for_tool(record.result.tool_name),
-                    content=record.result.content,
+                    content=sanitize_tool_result_for_evidence(
+                        record.result.tool_name,
+                        record.result.content,
+                    ),
                 )
             else:
                 step.status = StepStatus.FAILED

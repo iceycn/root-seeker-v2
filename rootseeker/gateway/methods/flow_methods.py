@@ -132,11 +132,20 @@ def register_flow_methods(registry: Any, runtime: DevRuntime) -> None:
                 prior_outputs[step_id] = dict(outputs)
 
         prior_case_id = str(record.payload.get("case_id", ""))
+        from rootseeker.flow_runtime.runtime import resolve_resume_step_index
+
+        skill = runtime.skill_registry.get("flows/default-log-triage")
+        flow_step_ids = [step.step_id for step in skill.steps] if skill is not None else []
+        mapped_step_index = resolve_resume_step_index(
+            current_steps=list(record.payload.get("steps", [])),
+            current_next_step_index=step_index,
+            flow_step_ids=flow_step_ids,
+        )
 
         executor = FlowExecutor(runtime)
         result = executor.execute_from_checkpoint(
             req,
-            start_from_step_index=step_index,
+            start_from_step_index=mapped_step_index,
             prior_step_outputs=prior_outputs,
             prior_case_id=prior_case_id,
         )
@@ -144,7 +153,8 @@ def register_flow_methods(registry: Any, runtime: DevRuntime) -> None:
         return {
             "executed": True,
             "case_id": result.case_id,
-            "step_index": step_index,
+            "step_index": mapped_step_index,
+            "requested_step_index": step_index,
             "flow_run_id": flow_run_id,
         }
 

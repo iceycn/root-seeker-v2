@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -30,21 +31,37 @@ class EmbeddingProvider(Protocol):
 
 @dataclass
 class HashEmbeddingProvider:
-    """Deterministic local embedding for offline indexing and repeatable tests."""
+    """Deterministic local embedding for offline indexing and repeatable tests.
+
+    Tokenization splits camelCase / snake_case so identifier queries remain
+    useful when a real embedding model is unavailable.
+    """
 
     dimension: int = 384
 
+    def _tokens(self, text: str) -> list[str]:
+        from rootseeker.code_index.search_query import tokenize_code_text
+
+        tokens = sorted(tokenize_code_text(text))
+        return tokens or [text.lower().strip() or ""]
+
     def _embed(self, text: str) -> list[float]:
         vec = [0.0] * self.dimension
-        tokens = text.lower().split()
-        if not tokens:
-            tokens = [text.lower()]
+        tokens = self._tokens(text)
         for token in tokens:
             digest = hashlib.blake2b(token.encode("utf-8", errors="ignore"), digest_size=16).digest()
             for idx in range(0, len(digest), 2):
                 bucket = int.from_bytes(digest[idx : idx + 2], "big") % self.dimension
                 sign = 1.0 if digest[idx] % 2 == 0 else -1.0
                 vec[bucket] += sign
+            # Character trigrams help short exact identifiers survive hashing collisions.
+            compact = re.sub(r"[^a-z0-9]", "", token.lower())
+            for i in range(max(0, len(compact) - 2)):
+                gram = compact[i : i + 3]
+                digest = hashlib.blake2b(gram.encode("utf-8"), digest_size=8).digest()
+                bucket = int.from_bytes(digest[:2], "big") % self.dimension
+                sign = 1.0 if digest[2] % 2 == 0 else -1.0
+                vec[bucket] += 0.35 * sign
         norm = math.sqrt(sum(v * v for v in vec))
         if norm <= 0:
             return vec

@@ -6,6 +6,8 @@ from typing import Any
 from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.contracts.report import CaseReport
 
+from rootseeker.code_index.search_query import build_zoekt_search_query
+
 __all__ = ["RuleStepArgumentResolver", "build_notify_args"]
 
 
@@ -65,7 +67,11 @@ class RuleStepArgumentResolver:
         if action == "code.search":
             return {"query": _zoekt_search_query_from_symptom(symptom)}
         if action == "code.semantic_search":
-            return {"query": symptom, "limit": 10}
+            from rootseeker.code_index.search_query import extract_code_identifiers
+
+            identifiers = extract_code_identifiers(symptom)
+            query = " ".join(identifiers[:4]) if identifiers else symptom
+            return {"query": query, "limit": 10}
         if action == "code.read":
             path = (
                 _path_from_code_search(step_outputs)
@@ -145,11 +151,7 @@ def _repo_from_code_search(step_outputs: dict[str, dict[str, Any]]) -> str | Non
 
 
 def _zoekt_search_query_from_symptom(symptom: str) -> str:
-    path = _path_from_symptom(symptom)
-    if path:
-        return f"file:{path}"
-    first_line = symptom.strip().splitlines()[0] if symptom.strip() else symptom
-    return " ".join(first_line.split())
+    return build_zoekt_search_query(symptom)
 
 
 def _path_from_symptom(symptom: str) -> str | None:

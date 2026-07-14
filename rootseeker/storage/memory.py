@@ -20,6 +20,9 @@ class InMemoryCaseStore:
     def list_all(self) -> list[CaseRecord]:
         return list(self._by_id.values())
 
+    def count(self) -> int:
+        return len(self._by_id)
+
 
 class InMemoryEvidenceStore:
     def __init__(self) -> None:

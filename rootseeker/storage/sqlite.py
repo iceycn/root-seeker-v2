@@ -85,6 +85,11 @@ class SqliteCaseStore:
             rows = conn.execute("SELECT * FROM cases ORDER BY updated_at DESC").fetchall()
         return [self._row_to_case(row) for row in rows]
 
+    def count(self) -> int:
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute("SELECT COUNT(*) FROM cases").fetchone()
+        return int(row[0] if row else 0)
+
     def _row_to_case(self, row: tuple) -> CaseRecord:
         """Convert database row to CaseRecord."""
         from rootseeker.contracts.case import CaseStatus, CaseStep

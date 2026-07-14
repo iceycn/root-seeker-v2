@@ -46,6 +46,7 @@ def test_sqlite_case_store_put_and_get(temp_db: Path) -> None:
     assert retrieved.case_id == "test-case-1"
     assert retrieved.title == "Test Case"
     assert retrieved.status == CaseStatus.COMPLETED
+    assert store.count() == 1
 
 
 def test_sqlite_case_store_not_found(temp_db: Path) -> None:
@@ -166,6 +167,7 @@ def test_sqlite_checkpoint_store_list_records(temp_db: Path) -> None:
 
     filtered = store.list_records(case_id="case-1")
     assert len(filtered) == 1
+    assert store.count() == 2
 
 
 def test_sqlite_replay_store_save_and_get_case(temp_db: Path) -> None:

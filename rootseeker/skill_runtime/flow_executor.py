@@ -19,6 +19,7 @@ from rootseeker.contracts.tool import ToolCallRequest, ToolCallResult
 from rootseeker.infra_core.settings import RootSeekerSettings
 from rootseeker.mcp_plane import McpGateway, ToolRegistry
 from rootseeker.skill_runtime.evidence_mapper import map_tool_result_to_evidence
+from rootseeker.skill_runtime.result_sanitize import sanitize_tool_result_for_persistence
 from rootseeker.skill_runtime.llm_step_argument_planner import (
     OpenAICompatibleStepArgumentPlanner,
     StepArgumentPlan,
@@ -193,10 +194,13 @@ def execute_skill_flow(
         if case_step.status == StepStatus.COMPLETED:
             if case_step.step_id in prior_outputs:
                 tool_skill = _resolve_tool_skill(skill_registry, flow_step)
+                prior_content = sanitize_tool_result_for_persistence(prior_outputs[case_step.step_id])
+                prior_outputs[case_step.step_id] = prior_content
+                case_step.outputs = dict(prior_content)
                 map_tool_result_to_evidence(
                     pack=pack,
                     action=case_step.action,
-                    content=prior_outputs[case_step.step_id],
+                    content=prior_content,
                     tool_skill=tool_skill,
                 )
             continue
@@ -323,13 +327,14 @@ def _run_step(
             content={"skipped": True, "reason": arg_plan.skip_reason or "skipped by planner"},
         )
         tool_results.append(result)
-        case_step.outputs = dict(result.content)
-        step_outputs[flow_step.step_id] = dict(result.content)
+        persisted = sanitize_tool_result_for_persistence(result.content)
+        case_step.outputs = dict(persisted)
+        step_outputs[flow_step.step_id] = dict(persisted)
         case_step.status = StepStatus.COMPLETED
         map_tool_result_to_evidence(
             pack=pack,
             action=flow_step.action,
-            content=result.content,
+            content=persisted,
             tool_skill=tool_skill,
         )
         return
@@ -343,14 +348,15 @@ def _run_step(
     )
     result = gateway.invoke(req, plugin_id=plugin_id, actor="skill-flow-executor")
     tool_results.append(result)
-    case_step.outputs = dict(result.content)
+    persisted = sanitize_tool_result_for_persistence(result.content)
+    case_step.outputs = dict(persisted)
     if result.ok:
-        step_outputs[flow_step.step_id] = dict(result.content)
+        step_outputs[flow_step.step_id] = dict(persisted)
         case_step.status = StepStatus.COMPLETED
         map_tool_result_to_evidence(
             pack=pack,
             action=flow_step.action,
-            content=result.content,
+            content=persisted,
             tool_skill=tool_skill,
         )
     else:

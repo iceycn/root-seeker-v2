@@ -54,3 +54,6 @@ class FlowCheckpointStore:
         if limit < 0:
             return records
         return records[-limit:]
+
+    def count(self) -> int:
+        return len(self._items)

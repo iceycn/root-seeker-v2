@@ -10,7 +10,13 @@ from typing import Any
 
 from rootseeker.code_index.chunker import chunk_code_files
 from rootseeker.code_index.file_scanner import scan_code_files
-from rootseeker.code_index.git_auth import GitCredentials, build_authenticated_git_url, mask_git_url
+from rootseeker.code_index.git_auth import (
+    GitCredentials,
+    assert_git_url_allowed_for_provider,
+    build_authenticated_git_url,
+    mask_git_url,
+    sanitize_git_error_message,
+)
 from rootseeker.code_index.qdrant_indexer import QdrantIndexer
 from rootseeker.code_index.zoekt_indexer import ZoektIndexer
 from rootseeker.contracts.common import utc_now
@@ -271,13 +277,14 @@ class RepoSyncService:
             )
 
         except ValueError as e:
-            error_msg = str(e)
+            error_msg = sanitize_git_error_message(str(e))
             repo.sync_status.state = RepoSyncState.FAILED
             repo.sync_status.error_message = error_msg
             logger.error(f"Sync failed for {repo_name}: {error_msg}")
             return RepoSyncResult(repo=repo, success=False, message=error_msg)
         except subprocess.CalledProcessError as e:
-            error_msg = f"Git operation failed: {e.stderr or str(e)}"
+            raw_error = e.stderr or e.stdout or "git command failed"
+            error_msg = sanitize_git_error_message(f"Git operation failed: {raw_error}")
             repo.sync_status.state = RepoSyncState.FAILED
             repo.sync_status.error_message = error_msg
             logger.error(f"Sync failed for {repo_name}: {error_msg}")
@@ -288,7 +295,7 @@ class RepoSyncService:
                 message=error_msg,
             )
         except Exception as e:
-            error_msg = f"Unexpected error: {str(e)}"
+            error_msg = sanitize_git_error_message(f"Unexpected error: {e}")
             repo.sync_status.state = RepoSyncState.FAILED
             repo.sync_status.error_message = error_msg
             logger.error(f"Sync failed for {repo_name}: {error_msg}")
@@ -326,6 +333,7 @@ class RepoSyncService:
         credentials = self._resolve_git_credentials(repo)
         if credentials is None:
             return url
+        assert_git_url_allowed_for_provider(url, credentials.provider)
         return build_authenticated_git_url(
             url,
             provider=credentials.provider,
@@ -350,6 +358,8 @@ class RepoSyncService:
     def _git_pull(self, path: Path, branch: str, *, url: str | None = None) -> tuple[str, str]:
         """执行 git pull，若指定分支不存在则自动探测并重试。"""
         logger.info(f"Pulling updates in {path} (branch={branch})")
+        if url:
+            self._set_origin_url(path, url)
 
         error = self._run_git_fetch_reset(path, branch)
         if error is None:
@@ -370,6 +380,35 @@ class RepoSyncService:
             cmd=["git", "fetch", "origin", branch],
             stderr=error,
         )
+
+    def _set_origin_url(self, path: Path, url: str) -> None:
+        """Refresh origin so incremental sync uses the latest HTTPS credentials."""
+        result = subprocess.run(
+            ["git", "remote", "set-url", "origin", url],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_subprocess_env(),
+        )
+        if result.returncode == 0:
+            return
+        # Fresh clones should already have origin; add it when missing.
+        add = subprocess.run(
+            ["git", "remote", "add", "origin", url],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_subprocess_env(),
+        )
+        if add.returncode != 0:
+            detail = add.stderr or result.stderr or "failed to set origin url"
+            raise subprocess.CalledProcessError(
+                returncode=add.returncode or result.returncode or 1,
+                cmd=["git", "remote", "set-url", "origin", url],
+                stderr=detail,
+            )
 
     def _run_git_fetch_reset(self, path: Path, branch: str) -> str | None:
         fetch = subprocess.run(

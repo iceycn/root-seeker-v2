@@ -109,11 +109,18 @@ def test_admin_repo_remote_fills_default_base_url(tmp_path: Path) -> None:
 
     response = client.post(
         "/api/repo-remotes",
-        json={"name": "yunxiao-main", "provider": "yunxiao", "token": "yx-token", "owner": "org-1"},
+        json={
+            "name": "yunxiao-main",
+            "provider": "yunxiao",
+            "token": "yx-token",
+            "owner": "org-1",
+            "git_username": "clone-user",
+        },
     )
 
     assert response.status_code == 200
     assert response.json()["remote"]["base_url"] == "https://openapi-rdc.aliyuncs.com"
+    assert response.json()["remote"]["git_username"] == "clone-user"
 
 
 def test_admin_repo_remote_normalizes_generic_to_custom(tmp_path: Path) -> None:
@@ -203,6 +210,7 @@ def test_admin_discover_yunxiao_uses_list_payload_without_enrichment() -> None:
                         "pathWithNamespace": "org/repo",
                         "httpUrlToRepo": "https://codeup.aliyun.com/org/repo.git",
                         "webUrl": "https://codeup.aliyun.com/org/repo",
+                        "defaultBranch": "master",
                         "visibility": "private",
                     }
                 ]
@@ -225,7 +233,60 @@ def test_admin_discover_yunxiao_uses_list_payload_without_enrichment() -> None:
     assert result["total"] == 1
     assert result["repos"][0]["clone_url"] == "https://codeup.aliyun.com/org/repo.git"
     assert result["repos"][0]["full_name"] == "org/repo"
+    assert result["repos"][0]["default_branch"] == "master"
     assert "raw" not in result["repos"][0]
+
+
+def test_admin_discover_yunxiao_enriches_when_list_lacks_clone_url() -> None:
+    from apps.admin.main import AdminDiscoverReposRequest, _discover_remote_repos
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, list[dict[str, str]]]:
+            return {
+                "repositories": [
+                    {
+                        "id": 2813489,
+                        "name": "repo",
+                        "pathWithNamespace": "org/repo",
+                        "webUrl": "https://codeup.aliyun.com/org/repo",
+                        "visibility": "private",
+                    }
+                ]
+            }
+
+    req = AdminDiscoverReposRequest(
+        provider="yunxiao",
+        token="pt-token",
+        owner="org-1",
+        page=1,
+        per_page=50,
+    )
+
+    with patch("apps.admin.main.get_with_retry", return_value=FakeResponse()):
+        with patch(
+            "apps.admin.main._enrich_yunxiao_repos_parallel",
+            return_value=[
+                {
+                    "provider": "yunxiao",
+                    "name": "repo",
+                    "full_name": "org/repo",
+                    "clone_url": "https://codeup.aliyun.com/org/repo.git",
+                    "ssh_url": "",
+                    "web_url": "https://codeup.aliyun.com/org/repo",
+                    "default_branch": "master",
+                    "private": True,
+                    "raw": {"id": 2813489},
+                }
+            ],
+        ) as enrich_mock:
+            result = _discover_remote_repos(req)
+
+    enrich_mock.assert_called_once()
+    assert result["repos"][0]["clone_url"] == "https://codeup.aliyun.com/org/repo.git"
+    assert result["repos"][0]["default_branch"] == "master"
 
 
 def test_admin_public_discovered_repo_strips_raw_payload() -> None:
@@ -301,6 +362,47 @@ def test_admin_discover_requires_existing_repo_remote(tmp_path: Path) -> None:
     response = client.post("/api/repos/discover", json={"remote_name": "missing"})
 
     assert response.status_code == 404
+
+
+def test_admin_discover_from_remote_prefers_request_owner_over_remote_default(tmp_path: Path) -> None:
+    from apps.admin.main import AdminDiscoverReposFromRemoteRequest, _discover_repos_from_remote
+    from apps.admin.config_store import AdminConfigStore
+
+    store = AdminConfigStore(tmp_path / "admin" / "config.json")
+    store.upsert_repo_remote(
+        {
+            "name": "yx-main",
+            "provider": "yunxiao",
+            "token": "yx-token",
+            "owner": "org-default",
+            "base_url": "https://openapi-rdc.aliyuncs.com",
+        }
+    )
+    req = AdminDiscoverReposFromRemoteRequest(
+        remote_name="yx-main",
+        owner="",  # Region edition: empty owner must not be overwritten
+        page=1,
+        per_page=20,
+    )
+
+    with patch("apps.admin.main._discover_remote_repos") as discover_mock:
+        discover_mock.return_value = {"repos": [], "total": 0}
+        _discover_repos_from_remote(store, req)
+
+    called = discover_mock.call_args.args[0]
+    assert called.owner == ""
+    assert called.provider == "yunxiao"
+
+    req_override = AdminDiscoverReposFromRemoteRequest(
+        remote_name="yx-main",
+        owner="org-override",
+        page=1,
+        per_page=20,
+    )
+    with patch("apps.admin.main._discover_remote_repos") as discover_mock:
+        discover_mock.return_value = {"repos": [], "total": 0}
+        _discover_repos_from_remote(store, req_override)
+    assert discover_mock.call_args.args[0].owner == "org-override"
 
 
 def test_admin_catalog_upsert_and_list(tmp_path: Path) -> None:
@@ -498,3 +600,40 @@ def test_build_llm_error_chat_payload_stays_under_kimi_limit() -> None:
     assert "call_chain" in payload
     assert payload["case"]["step_count"] == 12
     assert "inputs" not in payload["case"]["steps"][0]
+
+
+def test_build_llm_error_chat_payload_hard_truncates_when_still_over_limit() -> None:
+    import json
+    from types import SimpleNamespace
+
+    from apps.admin.main import _build_llm_error_chat_payload
+
+    huge = "x" * 50000
+    flow_result = SimpleNamespace(
+        case=SimpleNamespace(
+            model_dump=lambda mode="json": {
+                "case_id": "case-hard",
+                "title": "hard truncate",
+                "selected_skills": ["flows/default-log-triage"],
+                "symptom": huge,
+                "steps": [],
+            }
+        ),
+        report=SimpleNamespace(
+            model_dump=lambda mode="json": {
+                "summary": huge,
+                "root_cause": {"title": "x", "narrative": huge, "confidence": 0.1},
+                "metadata": {},
+            }
+        ),
+        evidence_pack=SimpleNamespace(items=[]),
+    )
+
+    payload = _build_llm_error_chat_payload(
+        content=huge,
+        flow_result=flow_result,
+        byte_limit=8_000,
+    )
+    serialized = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    assert len(serialized) <= 8_000
+    assert payload.get("truncation", {}).get("reason") in {"payload_too_large", "payload_hard_truncated"}

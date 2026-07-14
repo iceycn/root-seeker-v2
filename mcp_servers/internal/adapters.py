@@ -86,6 +86,7 @@ class InternalToolAdapter(Protocol):
 class HttpInternalToolAdapter:
     base_url: str
     timeout_seconds: float = 5.0
+    find_callers_timeout_seconds: float = 120.0
     route_resolve_service: str = "/catalog/resolve_service"
     route_get_log_sources: str = "/catalog/get_log_sources"
     route_query_log_by_trace: str = "/log/query_by_trace_id"
@@ -94,6 +95,7 @@ class HttpInternalToolAdapter:
     route_code_search: str = "/code/search"
     route_code_semantic_search: str = "/code/semantic-search"
     route_code_read: str = "/code/read"
+    route_code_find_callers: str = "/code/find_callers"
     route_index_status: str = "/index/get_status"
     route_notify_send: str = "/notify/send"
     route_repo_register: str = "/repos"
@@ -110,9 +112,16 @@ class HttpInternalToolAdapter:
     route_lsp_symbols: str = "/lsp/symbols"
     transport: httpx.BaseTransport | None = None
 
-    def _post(self, route: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post(
+        self,
+        route: str,
+        payload: dict[str, Any],
+        *,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         url = f"{self.base_url.rstrip('/')}/{route.lstrip('/')}"
-        with httpx.Client(timeout=self.timeout_seconds, transport=self.transport) as client:
+        timeout = self.timeout_seconds if timeout_seconds is None else timeout_seconds
+        with httpx.Client(timeout=timeout, transport=self.transport) as client:
             response = client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -184,7 +193,11 @@ class HttpInternalToolAdapter:
         return self._post(self.route_code_read, {"path": path, **({"repo": repo} if repo else {})})
 
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._post("/code/find_callers", args)
+        return self._post(
+            self.route_code_find_callers,
+            args,
+            timeout_seconds=self.find_callers_timeout_seconds,
+        )
 
     def get_index_status(self) -> dict[str, Any]:
         return self._post(self.route_index_status, {})
@@ -198,7 +211,11 @@ class HttpInternalToolAdapter:
 
     def repo_sync(self, args: dict[str, Any]) -> dict[str, Any]:
         name = str(args.get("name", ""))
-        return self._post(self.route_repo_sync.format(name=name), {"trigger_index": args.get("trigger_index", True)})
+        payload: dict[str, Any] = {
+            "trigger_index": args.get("trigger_index", True),
+            "force_reclone": bool(args.get("force_reclone", False)),
+        }
+        return self._post(self.route_repo_sync.format(name=name), payload)
 
     def repo_list(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._get(self.route_repo_list, params={k: v for k, v in args.items() if v is not None})

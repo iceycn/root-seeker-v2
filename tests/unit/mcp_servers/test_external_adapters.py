@@ -164,6 +164,31 @@ class TestZoetCodeAdapter:
         assert result["hits"] == []
         assert "error" in result
 
+    def test_transform_search_response_caps_line_hits(self) -> None:
+        adapter = ZoektCodeAdapter(config=ZoektConfig())
+        files = []
+        for i in range(10):
+            files.append(
+                {
+                    "Repository": "demo",
+                    "FileName": f"f{i}.java",
+                    "LineMatches": [
+                        {"LineNumber": j, "Line": f"line {j}", "Score": 1.0}
+                        for j in range(20)
+                    ],
+                }
+            )
+        result = adapter._transform_search_response(
+            "q",
+            {"Result": {"Files": files}},
+            max_hits=50,
+        )
+        assert len(result["hits"]) == 50
+        assert result["truncated"] is True
+        assert result["total"] == 200
+        scores = [float(h["score"]) for h in result["hits"]]
+        assert scores == sorted(scores, reverse=True)
+
     def test_read_file_unconfigured(self) -> None:
         adapter = ZoektCodeAdapter(config=ZoektConfig())
         result = adapter.read_file("src/handlers/error.py")

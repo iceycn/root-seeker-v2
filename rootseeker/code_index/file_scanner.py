@@ -26,6 +26,10 @@ DEFAULT_EXCLUDED_DIRS = {
     ".venv",
     "venv",
     "env",
+    "fuzzdb",
+    "zapHomeFiles",
+    "static",
+    "webjars",
 }
 
 DEFAULT_INCLUDED_EXTENSIONS = {
@@ -34,11 +38,9 @@ DEFAULT_INCLUDED_EXTENSIONS = {
     ".cc",
     ".cpp",
     ".cs",
-    ".css",
     ".go",
     ".h",
     ".hpp",
-    ".html",
     ".java",
     ".js",
     ".jsx",
@@ -56,7 +58,6 @@ DEFAULT_INCLUDED_EXTENSIONS = {
     ".toml",
     ".ts",
     ".tsx",
-    ".txt",
     ".xml",
     ".yaml",
     ".yml",
@@ -84,7 +85,16 @@ LANGUAGE_BY_EXT = {
 class FileScanConfig:
     included_extensions: set[str] | None = None
     excluded_dirs: set[str] | None = None
-    excluded_globs: tuple[str, ...] = ("*.lock", "*.min.js", "*.map")
+    excluded_globs: tuple[str, ...] = (
+        "*.lock",
+        "*.min.js",
+        "*.min.css",
+        "*.map",
+        "messages_*.properties",
+        "chunk-*.js",
+        "*Top1m*",
+        "UserAgents.txt",
+    )
     max_file_bytes: int = 512 * 1024
 
 

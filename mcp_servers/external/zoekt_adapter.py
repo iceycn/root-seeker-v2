@@ -20,6 +20,8 @@ from typing import Any
 
 import httpx
 
+from rootseeker.code_index.search_query import ZOEKT_NOISE_FILTERS
+
 __all__ = ["ZoektCodeAdapter", "ZoektConfig"]
 
 
@@ -63,6 +65,16 @@ def _snippet_from_zoekt_line(cell: Any) -> str:
         return cell
 
 
+def _prepare_zoekt_query(query: str) -> str:
+    cleaned = " ".join((query or "").split())
+    if not cleaned:
+        return cleaned
+    missing = [item for item in ZOEKT_NOISE_FILTERS if item not in cleaned]
+    if not missing:
+        return cleaned
+    return f"{cleaned} {' '.join(missing)}"
+
+
 def _safe_read_repo_file(repo_root: Path, rel_path: str) -> str | None:
     try:
         root = repo_root.resolve()
@@ -71,6 +83,82 @@ def _safe_read_repo_file(repo_root: Path, rel_path: str) -> str | None:
         return target.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return None
+
+
+def _container_source_candidates(source: str) -> list[str]:
+    raw = (source or "").strip().replace("\\", "/")
+    if not raw:
+        return []
+    candidates = [raw]
+    if raw.startswith("/data/repos"):
+        candidates.append("/repos" + raw[len("/data/repos") :])
+    elif raw.startswith("/repos/"):
+        candidates.append("/data/repos" + raw[len("/repos") :])
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in candidates:
+        if item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def _local_source_candidates(source: str) -> list[Path]:
+    paths: list[Path] = []
+    for candidate in _container_source_candidates(source):
+        paths.append(Path(candidate))
+        for prefix in ("/data/repos", "/repos"):
+            if candidate.startswith(prefix + "/") or candidate == prefix:
+                rel = candidate[len(prefix) :].lstrip("/")
+                base = Path(os.getenv("ROOTSEEKER_REPO_BASE_PATH") or "repos")
+                paths.append(base / rel if rel else base)
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            ordered.append(path)
+    return ordered
+
+
+def _docker_read_repo_file(source: str, rel_path: str) -> str | None:
+    """Read a file from the Zoekt/repo Docker volume when host paths are unavailable."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("docker"):
+        return None
+    container = (os.getenv("ROOTSEEKER_ZOEKT_CONTAINER") or "rootseeker-zoekt").strip()
+    safe_rel = rel_path.lstrip("/").replace("\\", "/")
+    if not safe_rel or ".." in Path(safe_rel).parts:
+        return None
+    for root in _container_source_candidates(source):
+        if not (root.startswith("/repos") or root.startswith("/data/repos")):
+            continue
+        target = f"{root.rstrip('/')}/{safe_rel}"
+        try:
+            completed = subprocess.run(
+                ["docker", "exec", container, "cat", target],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except Exception:
+            continue
+        if completed.returncode == 0:
+            return completed.stdout
+    return None
+
+
+def _read_from_source(source: str, rel_path: str) -> str | None:
+    for root in _local_source_candidates(source):
+        text = _safe_read_repo_file(root, rel_path)
+        if text is not None:
+            return text
+    return _docker_read_repo_file(source, rel_path)
 
 
 @dataclass
@@ -150,13 +238,40 @@ class ZoektCodeAdapter:
         if path:
             for item in cand:
                 src = item.get("source") or ""
-                if src and _safe_read_repo_file(Path(src), path) is not None:
+                if src and _read_from_source(src, path) is not None:
+                    # Prefer a locally existing candidate when available.
+                    for root in _local_source_candidates(src):
+                        if root.exists():
+                            return root
                     return Path(src)
             return None
         for item in cand:
             src = item.get("source") or ""
             if src:
+                for root in _local_source_candidates(src):
+                    if root.exists():
+                        return root
                 return Path(src)
+        return None
+
+    def _source_for_repo(self, repo: str | None, path: str | None = None) -> str | None:
+        data = self._fetch_index_list_payload(reuse_cache=True)
+        if not data:
+            return None
+        repos = self._normalized_repos_from_list(data)
+        cand = repos
+        if repo:
+            cand = [r for r in repos if r.get("name") == repo]
+        if path:
+            for item in cand:
+                src = str(item.get("source") or "")
+                if src and _read_from_source(src, path) is not None:
+                    return src
+            return None
+        for item in cand:
+            src = str(item.get("source") or "")
+            if src:
+                return src
         return None
 
     def search_code(
@@ -169,7 +284,7 @@ class ZoektCodeAdapter:
         if not self._client:
             return self._not_configured_search(query)
 
-        query = " ".join(query.split())
+        query = _prepare_zoekt_query(query)
         url = f"{self.config.endpoint.rstrip('/')}/api/search"
         payload: dict[str, Any] = {"q": query, "Num": num_results}
         if repo_filter:
@@ -189,7 +304,7 @@ class ZoektCodeAdapter:
             response.raise_for_status()
             data = response.json()
 
-            return self._transform_search_response(query, data)
+            return self._transform_search_response(query, data, max_hits=num_results)
         except Exception as e:
             return {
                 "query": query,
@@ -198,9 +313,16 @@ class ZoektCodeAdapter:
                 "error": str(e),
             }
 
-    def _transform_search_response(self, query: str, data: dict[str, Any]) -> dict[str, Any]:
+    def _transform_search_response(
+        self,
+        query: str,
+        data: dict[str, Any],
+        *,
+        max_hits: int = 50,
+    ) -> dict[str, Any]:
         hits: list[dict[str, Any]] = []
         result = data.get("Result")
+        max_hits = max(1, int(max_hits))
 
         if isinstance(result, dict) and result.get("Files") is not None:
             for file_match in result.get("Files") or []:
@@ -210,18 +332,15 @@ class ZoektCodeAdapter:
                     line_num = line_match.get("LineNumber", 0)
                     line_cell = line_match.get("Line", "")
                     snippet = _snippet_from_zoekt_line(line_cell)
-
                     hits.append({
                         "repo": repo,
                         "path": file_name,
                         "line_start": line_num,
                         "line_end": line_num,
                         "snippet": snippet.strip(),
-                        "score": line_match.get("Score", 0.0),
+                        "score": float(line_match.get("Score") or 0.0),
                     })
-            return {"query": query, "hits": hits, "total": len(hits)}
-
-        if isinstance(result, list):
+        elif isinstance(result, list):
             for res in result:
                 repo_name = res.get("Repository", "")
                 for file_match in res.get("FileMatches") or []:
@@ -234,21 +353,26 @@ class ZoektCodeAdapter:
                             snippet_use = snippet_try if snippet_try else snippet.strip()
                         else:
                             snippet_use = str(snippet or "")
-
                         hits.append({
                             "repo": repo_name,
                             "path": file_name,
                             "line_start": line_num,
                             "line_end": line_num,
                             "snippet": snippet_use,
-                            "score": line_match.get("Score", 0.0),
+                            "score": float(line_match.get("Score") or 0.0),
                         })
 
-        return {
+        hits.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
+        truncated = len(hits) > max_hits
+        selected = hits[:max_hits]
+        payload = {
             "query": query,
-            "hits": hits,
+            "hits": selected,
             "total": len(hits),
         }
+        if truncated:
+            payload["truncated"] = True
+        return payload
 
     def _not_configured_search(self, query: str) -> dict[str, Any]:
         return {
@@ -295,8 +419,8 @@ class ZoektCodeAdapter:
         except Exception:
             pass
 
-        root = self._local_repo_root(repo, path=path)
-        if root is None:
+        source = self._source_for_repo(repo, path=path)
+        if not source:
             return {
                 "path": path,
                 "repo": repo,
@@ -304,13 +428,13 @@ class ZoektCodeAdapter:
                 "error": "file read via Zoekt /api/file unavailable and no local Source in index list",
             }
 
-        text = _safe_read_repo_file(root, path)
+        text = _read_from_source(source, path)
         if text is None:
             return {
                 "path": path,
                 "repo": repo,
                 "content": "",
-                "error": f"could not read {path!r} under {root}",
+                "error": f"could not read {path!r} under {source}",
             }
 
         lines = text.split("\n")
@@ -325,6 +449,7 @@ class ZoektCodeAdapter:
             "returned_lines": len(selected),
             "start_line": start_line,
             "end_line": min(end_line, len(lines)),
+            "source": source,
         }
 
     def _not_configured_read_file(self, path: str) -> dict[str, Any]:

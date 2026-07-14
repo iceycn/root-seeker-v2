@@ -694,11 +694,7 @@ function App() {
   const discoverRemoteRepos = async () => {
     try {
       const values = await remoteRepoForm.validateFields()
-      const remote = repoRemotes.find((item) => item.name === values.remote_name)
       const payload = { ...values }
-      if (remote?.provider === 'yunxiao' && remote.owner) {
-        payload.owner = remote.owner
-      }
       setRemoteRepos([])
       const data = await api<{ repos: RemoteRepoRecord[] }>('/api/repos/discover', {
         method: 'POST',

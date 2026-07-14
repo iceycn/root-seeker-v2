@@ -42,6 +42,7 @@ class RegisterRepoRequest(BaseModel):
 class SyncRepoRequest(BaseModel):
     """同步仓库请求"""
     trigger_index: bool = Field(default=True, description="是否触发索引")
+    force_reclone: bool = Field(default=False, description="是否删除本地目录后重新 clone")
 
 
 class RepoResponse(BaseModel):
@@ -72,6 +73,18 @@ class SemanticSearchRequest(BaseModel):
     query: str = Field(min_length=1, description="语义搜索查询")
     repo_name: str | None = Field(default=None, description="限定仓库名")
     limit: int = Field(default=10, ge=1, le=100, description="返回数量")
+
+
+class FindCallersRequest(BaseModel):
+    call_chain: list[str] = Field(default_factory=list, description="运行时调用链帧")
+    class_name: str | None = Field(default=None, description="类名")
+    method_name: str | None = Field(default=None, description="方法名")
+    file_path: str | None = Field(default=None, description="文件路径")
+    line: int | None = Field(default=None, description="行号")
+    repo: str | None = Field(default=None, description="限定仓库")
+    service_name: str | None = Field(default=None, description="服务名")
+    max_depth: int = Field(default=3, ge=1, le=10, description="调用链追踪深度")
+    limit: int = Field(default=20, ge=1, le=100, description="返回数量")
 
 
 
@@ -454,7 +467,11 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         content = _invoke_builtin_repo_tool(
             runtime,
             "repo.sync",
-            {"name": repo_name, "trigger_index": req.trigger_index},
+            {
+                "name": repo_name,
+                "trigger_index": req.trigger_index,
+                "force_reclone": req.force_reclone,
+            },
         )
 
         return SyncRepoResponse(
@@ -501,6 +518,16 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         )
         if not content.get("ok"):
             raise HTTPException(status_code=400, detail=str(content.get("error", "semantic search failed")))
+        return content
+
+    @app.post("/code/find_callers")
+    def find_callers_code(req: FindCallersRequest) -> dict[str, Any]:
+        """跨仓库静态调用链追踪，供 HTTP 内部适配器转发。"""
+        content = _invoke_builtin_repo_tool(
+            runtime,
+            "code.find_callers",
+            req.model_dump(mode="json", exclude_none=True),
+        )
         return content
 
     app.state.runtime = runtime
