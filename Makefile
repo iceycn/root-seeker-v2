@@ -53,9 +53,13 @@ docker-up:
 	docker compose up -d --build
 	@echo ""
 	@echo "RootSeeker V2 is starting!"
-	@echo "  API:   http://localhost:8000"
-	@echo "  Admin: http://localhost:8010"
-	@echo "  Health: curl http://localhost:8000/healthz"
+	@echo "  API:      http://localhost:8000"
+	@echo "  Admin:    http://localhost:8010"
+	@echo "  Zoekt:    http://localhost:6070"
+	@echo "  Qdrant:   http://localhost:6333"
+	@echo "  GitNexus: http://localhost:7474"
+	@echo "  Health:   curl http://localhost:8000/healthz"
+	@echo "            curl http://localhost:7474/healthz"
 
 docker-down:
 	docker compose down
@@ -73,6 +77,7 @@ docker-ps:
 k8s-build: docker-build
 	docker build -t rootseeker:latest .
 	docker build -t rootseeker-zoekt:latest -f docker/Dockerfile.zoekt docker/
+	docker build -t rootseeker-gitnexus:latest -f docker/Dockerfile.gitnexus .
 
 k8s-deploy:
 	kubectl apply -k k8s/

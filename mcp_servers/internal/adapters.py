@@ -38,6 +38,27 @@ class InternalToolAdapter(Protocol):
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
         ...
 
+    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
     def get_index_status(self) -> dict[str, Any]:
         ...
 
@@ -61,6 +82,9 @@ class InternalToolAdapter(Protocol):
         ...
 
     def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
         ...
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -96,6 +120,13 @@ class HttpInternalToolAdapter:
     route_code_semantic_search: str = "/code/semantic-search"
     route_code_read: str = "/code/read"
     route_code_find_callers: str = "/code/find_callers"
+    route_graph_impact: str = "/graph/impact"
+    route_graph_context: str = "/graph/context"
+    route_graph_query: str = "/graph/query"
+    route_graph_cypher: str = "/graph/cypher"
+    route_graph_trace: str = "/graph/trace"
+    route_graph_list_repos: str = "/graph/list_repos"
+    route_graph_detect_changes: str = "/graph/detect_changes"
     route_index_status: str = "/index/get_status"
     route_notify_send: str = "/notify/send"
     route_repo_register: str = "/repos"
@@ -104,6 +135,7 @@ class HttpInternalToolAdapter:
     route_repo_get: str = "/repos/{name}"
     route_repo_unregister: str = "/repos/{name}"
     route_repo_sync_all: str = "/repos/sync-all"
+    route_repo_sync_changed: str = "/repos/sync-changed"
     route_repo_index_status: str = "/repos/{name}/index-status"
     route_repo_semantic_search: str = "/code/semantic-search"
     route_lsp_references: str = "/lsp/references"
@@ -199,6 +231,31 @@ class HttpInternalToolAdapter:
             timeout_seconds=self.find_callers_timeout_seconds,
         )
 
+    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(self.route_graph_impact, args, timeout_seconds=self.find_callers_timeout_seconds)
+
+    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(self.route_graph_context, args, timeout_seconds=self.find_callers_timeout_seconds)
+
+    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(self.route_graph_query, args, timeout_seconds=self.find_callers_timeout_seconds)
+
+    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(self.route_graph_cypher, args, timeout_seconds=self.find_callers_timeout_seconds)
+
+    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(self.route_graph_trace, args, timeout_seconds=self.find_callers_timeout_seconds)
+
+    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(self.route_graph_list_repos, args)
+
+    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._post(
+            self.route_graph_detect_changes,
+            args,
+            timeout_seconds=self.find_callers_timeout_seconds,
+        )
+
     def get_index_status(self) -> dict[str, Any]:
         return self._post(self.route_index_status, {})
 
@@ -231,6 +288,10 @@ class HttpInternalToolAdapter:
     def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]:
         trigger = args.get("trigger_index", True)
         return self._post(f"{self.route_repo_sync_all}?trigger_index={str(trigger).lower()}", {})
+
+    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
+        trigger = args.get("trigger_index", True)
+        return self._post(f"{self.route_repo_sync_changed}?trigger_index={str(trigger).lower()}", {})
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
         name = str(args.get("name", ""))

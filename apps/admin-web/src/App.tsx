@@ -1,5 +1,6 @@
 import {
   ApiOutlined,
+  ClockCircleOutlined,
   DeleteOutlined,
   EditOutlined,
   ExperimentOutlined,
@@ -186,6 +187,39 @@ type CallbackRecord = ApiRecord & {
   channel?: string
   url?: string
   team?: string
+}
+
+type CronJobState = {
+  status?: string
+  next_run_at?: string | null
+  last_started_at?: string | null
+  last_finished_at?: string | null
+  last_success_at?: string | null
+  last_error?: string | null
+  run_count?: number
+}
+
+type CronJobRecord = ApiRecord & {
+  job_id: string
+  name: string
+  handler: string
+  schedule: string
+  timezone?: string
+  enabled?: boolean
+  builtin?: boolean
+  deletable?: boolean
+  notes?: string
+  metadata?: ApiRecord
+  state?: CronJobState | null
+}
+
+type CronJobRunRecord = ApiRecord & {
+  job_id: string
+  status: string
+  started_at?: string
+  finished_at?: string
+  message?: string
+  payload?: ApiRecord
 }
 
 type EnvVarRecord = ApiRecord & {
@@ -415,6 +449,7 @@ const pathToView: Record<string, string> = {
   '/catalog': 'catalog',
   '/plugins': 'plugins',
   '/callbacks': 'callbacks',
+  '/schedules': 'schedules',
   '/semantic-search': 'semantic',
   '/error-chat': 'errorChat',
   '/overview': 'overview',
@@ -428,6 +463,7 @@ const viewToPath: Record<string, string> = {
   catalog: '/catalog',
   plugins: '/plugins',
   callbacks: '/callbacks',
+  schedules: '/schedules',
   semantic: '/semantic-search',
   errorChat: '/error-chat',
   overview: '/overview',
@@ -454,6 +490,13 @@ function App() {
   const [selectedRemoteRepoKeys, setSelectedRemoteRepoKeys] = useState<string[]>([])
   const [catalogItems, setCatalogItems] = useState<CatalogRecord[]>([])
   const [callbacksData, setCallbacksData] = useState<CallbackRecord[]>([])
+  const [cronJobs, setCronJobs] = useState<CronJobRecord[]>([])
+  const [cronHandlers, setCronHandlers] = useState<string[]>([])
+  const [cronModalOpen, setCronModalOpen] = useState(false)
+  const [editingCronJob, setEditingCronJob] = useState<CronJobRecord | null>(null)
+  const [cronRunsOpen, setCronRunsOpen] = useState(false)
+  const [cronRuns, setCronRuns] = useState<CronJobRunRecord[]>([])
+  const [cronRunsJobId, setCronRunsJobId] = useState<string | null>(null)
   const [settingsData, setSettingsData] = useState<Record<string, unknown>>({})
   const [envVars, setEnvVars] = useState<EnvVarRecord[]>([])
   const [providerModalOpen, setProviderModalOpen] = useState(false)
@@ -475,6 +518,7 @@ function App() {
   const [localRepoForm] = Form.useForm()
   const [catalogForm] = Form.useForm()
   const [callbackForm] = Form.useForm()
+  const [cronForm] = Form.useForm()
   const [skillForm] = Form.useForm()
   const [semanticForm] = Form.useForm()
   const [errorCaseForm] = Form.useForm()
@@ -506,6 +550,7 @@ function App() {
     catalog: { title: 'Service Catalog', desc: '配置 service_name 到仓库、日志源、负责人等信息的映射。' },
     models: { title: '大语言模型', desc: '系统会根据用户内容智能选择最合适的模型，您也可以切换默认模型。' },
     callbacks: { title: '消息回调', desc: '配置通知通道、回调地址，并测试回调是否可达。' },
+    schedules: { title: '定时任务', desc: '管理仓库增量同步等定时任务：启停、改调度、立即执行与运行记录。' },
     advanced: { title: '高级设置', desc: '管理 Skill/MCP 运行时环境变量与 RootSeeker 运行时配置。' },
   }
 
@@ -553,6 +598,14 @@ function App() {
     }
     if (active === 'catalog') api<{ items: CatalogRecord[] }>('/api/catalog').then((d) => setCatalogItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
     if (active === 'callbacks') api<{ items: CallbackRecord[] }>('/api/callbacks').then((d) => setCallbacksData(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    if (active === 'schedules') {
+      api<{ items: CronJobRecord[]; handlers?: string[] }>('/api/cron-jobs')
+        .then((d) => {
+          setCronJobs(d.items || [])
+          setCronHandlers(d.handlers || [])
+        })
+        .catch((e) => apiMessage.error(String(e)))
+    }
     if (active === 'errorChat') api<{ items: ErrorChatResult[] }>('/api/error-chat').then((d) => setErrorChatItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
     if (active === 'advanced') {
       api<{ settings: Record<string, unknown> }>('/api/settings').then((d) => {
@@ -858,6 +911,100 @@ function App() {
     await refreshCallbacks()
   }
 
+  const refreshCronJobs = async () => {
+    const data = await api<{ items: CronJobRecord[]; handlers?: string[] }>('/api/cron-jobs')
+    setCronJobs(data.items || [])
+    setCronHandlers(data.handlers || [])
+  }
+
+  const openCronModal = (job?: CronJobRecord) => {
+    setEditingCronJob(job || null)
+    if (job) {
+      cronForm.setFieldsValue({
+        name: job.name,
+        handler: job.handler,
+        schedule: job.schedule,
+        timezone: job.timezone || 'UTC',
+        enabled: job.enabled !== false,
+        notes: job.notes || '',
+      })
+    } else {
+      cronForm.setFieldsValue({
+        name: '',
+        handler: cronHandlers[0] || 'repo.sync_changed',
+        schedule: '@hourly',
+        timezone: 'UTC',
+        enabled: true,
+        notes: '',
+      })
+    }
+    setCronModalOpen(true)
+  }
+
+  const saveCronJob = async () => {
+    const values = await cronForm.validateFields()
+    if (editingCronJob) {
+      await api(`/api/cron-jobs/${encodeURIComponent(editingCronJob.job_id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: values.name,
+          schedule: values.schedule,
+          timezone: values.timezone,
+          enabled: values.enabled,
+          notes: values.notes || '',
+          handler: editingCronJob.builtin ? undefined : values.handler,
+        }),
+      })
+      apiMessage.success('定时任务已更新')
+    } else {
+      await api('/api/cron-jobs', {
+        method: 'POST',
+        body: JSON.stringify(values),
+      })
+      apiMessage.success('定时任务已创建')
+    }
+    setCronModalOpen(false)
+    await refreshCronJobs()
+  }
+
+  const toggleCronJob = async (job: CronJobRecord, enabled: boolean) => {
+    await api(`/api/cron-jobs/${encodeURIComponent(job.job_id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    })
+    apiMessage.success(enabled ? '已启用' : '已停用')
+    await refreshCronJobs()
+  }
+
+  const deleteCronJob = async (jobId: string) => {
+    await api(`/api/cron-jobs/${encodeURIComponent(jobId)}`, { method: 'DELETE' })
+    apiMessage.success('定时任务已删除')
+    await refreshCronJobs()
+  }
+
+  const runCronJob = async (jobId: string) => {
+    const data = await api<{
+      ok: boolean
+      started?: boolean
+      result?: { message?: string; status?: string }
+    }>(`/api/cron-jobs/${encodeURIComponent(jobId)}/run`, { method: 'POST' })
+    if (data.started) apiMessage.success(data.result?.message || '已开始执行')
+    else if (data.result?.status === 'skipped') apiMessage.warning(data.result?.message || '任务已跳过')
+    else if (data.ok) apiMessage.success(data.result?.message || '任务已执行成功')
+    else apiMessage.error(`执行失败：${data.result?.message || data.result?.status || 'unknown'}`)
+    await refreshCronJobs()
+    if (cronRunsOpen && cronRunsJobId === jobId) {
+      await openCronRuns(jobId)
+    }
+  }
+
+  const openCronRuns = async (jobId: string) => {
+    setCronRunsJobId(jobId)
+    const data = await api<{ items: CronJobRunRecord[] }>(`/api/cron-jobs/${encodeURIComponent(jobId)}/runs`)
+    setCronRuns(data.items || [])
+    setCronRunsOpen(true)
+  }
+
   const refreshSkills = async () => {
     const data = await api<{ items: SkillRecord[] }>('/api/skills')
     setSkills(data.items || [])
@@ -963,9 +1110,18 @@ function App() {
     }
     setErrorChatSubmitting(true)
     try {
+      const payload: Record<string, unknown> = {
+        content,
+        environment: formValues.environment || 'prod',
+        severity: formValues.severity || 'error',
+      }
+      const serviceName = String(formValues.service_name || '').trim()
+      if (serviceName) payload.service_name = serviceName
+      const traceId = String(formValues.trace_id || '').trim()
+      if (traceId) payload.trace_id = traceId
       const data = await api<{ item: ErrorChatResult }>('/api/error-chat', {
         method: 'POST',
-        body: JSON.stringify({ ...formValues, content }),
+        body: JSON.stringify(payload),
       })
       setErrorChatItems((items) => [...items, data.item])
       setErrorChatResult(data.item)
@@ -1040,6 +1196,7 @@ function App() {
     { key: 'settings', label: '设置', type: 'group' },
     { key: 'models', icon: <RobotOutlined />, label: '大模型' },
     { key: 'callbacks', icon: <MessageOutlined />, label: '消息回调' },
+    { key: 'schedules', icon: <ClockCircleOutlined />, label: '定时任务' },
     { key: 'advanced', icon: <SettingOutlined />, label: '高级设置' },
   ]
 
@@ -1735,6 +1892,144 @@ function App() {
         </Space>
       )
     }
+    if (active === 'schedules') {
+      return (
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openCronModal()}>新增任务</Button>
+          </div>
+          <Card bordered={false}>
+            <Table
+              rowKey="job_id"
+              dataSource={cronJobs}
+              columns={[
+                {
+                  title: '名称',
+                  render: (_, r) => (
+                    <Space>
+                      <span>{r.name}</span>
+                      {r.builtin ? <Tag color="blue">内置</Tag> : null}
+                    </Space>
+                  ),
+                },
+                { title: 'Handler', dataIndex: 'handler' },
+                { title: '调度', dataIndex: 'schedule' },
+                { title: '时区', dataIndex: 'timezone' },
+                {
+                  title: '备注',
+                  dataIndex: 'notes',
+                  ellipsis: true,
+                  render: (v: string | undefined) => v || <Typography.Text type="secondary">-</Typography.Text>,
+                },
+                {
+                  title: '状态',
+                  render: (_, r) => {
+                    const raw =
+                      r.enabled === false
+                        ? 'disabled'
+                        : r.state?.status === 'disabled'
+                          ? 'idle'
+                          : r.state?.status || 'idle'
+                    const labels: Record<string, string> = {
+                      idle: '空闲',
+                      disabled: '已停用',
+                      running: '运行中',
+                      succeeded: '上次成功',
+                      failed: '上次失败',
+                    }
+                    return labels[raw] || raw
+                  },
+                },
+                {
+                  title: '上次运行',
+                  render: (_, r) => r.state?.last_finished_at || r.state?.last_started_at || '-',
+                },
+                {
+                  title: '启用',
+                  render: (_, r) => (
+                    <Switch checked={r.enabled !== false} onChange={(checked) => toggleCronJob(r, checked)} />
+                  ),
+                },
+                {
+                  title: '操作',
+                  render: (_, r) => (
+                    <Space wrap>
+                      <Button onClick={() => openCronModal(r)}>编辑</Button>
+                      <Button onClick={() => runCronJob(r.job_id)}>立即执行</Button>
+                      <Button onClick={() => openCronRuns(r.job_id)}>运行记录</Button>
+                      {!r.builtin && r.deletable !== false ? (
+                        <Button danger onClick={() => deleteCronJob(r.job_id)}>删除</Button>
+                      ) : null}
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+          <Modal
+            title={editingCronJob ? '编辑定时任务' : '新增定时任务'}
+            open={cronModalOpen}
+            onCancel={() => setCronModalOpen(false)}
+            onOk={saveCronJob}
+            destroyOnClose
+          >
+            <Form form={cronForm} layout="vertical">
+              <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+                <Input />
+              </Form.Item>
+              <Form.Item name="handler" label="Handler" rules={[{ required: true }]}>
+                <Select
+                  disabled={Boolean(editingCronJob?.builtin)}
+                  options={(cronHandlers.length ? cronHandlers : ['repo.sync_changed', 'repo.sync_all', 'replay.default_flow']).map((h) => ({
+                    value: h,
+                    label: h,
+                  }))}
+                />
+              </Form.Item>
+              <Form.Item
+                name="schedule"
+                label="调度"
+                rules={[{ required: true }]}
+                extra="支持 @hourly / @daily 或标准 5 段 cron，例如 0 * * * *"
+              >
+                <Input placeholder="@hourly" />
+              </Form.Item>
+              <Form.Item name="timezone" label="时区" initialValue="UTC">
+                <Input placeholder="UTC" />
+              </Form.Item>
+              <Form.Item name="notes" label="备注">
+                <Input.TextArea rows={3} placeholder="任务说明" />
+              </Form.Item>
+              <Form.Item name="enabled" label="启用" valuePropName="checked" initialValue={true}>
+                <Switch />
+              </Form.Item>
+            </Form>
+          </Modal>
+          <Modal
+            title="运行记录"
+            open={cronRunsOpen}
+            onCancel={() => setCronRunsOpen(false)}
+            footer={[
+              <Button key="refresh" onClick={() => cronRunsJobId && openCronRuns(cronRunsJobId)}>刷新</Button>,
+              <Button key="close" type="primary" onClick={() => setCronRunsOpen(false)}>关闭</Button>,
+            ]}
+            width={720}
+          >
+            <Table
+              rowKey={(r) => `${r.job_id}-${r.started_at}-${r.finished_at}`}
+              dataSource={cronRuns}
+              pagination={false}
+              columns={[
+                { title: '状态', dataIndex: 'status', width: 100 },
+                { title: '开始', dataIndex: 'started_at' },
+                { title: '结束', dataIndex: 'finished_at' },
+                { title: '消息', dataIndex: 'message', ellipsis: true },
+              ]}
+            />
+          </Modal>
+        </Space>
+      )
+    }
     if (active === 'advanced') {
       const runtimeRows = [
         ['ZOEKT_ENDPOINT', 'Zoekt Endpoint', 'http://127.0.0.1:6070'],
@@ -1839,11 +2134,11 @@ function App() {
               <Typography.Text type="secondary">提交错误信息后会创建 Case，执行排查 Flow，并返回证据、步骤和报告。</Typography.Text>
             </div>
             <Card bordered={false} className="error-input-card">
-              <Form form={errorCaseForm} layout="inline" initialValues={{ service_name: 'order-service', environment: 'prod', severity: 'error', trace_id: 'trace-admin-error-chat' }}>
-                <Form.Item name="service_name" rules={[{ required: true }]}><Input placeholder="service_name" /></Form.Item>
+              <Form form={errorCaseForm} layout="inline" initialValues={{ environment: 'prod', severity: 'error', trace_id: '' }}>
+                <Form.Item name="service_name"><Input placeholder="service_name（可选，留空自动识别）" allowClear style={{ minWidth: 240 }} /></Form.Item>
                 <Form.Item name="environment"><Input placeholder="environment" /></Form.Item>
                 <Form.Item name="severity"><Select style={{ width: 120 }} options={['info', 'warning', 'error', 'critical'].map(v => ({ value: v, label: v }))} /></Form.Item>
-                <Form.Item name="trace_id"><Input placeholder="trace_id" /></Form.Item>
+                <Form.Item name="trace_id"><Input placeholder="trace_id（可选）" allowClear /></Form.Item>
               </Form>
               <Input.TextArea
                 value={errorChatInput}

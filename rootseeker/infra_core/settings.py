@@ -65,6 +65,18 @@ class RootSeekerSettings(BaseSettings):
     repo_base_path: str = "repos"
     repo_enable_zoekt: bool = True
     repo_enable_qdrant: bool = True
+    repo_enable_gitnexus: bool = True
+
+    # GitNexus knowledge graph (CLI or HTTP sidecar)
+    gitnexus_endpoint: str | None = None
+    gitnexus_command: str | None = None
+    gitnexus_path_map: str | None = None
+    gitnexus_timeout_seconds: float = 600.0
+    gitnexus_analyze_timeout_seconds: float = 1800.0
+    gitnexus_skip_agents_md: bool = True
+    gitnexus_skip_skills: bool = True
+    gitnexus_force: bool = False
+    gitnexus_embeddings: bool = False
 
     @model_validator(mode="after")
     def apply_non_prefixed_code_index_env(self) -> RootSeekerSettings:
@@ -75,6 +87,8 @@ class RootSeekerSettings(BaseSettings):
             self.qdrant_endpoint = (os.getenv("QDRANT_ENDPOINT") or "").strip() or None
         if not self.qdrant_api_key:
             self.qdrant_api_key = (os.getenv("QDRANT_API_KEY") or "").strip() or None
+        if self.gitnexus_endpoint is None:
+            self.gitnexus_endpoint = (os.getenv("GITNEXUS_ENDPOINT") or "").strip() or None
 
         zoekt_timeout = (os.getenv("ZOEKT_TIMEOUT_SECONDS") or "").strip()
         if zoekt_timeout and "ROOTSEEKER_ZOEKT_TIMEOUT_SECONDS" not in os.environ:

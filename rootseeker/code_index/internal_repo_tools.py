@@ -14,6 +14,7 @@ __all__ = [
     "repo_get_tool",
     "repo_unregister_tool",
     "repo_sync_all_tool",
+    "repo_sync_changed_tool",
     "repo_index_status_tool",
     "repo_semantic_search_tool",
 ]
@@ -58,6 +59,8 @@ def repo_sync_tool(service: RepoSyncService, args: dict[str, Any]) -> dict[str, 
         response["zoekt_status"] = result.zoekt_status.model_dump(mode="json")
     if result.qdrant_status:
         response["qdrant_status"] = result.qdrant_status.model_dump(mode="json")
+    if result.gitnexus_status:
+        response["gitnexus_status"] = result.gitnexus_status.model_dump(mode="json")
     return response
 
 
@@ -94,7 +97,8 @@ def repo_unregister_tool(service: RepoSyncService, args: dict[str, Any]) -> dict
 
 def repo_sync_all_tool(service: RepoSyncService, args: dict[str, Any]) -> dict[str, Any]:
     trigger_index = args.get("trigger_index", True)
-    results = service.sync_all(trigger_index=trigger_index)
+    force_gitnexus = bool(args.get("force_gitnexus", False))
+    results = service.sync_all(trigger_index=trigger_index, force_gitnexus=force_gitnexus)
     return {
         "ok": True,
         "total": len(results),
@@ -104,6 +108,35 @@ def repo_sync_all_tool(service: RepoSyncService, args: dict[str, Any]) -> dict[s
                 "success": r.success,
                 "message": r.message,
                 "state": r.repo.sync_status.state.value,
+                "gitnexus_ready": bool(r.gitnexus_status.ready) if r.gitnexus_status else None,
+            }
+            for r in results
+        ],
+    }
+
+
+def repo_sync_changed_tool(service: RepoSyncService, args: dict[str, Any]) -> dict[str, Any]:
+    trigger_index = bool(args.get("trigger_index", True))
+    payload = service.sync_changed(trigger_index=trigger_index)
+    results = payload.get("results") or []
+    return {
+        "ok": bool(payload.get("ok", False)),
+        "checked": list(payload.get("checked") or []),
+        "changed": list(payload.get("changed") or []),
+        "synced": list(payload.get("synced") or []),
+        "skipped": list(payload.get("skipped") or []),
+        "failed_checks": list(payload.get("failed_checks") or []),
+        "total_changed": len(payload.get("changed") or []),
+        "results": [
+            {
+                "repo_name": r.repo.name,
+                "success": r.success,
+                "message": r.message,
+                "state": r.repo.sync_status.state.value,
+                "commit_hash": r.repo.sync_status.commit_hash,
+                "zoekt_ready": bool(r.zoekt_status.ready) if r.zoekt_status else None,
+                "qdrant_ready": bool(r.qdrant_status.ready) if r.qdrant_status else None,
+                "gitnexus_ready": bool(r.gitnexus_status.ready) if r.gitnexus_status else None,
             }
             for r in results
         ],

@@ -52,10 +52,12 @@ docker_up() {
     echo "    Admin:      http://localhost:${ADMIN_PORT:-8010}"
     echo "    Zoekt:      http://localhost:${ZOEKT_PORT:-6070}"
     echo "    Qdrant:     http://localhost:${QDRANT_PORT:-6333}"
+    echo "    GitNexus:   http://localhost:${GITNEXUS_PORT:-7474}"
     echo ""
     echo "  Health check:"
     echo "    curl http://localhost:${API_PORT:-8000}/healthz"
     echo "    curl http://localhost:${ADMIN_PORT:-8010}/healthz"
+    echo "    curl http://localhost:${GITNEXUS_PORT:-7474}/healthz"
     echo ""
     echo "  View logs:"
     echo "    docker compose logs -f api"
@@ -103,17 +105,23 @@ k8s_build() {
     # Build the Zoekt image
     docker build -t rootseeker-zoekt:latest -f docker/Dockerfile.zoekt docker/
 
+    # Build the GitNexus knowledge-graph sidecar
+    docker build -t rootseeker-gitnexus:latest -f docker/Dockerfile.gitnexus .
+
     # Load into cluster (minikube/k3s)
     if command -v minikube > /dev/null 2>&1; then
         info "Loading images into minikube..."
         minikube image load rootseeker:latest
         minikube image load rootseeker-zoekt:latest
+        minikube image load rootseeker-gitnexus:latest
     elif command -v k3s > /dev/null 2>&1; then
         info "Importing images into k3s..."
         k3s ctr images import <(docker save rootseeker:latest) 2>/dev/null || \
             docker save rootseeker:latest | k3s ctr images import - 2>/dev/null || true
         k3s ctr images import <(docker save rootseeker-zoekt:latest) 2>/dev/null || \
             docker save rootseeker-zoekt:latest | k3s ctr images import - 2>/dev/null || true
+        k3s ctr images import <(docker save rootseeker-gitnexus:latest) 2>/dev/null || \
+            docker save rootseeker-gitnexus:latest | k3s ctr images import - 2>/dev/null || true
     else
         warn "No minikube/k3s detected. Ensure your K8s cluster can pull these images."
     fi

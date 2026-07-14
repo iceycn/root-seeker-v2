@@ -61,16 +61,57 @@ def test_zoekt_index_repository_runs_cli(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     index_dir = tmp_path / "index"
-    indexer = ZoektIndexer(endpoint="http://zoekt:6070", index_dir=index_dir, binary="/bin/zoekt-index")
+    indexer = ZoektIndexer(
+        endpoint="http://zoekt:6070",
+        index_dir=index_dir,
+        binary="/bin/zoekt-index",
+        index_endpoint="",
+    )
 
     with patch("subprocess.run") as run:
         run.return_value = MagicMock(stdout="ok", stderr="")
         status = indexer.index_repository("repo", "file://repo", local_path=repo)
 
     assert status.ready
+    assert status.detail.get("mode") == "local"
     cmd = run.call_args.args[0]
     assert cmd[:3] == ["/bin/zoekt-index", "-index", str(index_dir)]
     assert cmd[-1] == str(repo)
+
+
+def test_zoekt_index_repository_uses_remote_http(tmp_path: Path) -> None:
+    repo = tmp_path / "repos" / "demo"
+    repo.mkdir(parents=True)
+    indexer = ZoektIndexer(
+        endpoint="http://127.0.0.1:6070",
+        binary="",
+        index_endpoint="http://127.0.0.1:6071",
+        path_map=f"{tmp_path / 'repos'}:/repos",
+    )
+
+    with patch("httpx.Client") as mock_client:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "ok": True,
+            "exit_code": 0,
+            "stdout": "indexed",
+            "stderr": "",
+            "command": ["zoekt-index", "-index", "/data/index", "/repos/demo"],
+        }
+        mock_response.raise_for_status = MagicMock()
+        instance = MagicMock()
+        instance.post.return_value = mock_response
+        mock_client.return_value.__enter__.return_value = instance
+
+        status = indexer.index_repository("demo", "file://demo", local_path=repo)
+
+    assert status.ready
+    assert status.detail["mode"] == "remote"
+    assert status.detail["mapped_path"].replace("\\", "/") == "/repos/demo"
+    posted = instance.post.call_args
+    assert posted.args[0] == "http://127.0.0.1:6071/v1/index"
+    assert posted.kwargs["json"]["path"].replace("\\", "/") == "/repos/demo"
 
 
 def test_repo_sync_service_indexes_local_repo(tmp_path: Path) -> None:
@@ -82,7 +123,7 @@ def test_repo_sync_service_indexes_local_repo(tmp_path: Path) -> None:
     (local / ".git").mkdir()
     (local / "README.md").write_text("hello readme\n", encoding="utf-8")
 
-    with patch.object(service, "_git_pull", return_value="abc123"):
+    with patch.object(service, "_git_pull", return_value=("abc123", "main")):
         result = service.sync("repo", trigger_index=True)
 
     assert result.success

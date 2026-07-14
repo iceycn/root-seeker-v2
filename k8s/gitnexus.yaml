@@ -1,0 +1,87 @@
+# RootSeeker V2 - GitNexus knowledge-graph sidecar (default stack)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitnexus
+  namespace: rootseeker
+  labels:
+    app.kubernetes.io/name: rootseeker-gitnexus
+    app.kubernetes.io/component: gitnexus
+    app.kubernetes.io/part-of: rootseeker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rootseeker-gitnexus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rootseeker-gitnexus
+        app.kubernetes.io/component: gitnexus
+    spec:
+      containers:
+        - name: gitnexus
+          image: rootseeker-gitnexus:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7474
+              name: http
+          env:
+            - name: GITNEXUS_HTTP_HOST
+              value: "0.0.0.0"
+            - name: GITNEXUS_HTTP_PORT
+              value: "7474"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=8192"
+            - name: ONNXRUNTIME_NODE_INSTALL
+              value: "skip"
+          volumeMounts:
+            - name: repos
+              mountPath: /data/repos
+            - name: gitnexus-home
+              mountPath: /root/.gitnexus
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+      volumes:
+        - name: repos
+          persistentVolumeClaim:
+            claimName: repo-data
+        - name: gitnexus-home
+          persistentVolumeClaim:
+            claimName: gitnexus-home
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitnexus
+  namespace: rootseeker
+  labels:
+    app.kubernetes.io/name: rootseeker-gitnexus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7474
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: rootseeker-gitnexus

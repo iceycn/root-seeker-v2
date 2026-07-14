@@ -14,13 +14,15 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from apps.admin.config_store import AdminConfigStore
+from apps.admin.config_store import ALLOWED_CRON_HANDLERS, AdminConfigStore
 from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
+from apps.scheduler.main import run_job_now
 from rootseeker.analysis.call_chain import (
     extract_call_chain_summary,
     extract_exception_summary,
     merge_call_chain_summaries,
 )
+from rootseeker.analysis.service_identity import resolve_service_name
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
 from rootseeker.code_index.git_auth import GitCredentials
@@ -30,6 +32,9 @@ from rootseeker.contracts.repository import RepositoryRef, RepoSyncState
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.contracts.tool import ToolCallRequest
+from rootseeker.contracts.common import utc_now
+from rootseeker.cron import CronJobState, CronJobStatus
+from rootseeker.cron.state_store import FileCronStateStore
 from rootseeker.flow_runtime import build_execution_trace
 from rootseeker.infra_core import RootSeekerSettings
 from rootseeker.infra_core.http_client import get_with_retry, outbound_http_client
@@ -356,9 +361,30 @@ class AdminCallbackRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class AdminCronJobCreateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    handler: str = Field(min_length=1)
+    schedule: str = Field(min_length=1)
+    timezone: str = "UTC"
+    enabled: bool = True
+    job_id: str | None = None
+    notes: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminCronJobUpdateRequest(BaseModel):
+    name: str | None = None
+    schedule: str | None = None
+    timezone: str | None = None
+    enabled: bool | None = None
+    handler: str | None = None
+    notes: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class AdminErrorChatSubmitRequest(BaseModel):
     content: str = Field(min_length=1)
-    service_name: str = "order-service"
+    service_name: str | None = None
     environment: str = "prod"
     severity: str = "error"
     trace_id: str = "trace-admin-error-chat"
@@ -1436,6 +1462,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     @app.get("/semantic-search")
     @app.get("/error-chat")
     @app.get("/overview")
+    @app.get("/schedules")
     def admin_page() -> FileResponse:
         if ADMIN_WEB_INDEX.exists():
             return FileResponse(ADMIN_WEB_INDEX)
@@ -1638,6 +1665,159 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "name": name, "error": str(exc)}
 
+    def _cron_state_store() -> FileCronStateStore:
+        settings = RootSeekerSettings()
+        path = Path(settings.cron_state_path)
+        if not path.is_absolute():
+            path = config_root / path
+        return FileCronStateStore(path)
+
+    def _cron_job_with_state(item: dict[str, Any]) -> dict[str, Any]:
+        state = _cron_state_store().get_state(str(item.get("job_id") or ""))
+        payload = dict(item)
+        if state is None:
+            payload["state"] = {
+                "status": "disabled" if payload.get("enabled") is False else "idle",
+            }
+            return payload
+        state_payload = state.model_dump(mode="json")
+        # Config switch wins over stale scheduler status until next tick.
+        if payload.get("enabled") is False:
+            state_payload["status"] = "disabled"
+        elif state_payload.get("status") == "disabled":
+            state_payload["status"] = "idle"
+        payload["state"] = state_payload
+        return payload
+
+    @app.get("/api/cron-jobs")
+    def list_cron_jobs() -> dict[str, Any]:
+        items = [_cron_job_with_state(item) for item in store.list_cron_jobs()]
+        return {
+            "items": items,
+            "total": len(items),
+            "handlers": sorted(ALLOWED_CRON_HANDLERS),
+        }
+
+    @app.post("/api/cron-jobs")
+    def create_cron_job(req: AdminCronJobCreateRequest) -> dict[str, Any]:
+        if req.handler not in ALLOWED_CRON_HANDLERS:
+            raise HTTPException(status_code=400, detail=f"unsupported handler: {req.handler}")
+        payload: dict[str, Any] = {
+            "name": req.name,
+            "handler": req.handler,
+            "schedule": req.schedule,
+            "timezone": req.timezone,
+            "enabled": req.enabled,
+            "notes": req.notes,
+            "metadata": req.metadata,
+            "builtin": False,
+            "deletable": True,
+        }
+        if req.job_id:
+            payload["job_id"] = req.job_id
+        try:
+            saved = store.upsert_cron_job(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "job": _cron_job_with_state(saved)}
+
+    @app.put("/api/cron-jobs/{job_id}")
+    def update_cron_job(job_id: str, req: AdminCronJobUpdateRequest) -> dict[str, Any]:
+        existing = store.get_cron_job(job_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"cron job not found: {job_id}")
+        payload = dict(existing)
+        updates = req.model_dump(exclude_unset=True)
+        if existing.get("builtin") and "handler" in updates and updates["handler"] != existing.get("handler"):
+            raise HTTPException(status_code=400, detail="builtin cron job handler cannot be changed")
+        if "handler" in updates and updates["handler"] not in ALLOWED_CRON_HANDLERS:
+            raise HTTPException(status_code=400, detail=f"unsupported handler: {updates['handler']}")
+        payload.update(updates)
+        payload["job_id"] = job_id
+        try:
+            saved = store.upsert_cron_job(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if "enabled" in updates:
+            cron_store = _cron_state_store()
+            state = cron_store.get_state(job_id) or CronJobState(job_id=job_id)
+            state.status = CronJobStatus.DISABLED if updates["enabled"] is False else CronJobStatus.IDLE
+            state.updated_at = utc_now()
+            cron_store.save_state(state)
+        return {"ok": True, "job": _cron_job_with_state(saved)}
+
+    @app.delete("/api/cron-jobs/{job_id}")
+    def delete_cron_job(job_id: str) -> dict[str, Any]:
+        try:
+            store.delete_cron_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "job_id": job_id}
+
+    @app.post("/api/cron-jobs/{job_id}/run")
+    def run_cron_job(job_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
+        existing = store.get_cron_job(job_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"cron job not found: {job_id}")
+
+        # Fast-fail if another run just started; otherwise kick off in background so the
+        # HTTP request does not block for long repo sync / gitnexus analyze.
+        from rootseeker.cron.state_store import FileCronStateStore as _Store
+
+        settings = RootSeekerSettings()
+        state_path = Path(settings.cron_state_path)
+        if not state_path.is_absolute():
+            state_path = config_root / state_path
+        preview = _Store(state_path).get_state(job_id)
+        if (
+            preview is not None
+            and preview.status.value == "running"
+            and preview.last_started_at is not None
+            and (utc_now() - preview.last_started_at).total_seconds() < 5
+        ):
+            return {
+                "ok": False,
+                "started": False,
+                "result": {
+                    "job_id": job_id,
+                    "status": "skipped",
+                    "message": "任务正在执行中，请稍后再查看运行记录",
+                },
+            }
+
+        def _run() -> None:
+            run_job_now(
+                job_id=job_id,
+                repo_root=config_root,
+                config_path=config_path,
+            )
+
+        background_tasks.add_task(_run)
+        return {
+            "ok": True,
+            "started": True,
+            "result": {
+                "job_id": job_id,
+                "status": "running",
+                "message": "已开始执行；完成后可在运行记录中查看结果",
+            },
+        }
+
+    @app.get("/api/cron-jobs/{job_id}/runs")
+    def list_cron_job_runs(job_id: str, limit: int = 20) -> dict[str, Any]:
+        existing = store.get_cron_job(job_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"cron job not found: {job_id}")
+        runs = _cron_state_store().list_runs(job_id)
+        runs = list(reversed(runs))[: max(1, min(limit, 100))]
+        return {
+            "items": [run.model_dump(mode="json") for run in runs],
+            "total": len(runs),
+            "job_id": job_id,
+        }
+
     @app.get("/api/error-chat")
     def list_error_chat() -> dict[str, Any]:
         items = history_store.list_items()
@@ -1646,10 +1826,11 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     @app.post("/api/error-chat")
     def submit_error_chat(req: AdminErrorChatSubmitRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
         started = time.perf_counter()
+        service_name = resolve_service_name(req.service_name, text=req.content)
         result = runtime.run_default_flow_from_payload(
             {
                 "title": "错误排查请求",
-                "service_name": req.service_name,
+                "service_name": service_name,
                 "message": req.content,
                 "source": "admin-error-chat",
                 "tenant": "demo",

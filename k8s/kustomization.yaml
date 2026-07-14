@@ -15,6 +15,7 @@ resources:
   - pvc.yaml
   - zoekt.yaml
   - qdrant.yaml
+  - gitnexus.yaml
   - api.yaml
   - admin.yaml
   - worker.yaml

@@ -1,15 +1,19 @@
 # RootSeeker V2 Docker Compose
-# Full-stack local deployment: docker compose up -d --build
+# Default stack (init deploy): api, admin, worker, scheduler, zoekt, qdrant, gitnexus
+#   docker compose up -d --build
+#   ./start.sh   |   start.bat   |   make docker-up
 #
 # With proxy (China network):
 #   set HTTP_PROXY=http://host.docker.internal:10808
 #   set HTTPS_PROXY=http://host.docker.internal:10808
-#   set NO_PROXY=localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal
+#   set NO_PROXY=localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal
 #   docker compose up -d --build
 #
 # Optional profiles:
 #   --profile tracing   - add Jaeger for distributed tracing
-
+#
+# Hybrid (host uvicorn + docker indexers only):
+#   docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d zoekt qdrant gitnexus
 services:
   api:
     build:
@@ -25,15 +29,19 @@ services:
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
       - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
+      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
       - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
       - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
       - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
       - ROOTSEEKER_REPO_BASE_PATH=/data/repos
       - ROOTSEEKER_REPO_ENABLE_ZOEKT=true
       - ROOTSEEKER_REPO_ENABLE_QDRANT=true
+      - ROOTSEEKER_REPO_ENABLE_GITNEXUS=true
+      - ROOTSEEKER_GITNEXUS_ENDPOINT=http://gitnexus:7474
       - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
       - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
       - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
@@ -64,6 +72,8 @@ services:
         condition: service_started
       qdrant:
         condition: service_healthy
+      gitnexus:
+        condition: service_healthy
     networks:
       - rootseeker-net
 
@@ -81,13 +91,17 @@ services:
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
       - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
+      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
       - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
       - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
       - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
       - ROOTSEEKER_REPO_BASE_PATH=/data/repos
+      - ROOTSEEKER_REPO_ENABLE_GITNEXUS=true
+      - ROOTSEEKER_GITNEXUS_ENDPOINT=http://gitnexus:7474
       - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
       - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
       - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
@@ -119,6 +133,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      gitnexus:
+        condition: service_healthy
     networks:
       - rootseeker-net
 
@@ -145,13 +161,17 @@ services:
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,host.docker.internal}
+      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
+      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
       - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
+      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
       - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
       - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
       - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
       - ROOTSEEKER_REPO_BASE_PATH=/data/repos
+      - ROOTSEEKER_REPO_ENABLE_GITNEXUS=true
+      - ROOTSEEKER_GITNEXUS_ENDPOINT=http://gitnexus:7474
       - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
       - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
       - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
@@ -167,6 +187,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      gitnexus:
+        condition: service_healthy
     networks:
       - rootseeker-net
 
@@ -180,6 +202,8 @@ services:
       - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
       - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
       - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
+      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
+      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
       - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
       - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
       - ROOTSEEKER_REPO_BASE_PATH=/data/repos
@@ -201,6 +225,7 @@ services:
     container_name: rootseeker-zoekt
     ports:
       - "${ZOEKT_PORT:-6070}:6070"
+      - "${ZOEKT_INDEX_PORT:-6071}:6071"
     volumes:
       - zoekt-index:/data/index
       - repo-data:/repos:ro
@@ -232,6 +257,44 @@ services:
     networks:
       - rootseeker-net
 
+  gitnexus:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gitnexus
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        http_proxy: ${HTTP_PROXY:-}
+        https_proxy: ${HTTPS_PROXY:-}
+    container_name: rootseeker-gitnexus
+    ports:
+      - "${GITNEXUS_PORT:-7474}:7474"
+    environment:
+      - GITNEXUS_HTTP_HOST=0.0.0.0
+      - GITNEXUS_HTTP_PORT=7474
+      - NODE_OPTIONS=--max-old-space-size=8192
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+    volumes:
+      # Same repo-data volume as api/admin/worker/zoekt (required for analyze/impact paths)
+      - repo-data:/data/repos
+      - gitnexus-home:/root/.gitnexus
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:7474/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 90s
+    restart: unless-stopped
+    networks:
+      - rootseeker-net
+
   jaeger:
     image: jaegertracing/all-in-one:1.54
     container_name: rootseeker-jaeger
@@ -253,6 +316,8 @@ volumes:
   zoekt-index:
     driver: local
   qdrant-storage:
+    driver: local
+  gitnexus-home:
     driver: local
 
 networks:

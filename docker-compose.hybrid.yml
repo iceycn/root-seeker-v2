@@ -1,0 +1,19 @@
+# Hybrid overlay: host clones live in ./repos; mount into gitnexus/zoekt for path rewrite.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d zoekt qdrant gitnexus
+#
+# Then point local API/Admin at:
+#   ROOTSEEKER_GITNEXUS_ENDPOINT=http://127.0.0.1:7474
+#   ROOTSEEKER_GITNEXUS_PATH_MAP=<abs>/repos:/data/repos
+#   ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://127.0.0.1:6071
+#   ROOTSEEKER_ZOEKT_PATH_MAP=<abs>/repos:/repos
+services:
+  gitnexus:
+    volumes:
+      - ./repos:/data/repos
+      - gitnexus-home:/root/.gitnexus
+
+  zoekt:
+    volumes:
+      - ./repos:/repos:ro
+      - zoekt-index:/data/index

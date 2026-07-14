@@ -6,6 +6,7 @@ from typing import Any
 from mcp_servers.internal.tool_schemas import parameter_schema_for
 from mcp_servers.internal.adapters import InternalToolAdapter
 from rootseeker.analysis.call_chain import extract_call_chain_summary, extract_exception_summary
+from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.tool import ToolPermissionLevel, ToolScope, ToolSpec
 from rootseeker.mcp_plane.registry import ToolRegistry
@@ -30,8 +31,16 @@ def register_internal_tools(
         symptom_text = str(case_request.symptom or "")
         message_text = str(payload.get("message") or payload.get("content") or "")
         source_text = "\n".join(part for part in (message_text, symptom_text) if part)
+        service_name = resolve_service_name(
+            case_request.service_name,
+            payload.get("service_name"),
+            payload.get("service"),
+            text=source_text,
+        )
+        if service_name != case_request.service_name:
+            case_request = case_request.model_copy(update={"service_name": service_name})
         extracted = {
-            "service_name": case_request.service_name,
+            "service_name": service_name,
             "tenant": metadata.get("tenant"),
             "environment": metadata.get("environment"),
             "trace_id": metadata.get("trace_id"),
@@ -43,6 +52,8 @@ def register_internal_tools(
             "code_symbol": metadata.get("code_symbol"),
             "exception_summary": extract_exception_summary(source_text),
             "call_chain": extract_call_chain_summary(source_text),
+            "service_name_inferred": is_placeholder_service_name(payload.get("service_name"))
+            and not is_placeholder_service_name(service_name),
         }
         missing_fields = [
             field
@@ -105,6 +116,27 @@ def register_internal_tools(
     def _invoke_code_find_callers(args: dict[str, Any]) -> dict[str, Any]:
         return adapter.find_callers(args)
 
+    def _invoke_graph_impact(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_impact(args)
+
+    def _invoke_graph_context(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_context(args)
+
+    def _invoke_graph_query(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_query(args)
+
+    def _invoke_graph_cypher(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_cypher(args)
+
+    def _invoke_graph_trace(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_trace(args)
+
+    def _invoke_graph_list_repos(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_list_repos(args)
+
+    def _invoke_graph_detect_changes(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.graph_detect_changes(args)
+
     def _invoke_index_status(_args: dict[str, Any]) -> dict[str, Any]:
         return adapter.get_index_status()
 
@@ -130,6 +162,9 @@ def register_internal_tools(
 
     def _repo_sync_all(args: dict[str, Any]) -> dict[str, Any]:
         return adapter.repo_sync_all(args)
+
+    def _repo_sync_changed(args: dict[str, Any]) -> dict[str, Any]:
+        return adapter.repo_sync_changed(args)
 
     def _repo_index_status(args: dict[str, Any]) -> dict[str, Any]:
         return adapter.repo_index_status(args)
@@ -254,13 +289,90 @@ def register_internal_tools(
         (
             ToolSpec(
                 name="code.find_callers",
-                description="Trace method callers across indexed repositories",
+                description="Trace method callers across indexed repositories (GitNexus KG first, Zoekt fallback)",
                 server_name=server,
                 scope=internal,
-                tags=["code", "analysis"],
+                tags=["code", "analysis", "graph"],
                 parameters_schema=parameter_schema_for("code.find_callers"),
             ),
             _invoke_code_find_callers,
+        ),
+        (
+            ToolSpec(
+                name="graph.impact",
+                description="GitNexus blast-radius / impact analysis for a symbol",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.impact"),
+            ),
+            _invoke_graph_impact,
+        ),
+        (
+            ToolSpec(
+                name="graph.context",
+                description="GitNexus 360-degree symbol context",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.context"),
+            ),
+            _invoke_graph_context,
+        ),
+        (
+            ToolSpec(
+                name="graph.query",
+                description="GitNexus hybrid process-grouped search",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.query"),
+            ),
+            _invoke_graph_query,
+        ),
+        (
+            ToolSpec(
+                name="graph.cypher",
+                description="Run a raw Cypher query against the GitNexus knowledge graph",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.cypher"),
+            ),
+            _invoke_graph_cypher,
+        ),
+        (
+            ToolSpec(
+                name="graph.trace",
+                description="Shortest directed path between two symbols in GitNexus",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.trace"),
+            ),
+            _invoke_graph_trace,
+        ),
+        (
+            ToolSpec(
+                name="graph.list_repos",
+                description="List repositories indexed by GitNexus",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.list_repos"),
+            ),
+            _invoke_graph_list_repos,
+        ),
+        (
+            ToolSpec(
+                name="graph.detect_changes",
+                description="Map working-tree diff to affected GitNexus symbols/processes",
+                server_name=server,
+                scope=internal,
+                tags=["graph", "code"],
+                parameters_schema=parameter_schema_for("graph.detect_changes"),
+            ),
+            _invoke_graph_detect_changes,
         ),
         (
             ToolSpec(
@@ -349,6 +461,17 @@ def register_internal_tools(
                 tags=["repo"],
             ),
             _repo_sync_all,
+        ),
+        (
+            ToolSpec(
+                name="repo.sync_changed",
+                description="Sync only repositories with remote git changes and force GitNexus rebuild",
+                server_name=server,
+                scope=internal,
+                permission_level=ToolPermissionLevel.WRITE,
+                tags=["repo"],
+            ),
+            _repo_sync_changed,
         ),
         (
             ToolSpec(

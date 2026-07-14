@@ -86,7 +86,69 @@ INTERNAL_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
             "service_name": {"type": "string"},
             "max_depth": {"type": "integer"},
             "limit": {"type": "integer"},
+            "prefer_graph": {
+                "type": "boolean",
+                "description": "Prefer GitNexus knowledge graph before Zoekt fallback",
+            },
         },
+    },
+    "graph.impact": {
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string"},
+            "direction": {"type": "string", "description": "upstream|downstream"},
+            "repo": {"type": "string"},
+            "file": {"type": "string"},
+            "uid": {"type": "string"},
+            "kind": {"type": "string"},
+        },
+        "required": ["symbol"],
+    },
+    "graph.context": {
+        "type": "object",
+        "properties": {
+            "symbol": {"type": "string"},
+            "repo": {"type": "string"},
+            "file": {"type": "string"},
+            "uid": {"type": "string"},
+        },
+        "required": ["symbol"],
+    },
+    "graph.query": {
+        "type": "object",
+        "properties": {
+            "search_query": {"type": "string"},
+            "query": {"type": "string"},
+            "repo": {"type": "string"},
+        },
+    },
+    "graph.cypher": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "repo": {"type": "string"},
+        },
+        "required": ["query"],
+    },
+    "graph.trace": {
+        "type": "object",
+        "properties": {
+            "source": {"type": "string"},
+            "target": {"type": "string"},
+            "repo": {"type": "string"},
+        },
+        "required": ["source", "target"],
+    },
+    "graph.list_repos": {
+        "type": "object",
+        "properties": {
+            "limit": {"type": "integer"},
+            "offset": {"type": "integer"},
+        },
+    },
+    "graph.detect_changes": {
+        "type": "object",
+        "properties": {"repo": {"type": "string"}},
     },
     "index.get_status": {"type": "object", "properties": {}},
     "repo.list": {"type": "object", "properties": {}},

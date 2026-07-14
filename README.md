@@ -25,7 +25,7 @@
 | **Skill 驱动流程** | 内置 `default-log-triage` 流程，按步骤加载工具 Skill，经 MCP Gateway 调用外部能力 |
 | **MCP 工具平面** | 统一内部/外部工具调用，内置策略守卫与审计 |
 | **证据与根因** | 证据归集、多假设推理、规则引擎 + 可选 LLM 报告增强 |
-| **代码索引** | Git 仓库同步、Zoekt 词法检索、Qdrant 语义搜索、LSP 符号查询 |
+| **代码索引** | Git 仓库同步、Zoekt 词法检索、Qdrant 语义搜索、GitNexus 知识图谱、LSP 符号查询 |
 | **多渠道接入** | Webhook / 阿里云 SLS / Prometheus 等告警归一化；飞书 / 钉钉 / 企微 / Slack 等通知 |
 | **控制平面** | Gateway WebSocket、Case/Flow/Skill/Tool 方法、审批与回放质量门禁 |
 | **持久化与回放** | SQLite 可选持久化；Case 回放与评估质量门禁 |
@@ -34,7 +34,7 @@
 
 ## 快速开始
 
-推荐使用 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant），无需本机安装 Python 依赖。
+推荐使用 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus），无需本机安装 Python 依赖。
 
 ### 1. 准备配置
 
@@ -57,6 +57,7 @@ docker compose up -d --build
 | http://localhost:8000/healthz | API 健康检查 |
 | http://localhost:8000/docs | Swagger API 文档 |
 | http://localhost:8010/admin | 管理控制台 |
+| http://localhost:7474/healthz | GitNexus 知识图谱 sidecar |
 
 ```bash
 curl http://localhost:8000/healthz
@@ -237,8 +238,10 @@ export ROOTSEEKER_EMBEDDING_DIMENSION=1536
 
 ### Docker 方式
 
+默认 `docker compose up -d --build` 已包含 Zoekt、Qdrant、GitNexus。仅启动索引相关服务：
+
 ```bash
-docker compose --profile codesearch up -d --build zoekt qdrant
+docker compose up -d --build zoekt qdrant gitnexus
 # 或使用脚本
 ./scripts/start_zoekt_qdrant_docker.sh
 ```
@@ -257,19 +260,14 @@ docker compose --profile codesearch up -d --build zoekt qdrant
 | scheduler | — | Cron 定时调度 |
 | zoekt | 6070 | 词法代码检索 |
 | qdrant | 6333 (gRPC 6334) | 向量语义检索 |
-| jaeger | 16686 | 链路追踪可视化（可选） |
+| gitnexus | 7474 | 代码知识图谱（默认栈，非可选） |
+| jaeger | 16686 | 链路追踪可视化（可选 profile） |
 
 ### 可选 Profile
 
 ```bash
-# 链路追踪
+# 链路追踪（唯一可选 profile；Zoekt/Qdrant/GitNexus 均在默认栈）
 docker compose --profile tracing up -d
-
-# 代码检索
-docker compose --profile codesearch up -d --build zoekt qdrant
-
-# 全部可选服务
-docker compose --profile tracing --profile codesearch up -d
 ```
 
 ## 配置说明

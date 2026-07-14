@@ -1,0 +1,39 @@
+# GitNexus HTTP sidecar — wraps CLI analyze/query for RootSeeker Python services.
+# Prefer node:22-slim (often already cached; bookworm-slim may need a Hub pull).
+FROM node:22-slim
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG http_proxy
+ARG https_proxy
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+WORKDIR /app
+
+# Prefer China apt mirror when Hub/Debian are unreachable without a working proxy.
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list || true
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates python3 make g++ && \
+    rm -rf /var/lib/apt/lists/*
+
+# Skip onnxruntime native binary download (NuGet 302 breaks in CN networks).
+# Core graph analyze/query works without embeddings; semantic embeddings stay off
+# unless ROOTSEEKER_GITNEXUS_EMBEDDINGS=true and onnxruntime binaries are installed.
+ENV ONNXRUNTIME_NODE_INSTALL=skip
+RUN npm config set registry "${NPM_REGISTRY}" && \
+    ONNXRUNTIME_NODE_INSTALL=skip npm install -g gitnexus@latest --onnxruntime-node-install=skip
+
+COPY docker/gitnexus_http_server.mjs /app/gitnexus_http_server.mjs
+
+ENV GITNEXUS_HTTP_HOST=0.0.0.0 \
+    GITNEXUS_HTTP_PORT=7474 \
+    NODE_OPTIONS=--max-old-space-size=8192
+
+EXPOSE 7474
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=90s --retries=8 \
+  CMD node -e "fetch('http://127.0.0.1:7474/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "/app/gitnexus_http_server.mjs"]

@@ -60,10 +60,12 @@ echo     API:        http://localhost:8000
 echo     Admin:      http://localhost:8010
 echo     Zoekt:      http://localhost:6070
 echo     Qdrant:     http://localhost:6333
+echo     GitNexus:   http://localhost:7474
 echo.
 echo   Health check:
 echo     curl http://localhost:8000/healthz
 echo     curl http://localhost:8010/healthz
+echo     curl http://localhost:7474/healthz
 echo.
 echo   View logs:
 echo     docker compose logs -f api
@@ -94,6 +96,7 @@ goto :eof
 echo [INFO] Building Docker images for Kubernetes...
 docker build -t rootseeker:latest .
 docker build -t rootseeker-zoekt:latest -f docker\Dockerfile.zoekt docker\
+docker build -t rootseeker-gitnexus:latest -f docker\Dockerfile.gitnexus .
 echo.
 echo [INFO] Deploying RootSeeker V2 to Kubernetes...
 kubectl apply -k k8s/

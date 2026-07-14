@@ -60,6 +60,7 @@ class SyncRepoResponse(BaseModel):
     state: str
     zoekt_status: dict[str, Any] | None = None
     qdrant_status: dict[str, Any] | None = None
+    gitnexus_status: dict[str, Any] | None = None
 
 
 class ListRepoResponse(BaseModel):
@@ -85,8 +86,33 @@ class FindCallersRequest(BaseModel):
     service_name: str | None = Field(default=None, description="服务名")
     max_depth: int = Field(default=3, ge=1, le=10, description="调用链追踪深度")
     limit: int = Field(default=20, ge=1, le=100, description="返回数量")
+    prefer_graph: bool = Field(default=True, description="优先使用 GitNexus 知识图谱")
 
 
+class GraphSymbolRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+    direction: str = Field(default="upstream")
+    repo: str | None = None
+    file: str | None = None
+    uid: str | None = None
+    kind: str | None = None
+
+
+class GraphQueryRequest(BaseModel):
+    search_query: str | None = None
+    query: str | None = None
+    repo: str | None = None
+
+
+class GraphCypherRequest(BaseModel):
+    query: str = Field(min_length=1)
+    repo: str | None = None
+
+
+class GraphTraceRequest(BaseModel):
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    repo: str | None = None
 
 _REPO_REST_CASE_ID = "api-repo-rest"
 _REPO_REST_STEP_ID = "route"
@@ -481,6 +507,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             state=str(content.get("state", "")),
             zoekt_status=content.get("zoekt_status"),
             qdrant_status=content.get("qdrant_status"),
+            gitnexus_status=content.get("gitnexus_status"),
         )
 
     @app.post("/repos/sync-all")
@@ -489,6 +516,15 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         return _invoke_builtin_repo_tool(
             runtime,
             "repo.sync_all",
+            {"trigger_index": trigger_index},
+        )
+
+    @app.post("/repos/sync-changed")
+    def sync_changed_repos(trigger_index: bool = True) -> dict[str, Any]:
+        """仅同步远端有变更的仓库，并对变更仓强制重建 GitNexus 图谱"""
+        return _invoke_builtin_repo_tool(
+            runtime,
+            "repo.sync_changed",
             {"trigger_index": trigger_index},
         )
 
@@ -529,6 +565,48 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             req.model_dump(mode="json", exclude_none=True),
         )
         return content
+
+    @app.post("/graph/impact")
+    def graph_impact(req: GraphSymbolRequest) -> dict[str, Any]:
+        return _invoke_builtin_repo_tool(runtime, "graph.impact", req.model_dump(mode="json", exclude_none=True))
+
+    @app.post("/graph/context")
+    def graph_context(req: GraphSymbolRequest) -> dict[str, Any]:
+        return _invoke_builtin_repo_tool(
+            runtime,
+            "graph.context",
+            {
+                "symbol": req.symbol,
+                "repo": req.repo,
+                "file": req.file,
+                "uid": req.uid,
+            },
+        )
+
+    @app.post("/graph/query")
+    def graph_query(req: GraphQueryRequest) -> dict[str, Any]:
+        return _invoke_builtin_repo_tool(runtime, "graph.query", req.model_dump(mode="json", exclude_none=True))
+
+    @app.post("/graph/cypher")
+    def graph_cypher(req: GraphCypherRequest) -> dict[str, Any]:
+        return _invoke_builtin_repo_tool(runtime, "graph.cypher", req.model_dump(mode="json", exclude_none=True))
+
+    @app.post("/graph/trace")
+    def graph_trace(req: GraphTraceRequest) -> dict[str, Any]:
+        return _invoke_builtin_repo_tool(runtime, "graph.trace", req.model_dump(mode="json", exclude_none=True))
+
+    @app.post("/graph/list_repos")
+    def graph_list_repos(limit: int | None = None, offset: int | None = None) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if limit is not None:
+            payload["limit"] = limit
+        if offset is not None:
+            payload["offset"] = offset
+        return _invoke_builtin_repo_tool(runtime, "graph.list_repos", payload)
+
+    @app.post("/graph/detect_changes")
+    def graph_detect_changes(repo: str | None = None) -> dict[str, Any]:
+        return _invoke_builtin_repo_tool(runtime, "graph.detect_changes", {"repo": repo} if repo else {})
 
     app.state.runtime = runtime
     return app

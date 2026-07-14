@@ -10,7 +10,132 @@ from rootseeker.contracts.repository import RepositoryRef
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 
-__all__ = ["AdminConfigStore"]
+__all__ = [
+    "ALLOWED_CRON_HANDLERS",
+    "AdminConfigStore",
+    "BUILTIN_CRON_JOBS",
+    "DEFAULT_FLOW_REPLAY_JOB_ID",
+    "REPO_SYNC_CHANGED_JOB_ID",
+]
+
+REPO_SYNC_CHANGED_JOB_ID = "cron.repo-sync-changed"
+DEFAULT_FLOW_REPLAY_JOB_ID = "cron.default-flow-replay"
+
+ALLOWED_CRON_HANDLERS = frozenset(
+    {
+        "repo.sync_changed",
+        "repo.sync_all",
+        "replay.default_flow",
+    }
+)
+
+BUILTIN_CRON_JOBS: list[dict[str, Any]] = [
+    {
+        "job_id": REPO_SYNC_CHANGED_JOB_ID,
+        "name": "仓库增量同步",
+        "handler": "repo.sync_changed",
+        "schedule": "@hourly",
+        "timezone": "UTC",
+        "enabled": True,
+        "builtin": True,
+        "deletable": False,
+        "notes": "默认每小时执行：仅同步有变更的仓库，并对变更仓强制重建 GitNexus 知识图谱。",
+        "metadata": {},
+    },
+    {
+        "job_id": DEFAULT_FLOW_REPLAY_JOB_ID,
+        "name": "默认 Flow 回放评估",
+        "handler": "replay.default_flow",
+        "schedule": "@hourly",
+        "timezone": "UTC",
+        "enabled": False,
+        "builtin": True,
+        "deletable": False,
+        "notes": "默认 Flow 回放评估任务（默认关闭）。",
+        "metadata": {"suite_name": "cron-default-flow", "repeat_each": 1},
+    },
+]
+
+
+def _normalize_cron_job(raw: dict[str, Any], *, require_handler: bool = True) -> dict[str, Any]:
+    job_id = str(raw.get("job_id") or "").strip()
+    if not job_id:
+        raise ValueError("job_id is required")
+    handler = str(raw.get("handler") or "").strip()
+    if require_handler and not handler:
+        raise ValueError("handler is required")
+    if handler and handler not in ALLOWED_CRON_HANDLERS:
+        raise ValueError(f"unsupported cron handler: {handler}")
+    schedule = str(raw.get("schedule") or "").strip()
+    if not schedule:
+        raise ValueError("schedule is required")
+    name = str(raw.get("name") or job_id).strip() or job_id
+    timezone = str(raw.get("timezone") or "UTC").strip() or "UTC"
+    notes = str(raw.get("notes") or "").strip()
+    metadata = raw.get("metadata")
+    if metadata is None:
+        metadata = {}
+    if not isinstance(metadata, dict):
+        raise ValueError("metadata must be an object")
+    return {
+        "job_id": job_id,
+        "name": name,
+        "handler": handler,
+        "schedule": schedule,
+        "timezone": timezone,
+        "enabled": bool(raw.get("enabled", True)),
+        "builtin": bool(raw.get("builtin", False)),
+        "deletable": bool(raw.get("deletable", not bool(raw.get("builtin", False)))),
+        "notes": notes,
+        "metadata": dict(metadata),
+    }
+
+
+def _seed_builtin_cron_jobs(jobs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    by_id = {str(item.get("job_id")): dict(item) for item in jobs if isinstance(item, dict)}
+    changed = False
+    for builtin in BUILTIN_CRON_JOBS:
+        job_id = builtin["job_id"]
+        existing = by_id.get(job_id)
+        if existing is None:
+            by_id[job_id] = dict(builtin)
+            changed = True
+            continue
+        # Keep user edits for schedule/enabled/name/timezone; lock identity fields.
+        merged = dict(existing)
+        for key in ("handler", "builtin", "deletable"):
+            if merged.get(key) != builtin[key]:
+                merged[key] = builtin[key]
+                changed = True
+        if "enabled" not in merged:
+            merged["enabled"] = builtin["enabled"]
+            changed = True
+        if not str(merged.get("schedule") or "").strip():
+            merged["schedule"] = builtin["schedule"]
+            changed = True
+        if not str(merged.get("name") or "").strip():
+            merged["name"] = builtin["name"]
+            changed = True
+        if not str(merged.get("timezone") or "").strip():
+            merged["timezone"] = builtin["timezone"]
+            changed = True
+        # One-time migrate: fill builtin default notes when field was never persisted.
+        if "notes" not in existing and builtin.get("notes"):
+            merged["notes"] = builtin["notes"]
+            changed = True
+        by_id[job_id] = merged
+    # Preserve insertion order: builtins first, then custom.
+    ordered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for builtin in BUILTIN_CRON_JOBS:
+        job_id = builtin["job_id"]
+        ordered.append(by_id[job_id])
+        seen.add(job_id)
+    for job_id, item in by_id.items():
+        if job_id in seen:
+            continue
+        ordered.append(item)
+    return ordered, changed
 
 
 class AdminConfigStore:
@@ -26,7 +151,7 @@ class AdminConfigStore:
 
     def load(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {
+            data = {
                 "repos": [],
                 "catalog": [],
                 "skills": [],
@@ -35,10 +160,15 @@ class AdminConfigStore:
                 "callbacks": [],
                 "error_chat": [],
                 "repo_remotes": [],
+                "cron_jobs": [],
             }
+            cron_jobs, _ = _seed_builtin_cron_jobs([])
+            data["cron_jobs"] = cron_jobs
+            self.save(data)
+            return data
         data = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            return {
+            data = {
                 "repos": [],
                 "catalog": [],
                 "skills": [],
@@ -47,6 +177,7 @@ class AdminConfigStore:
                 "callbacks": [],
                 "error_chat": [],
                 "repo_remotes": [],
+                "cron_jobs": [],
             }
         data.setdefault("repos", [])
         data.setdefault("catalog", [])
@@ -57,6 +188,13 @@ class AdminConfigStore:
         data.setdefault("callbacks", [])
         data.setdefault("error_chat", [])
         data.setdefault("repo_remotes", [])
+        data.setdefault("cron_jobs", [])
+        cron_jobs, changed = _seed_builtin_cron_jobs(
+            [item for item in data.get("cron_jobs", []) if isinstance(item, dict)]
+        )
+        data["cron_jobs"] = cron_jobs
+        if changed:
+            self.save(data)
         return data
 
     def save(self, data: dict[str, Any]) -> None:
@@ -256,4 +394,80 @@ class AdminConfigStore:
     def clear_error_chat(self) -> None:
         data = self.load()
         data["error_chat"] = []
+        self.save(data)
+
+    def list_cron_jobs(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self.load().get("cron_jobs", []) if isinstance(item, dict)]
+
+    def get_cron_job(self, job_id: str) -> dict[str, Any] | None:
+        for item in self.list_cron_jobs():
+            if item.get("job_id") == job_id:
+                return dict(item)
+        return None
+
+    def upsert_cron_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        data = self.load()
+        jobs = [item for item in data.get("cron_jobs", []) if isinstance(item, dict)]
+        incoming = dict(job)
+        job_id = str(incoming.get("job_id") or "").strip()
+        existing = next((item for item in jobs if item.get("job_id") == job_id), None)
+
+        if existing and existing.get("builtin"):
+            # Builtin jobs: only name/schedule/timezone/enabled/notes are editable.
+            payload = dict(existing)
+            if "name" in incoming:
+                payload["name"] = str(incoming.get("name") or payload.get("name") or job_id).strip() or job_id
+            if "schedule" in incoming:
+                payload["schedule"] = str(incoming.get("schedule") or "").strip()
+            if "timezone" in incoming:
+                payload["timezone"] = str(incoming.get("timezone") or "UTC").strip() or "UTC"
+            if "enabled" in incoming:
+                payload["enabled"] = bool(incoming.get("enabled"))
+            if "notes" in incoming:
+                payload["notes"] = str(incoming.get("notes") or "").strip()
+            if "metadata" in incoming and isinstance(incoming.get("metadata"), dict):
+                payload["metadata"] = dict(incoming["metadata"])
+            normalized = _normalize_cron_job(payload)
+            normalized["builtin"] = True
+            normalized["deletable"] = False
+            normalized["handler"] = str(existing.get("handler") or normalized["handler"])
+        else:
+            if existing is None and not job_id:
+                job_id = f"cron.{uuid.uuid4().hex[:12]}"
+                incoming["job_id"] = job_id
+            if existing is None:
+                incoming.setdefault("builtin", False)
+                incoming.setdefault("deletable", True)
+            else:
+                incoming.setdefault("builtin", bool(existing.get("builtin", False)))
+                incoming.setdefault("deletable", bool(existing.get("deletable", True)))
+                incoming.setdefault("handler", existing.get("handler"))
+                incoming.setdefault("schedule", existing.get("schedule"))
+                incoming.setdefault("name", existing.get("name"))
+                incoming.setdefault("timezone", existing.get("timezone"))
+                incoming.setdefault("enabled", existing.get("enabled", True))
+                incoming.setdefault("notes", existing.get("notes") or "")
+                incoming.setdefault("metadata", existing.get("metadata") or {})
+            normalized = _normalize_cron_job(incoming)
+            if normalized["builtin"]:
+                raise ValueError("cannot create a builtin cron job via API")
+
+        jobs = [item for item in jobs if item.get("job_id") != normalized["job_id"]]
+        jobs.append(normalized)
+        seeded, _ = _seed_builtin_cron_jobs(jobs)
+        data["cron_jobs"] = seeded
+        self.save(data)
+        return normalized
+
+    def delete_cron_job(self, job_id: str) -> None:
+        data = self.load()
+        jobs = [item for item in data.get("cron_jobs", []) if isinstance(item, dict)]
+        target = next((item for item in jobs if item.get("job_id") == job_id), None)
+        if target is None:
+            raise KeyError(f"cron job not found: {job_id}")
+        if target.get("builtin") or target.get("deletable") is False:
+            raise ValueError(f"builtin cron job cannot be deleted: {job_id}")
+        data["cron_jobs"] = [item for item in jobs if item.get("job_id") != job_id]
+        seeded, _ = _seed_builtin_cron_jobs(data["cron_jobs"])
+        data["cron_jobs"] = seeded
         self.save(data)

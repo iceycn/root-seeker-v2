@@ -167,7 +167,7 @@ class QdrantIndexer:
                 )
 
             embeddings = self.embedding_provider.embed_documents(
-                [self._embed_text(chunk.path, chunk.content) for chunk in chunks]
+                [self._embed_text(chunk.path, chunk.content, symbol=chunk.symbol) for chunk in chunks]
             )
             if len(embeddings) != len(chunks):
                 raise RuntimeError(
@@ -178,18 +178,23 @@ class QdrantIndexer:
 
             points = []
             for chunk, embedding in zip(chunks, embeddings, strict=True):
+                payload = {
+                    "repo": repo_name,
+                    "path": chunk.path,
+                    "language": chunk.language,
+                    "start_line": chunk.start_line,
+                    "end_line": chunk.end_line,
+                    "sha256": chunk.sha256,
+                    "content_preview": chunk.content[:500],
+                }
+                if chunk.symbol:
+                    payload["symbol"] = chunk.symbol
+                if chunk.symbol_kind:
+                    payload["symbol_kind"] = chunk.symbol_kind
                 points.append({
                     "id": self._point_id(chunk),
                     "vector": embedding,
-                    "payload": {
-                        "repo": repo_name,
-                        "path": chunk.path,
-                        "language": chunk.language,
-                        "start_line": chunk.start_line,
-                        "end_line": chunk.end_line,
-                        "sha256": chunk.sha256,
-                        "content_preview": chunk.content[:500],
-                    },
+                    "payload": payload,
                 })
 
             batch_size = 128
@@ -405,7 +410,9 @@ class QdrantIndexer:
         }
 
     @staticmethod
-    def _embed_text(path: str, content: str) -> str:
+    def _embed_text(path: str, content: str, symbol: str | None = None) -> str:
+        if symbol:
+            return f"{path}\n{symbol}\n{content}"
         return f"{path}\n{content}"
 
     def get_status(self, repo_name: str | None = None) -> IndexStatus:

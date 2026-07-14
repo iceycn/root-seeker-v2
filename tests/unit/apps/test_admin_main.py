@@ -536,6 +536,20 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     assert history["items"][0]["evidence_items"] == item["evidence_items"]
 
 
+def test_admin_error_chat_infers_service_name_when_omitted(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path))
+    content = (
+        "2026-07-14 13:49:24.473 [training-manage-api] [http-nio-30000-exec-34] [ERROR] "
+        "DuplicateKeyException in PopRecordService.insertPopRecordLogic"
+    )
+
+    response = client.post("/api/error-chat", json={"content": content})
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["case"]["service_name"] == "training-manage-api"
+
+
 def test_build_llm_error_chat_payload_stays_under_kimi_limit() -> None:
     import json
     from types import SimpleNamespace

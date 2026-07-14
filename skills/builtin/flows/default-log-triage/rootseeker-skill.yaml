@@ -19,10 +19,12 @@ required_tools:
   - repo.list
   - code.search
   - code.read
+  - graph.impact
+  - graph.context
   - code.find_callers
   - notify.send
 source_kind: builtin
-version: 2.0.0
+version: 3.1.0
 flow_plugin_id: builtin.default_log_triage_flow
 steps:
   - step_id: normalize-incident
@@ -75,11 +77,21 @@ steps:
     action: code.read
     tool_skill_slug: tools/code-lookup
     description: Read the selected file hit or explicit file path from the incident
+  - step_id: graph-impact
+    name: Knowledge-graph blast radius
+    action: graph.impact
+    tool_skill_slug: tools/graph-lookup
+    description: Use GitNexus impact(upstream) on the fault symbol from call_chain
+  - step_id: graph-context
+    name: Knowledge-graph symbol context
+    action: graph.context
+    tool_skill_slug: tools/graph-lookup
+    description: Load GitNexus 360-degree context for the fault method
   - step_id: find-callers
     name: Trace callers across repositories
     action: code.find_callers
     tool_skill_slug: tools/code-lookup
-    description: Cross-repo static caller tracing aligned with runtime call_chain
+    description: Cross-repo caller tracing via GitNexus first, Zoekt fallback, aligned with runtime call_chain
   - step_id: notify
     name: Send notification
     action: notify.send

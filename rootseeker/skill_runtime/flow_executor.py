@@ -353,6 +353,14 @@ def _run_step(
     if result.ok:
         step_outputs[flow_step.step_id] = dict(persisted)
         case_step.status = StepStatus.COMPLETED
+        if flow_step.action == "incident.normalize":
+            cr = persisted.get("case_request")
+            if isinstance(cr, dict):
+                inferred = str(cr.get("service_name") or "").strip()
+                if inferred:
+                    case.service_name = inferred
+                    # Keep the in-flight request in sync for notify / later planners.
+                    case_request.service_name = inferred
         map_tool_result_to_evidence(
             pack=pack,
             action=flow_step.action,

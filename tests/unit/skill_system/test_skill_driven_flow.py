@@ -23,7 +23,7 @@ def test_registry_loads_flow_and_tool_skills() -> None:
     flow = registry.get(DEFAULT_FLOW_SKILL_SLUG)
     assert flow is not None
     assert flow.skill_kind == SkillKind.FLOW
-    assert len(flow.steps) == 11
+    assert len(flow.steps) == 14
     assert registry.get("base/default-log-triage") is None
     tool = registry.resolve_tool_skill("code.search")
     assert tool is not None
@@ -77,11 +77,43 @@ def test_rule_resolver_semantic_search_defaults() -> None:
     assert args["limit"] == 10
 
 
-def test_rule_resolver_code_read_skip_without_path() -> None:
+def test_rule_resolver_graph_prefers_inferred_service_over_code_search() -> None:
     resolver = RuleStepArgumentResolver()
     args = resolver.resolve(
-        "code.read",
-        CaseCreateRequest(title="t", symptom="generic error", service_name="svc", source="x"),
-        step_outputs={},
+        "graph.impact",
+        CaseCreateRequest(
+            title="t",
+            symptom="DuplicateKey in PopRecordService.insertPopRecordLogic",
+            service_name="unknown-service",
+            source="x",
+        ),
+        step_outputs={
+            "normalize-incident": {
+                "case_request": {"service_name": "training-manage-api", "symptom": "boom"},
+                "extracted": {
+                    "call_chain": ["PopRecordService.insertPopRecordLogic (PopRecordService.java:60)"]
+                },
+            },
+            "code-search": {
+                "hits": [{"repo": "6183__bs-integration", "path": "Foo.java"}],
+            },
+        },
     )
-    assert args.get("_skip_reason")
+    assert args["repo"] == "training-manage-api"
+    assert args["symbol"] == "PopRecordService.insertPopRecordLogic"
+
+
+def test_build_notify_args_uses_resolved_service_name() -> None:
+    from rootseeker.contracts.report import CaseReport
+    from rootseeker.skill_runtime.rule_step_argument_resolver import build_notify_args
+
+    message = build_notify_args(
+        case_request=CaseCreateRequest(
+            title="错误排查请求",
+            symptom="2026-07-14 13:49:24.473 [training-manage-api] boom",
+            service_name="unknown-service",
+            source="admin-error-chat",
+        ),
+        report=CaseReport(case_id="c1", title="t", summary="s", evidence_item_ids=[]),
+    )["message"]
+    assert message.startswith("[training-manage-api]")

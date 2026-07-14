@@ -112,8 +112,14 @@ def analyze_call_chain(
     service_name: str | None = None,
     max_depth: int = 5,
     limit_per_query: int = 30,
+    graph_callers: Callable[..., dict[str, Any]] | None = None,
+    prefer_graph: bool = True,
 ) -> dict[str, Any]:
-    """Trace callers across indexed repositories using Zoekt heuristics."""
+    """Trace callers across indexed repositories.
+
+    Prefer knowledge-graph callers (GitNexus) when available, then fall back to
+    Zoekt text-search heuristics.
+    """
     frames = [str(item).strip() for item in call_chain if str(item).strip()]
     parsed_frames = [parse_call_chain_frame(item) for item in frames]
     parsed_frames = [item for item in parsed_frames if item is not None]
@@ -126,11 +132,88 @@ def analyze_call_chain(
             "aligned": align_runtime_static_chain(frames, []),
             "entrypoints": [],
             "queries": [],
+            "source": None,
             "notes": "未提供可解析的 call_chain 帧。",
         }
 
     repo_hint = (repo or service_name or "").strip() or None
     target = parsed_frames[0]
+    graph_meta: dict[str, Any] | None = None
+
+    if prefer_graph and graph_callers is not None:
+        symbol = f"{target['class_name']}.{target['method_name']}"
+        try:
+            graph_result = graph_callers(
+                symbol,
+                repo=repo_hint,
+                file=str(target.get("file_path") or "") or None,
+                max_depth=max_depth,
+            )
+        except Exception as exc:  # noqa: BLE001
+            graph_result = {"ok": False, "error": str(exc), "static_callers": []}
+        if isinstance(graph_result, dict) and graph_result.get("ok"):
+            static_callers = list(graph_result.get("static_callers") or [])
+            if static_callers:
+                for caller in static_callers:
+                    if isinstance(caller, dict):
+                        caller.setdefault("source", "gitnexus")
+                aligned = align_runtime_static_chain(frames, static_callers)
+                entrypoints = _detect_entrypoints(parsed_frames, read_code=read_code)
+                return {
+                    "target": target,
+                    "runtime_chain": frames,
+                    "static_callers": static_callers[:limit_per_query],
+                    "aligned": aligned,
+                    "entrypoints": entrypoints,
+                    "queries": [],
+                    "repo_hint": repo_hint,
+                    "source": "gitnexus",
+                    "graph": {
+                        "symbol": graph_result.get("symbol") or symbol,
+                        "raw_ok": True,
+                    },
+                    "notes": (
+                        "基于 GitNexus 知识图谱的跨仓库 caller 追踪；"
+                        "失败时才会回退 Zoekt 启发式。"
+                    ),
+                }
+        graph_meta = {
+            "attempted": True,
+            "ok": bool(isinstance(graph_result, dict) and graph_result.get("ok")),
+            "error": (graph_result or {}).get("error") if isinstance(graph_result, dict) else None,
+        }
+
+    zoekt_result = _analyze_call_chain_zoekt(
+        frames=frames,
+        parsed_frames=parsed_frames,
+        target=target,
+        repo_hint=repo_hint,
+        search_code=search_code,
+        read_code=read_code,
+        max_depth=max_depth,
+        limit_per_query=limit_per_query,
+    )
+    if graph_meta is not None:
+        zoekt_result["graph"] = graph_meta
+        zoekt_result["notes"] = (
+            "GitNexus 无可用 caller，已回退 Zoekt 文本搜索启发式；"
+            + str(zoekt_result.get("notes") or "")
+        )
+    return zoekt_result
+
+
+def _analyze_call_chain_zoekt(
+    *,
+    frames: list[str],
+    parsed_frames: list[dict[str, Any]],
+    target: dict[str, Any],
+    repo_hint: str | None,
+    search_code: Callable[..., dict[str, Any]],
+    read_code: Callable[..., dict[str, Any]] | None,
+    max_depth: int,
+    limit_per_query: int,
+) -> dict[str, Any]:
+    """Trace callers across indexed repositories using Zoekt heuristics."""
     static_callers: list[dict[str, Any]] = []
     queries: list[str] = []
     seen_signatures: set[str] = set()
@@ -175,6 +258,7 @@ def analyze_call_chain(
             caller["callee_class"] = callee_class
             caller["callee_method"] = callee_method
             caller["runtime_match"] = _matches_expected_caller(caller, expected_caller)
+            caller.setdefault("source", "zoekt")
             static_callers.append(caller)
 
     static_callers.sort(
@@ -196,8 +280,9 @@ def analyze_call_chain(
         "entrypoints": entrypoints,
         "queries": queries,
         "repo_hint": repo_hint,
+        "source": "zoekt",
         "notes": (
-            "Phase-1 基于 Zoekt 文本搜索的跨仓库 caller 追踪；"
+            "基于 Zoekt 文本搜索的跨仓库 caller 追踪；"
             "runtime_match=true 表示与日志 call_chain 下一帧一致。"
         ),
     }

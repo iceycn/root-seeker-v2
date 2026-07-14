@@ -11,6 +11,13 @@ mcp_tools:
   - code.semantic_search
   - code.read
   - code.find_callers
+  - graph.impact
+  - graph.context
+  - graph.query
+  - graph.cypher
+  - graph.trace
+  - graph.list_repos
+  - graph.detect_changes
   - index.get_status
   - repo.register
   - repo.unregister

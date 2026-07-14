@@ -11,6 +11,7 @@ from rootseeker.code_index.internal_repo_tools import (
     repo_list_tool,
     repo_register_tool,
     repo_sync_all_tool,
+    repo_sync_changed_tool,
     repo_sync_tool,
     repo_unregister_tool,
 )
@@ -115,8 +116,30 @@ class StubInternalToolAdapter:
             },
             "entrypoints": entrypoints,
             "queries": [],
+            "source": "stub",
             "notes": "stub",
         }
+
+    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "symbol": args.get("symbol"), "result": {"upstream": []}}
+
+    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "symbol": args.get("symbol"), "result": {}}
+
+    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": []}
+
+    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": []}
+
+    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": []}
+
+    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "repos": []}
+
+    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": {}}
 
     def get_index_status(self) -> dict[str, Any]:
         return {"ready": True, "indexes": [{"name": "stub-zoekt", "ready": True}]}
@@ -143,6 +166,9 @@ class StubInternalToolAdapter:
 
     def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]:
         return repo_sync_all_tool(self.repo_sync_service, args)
+
+    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
+        return repo_sync_changed_tool(self.repo_sync_service, args)
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
         return repo_index_status_tool(self.repo_sync_service, args)

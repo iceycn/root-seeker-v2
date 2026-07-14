@@ -80,6 +80,27 @@ def sync_gateway(tmp_path: Path):
         def find_callers(self, *a, **k):
             raise NotImplementedError
 
+        def graph_impact(self, *a, **k):
+            raise NotImplementedError
+
+        def graph_context(self, *a, **k):
+            raise NotImplementedError
+
+        def graph_query(self, *a, **k):
+            raise NotImplementedError
+
+        def graph_cypher(self, *a, **k):
+            raise NotImplementedError
+
+        def graph_trace(self, *a, **k):
+            raise NotImplementedError
+
+        def graph_list_repos(self, *a, **k):
+            raise NotImplementedError
+
+        def graph_detect_changes(self, *a, **k):
+            raise NotImplementedError
+
         def get_index_status(self, *a, **k):
             raise NotImplementedError
 

@@ -17,6 +17,8 @@ from rootseeker.code_index.git_auth import (
     mask_git_url,
     sanitize_git_error_message,
 )
+from rootseeker.code_index.gitnexus_cli import GitNexusCliConfig
+from rootseeker.code_index.gitnexus_indexer import GitNexusIndexer
 from rootseeker.code_index.qdrant_indexer import QdrantIndexer
 from rootseeker.code_index.zoekt_indexer import ZoektIndexer
 from rootseeker.contracts.common import utc_now
@@ -83,12 +85,14 @@ class RepoSyncResult:
         message: str = "",
         zoekt_status: IndexStatus | None = None,
         qdrant_status: IndexStatus | None = None,
+        gitnexus_status: IndexStatus | None = None,
     ) -> None:
         self.repo = repo
         self.success = success
         self.message = message
         self.zoekt_status = zoekt_status
         self.qdrant_status = qdrant_status
+        self.gitnexus_status = gitnexus_status
 
 
 class RepoSyncService:
@@ -105,6 +109,8 @@ class RepoSyncService:
         qdrant_timeout_seconds: float | None = None,
         enable_zoekt: bool | None = None,
         enable_qdrant: bool | None = None,
+        enable_gitnexus: bool | None = None,
+        gitnexus_config: GitNexusCliConfig | None = None,
         credential_resolver: Callable[[RepositoryRef], GitCredentials | None] | None = None,
     ) -> None:
         """
@@ -119,6 +125,7 @@ class RepoSyncService:
             zoekt_timeout_seconds / qdrant_timeout_seconds: 请求超时秒数
             enable_zoekt: 是否启用 Zoekt 索引（默认从环境变量读取）
             enable_qdrant: 是否启用 Qdrant 索引（默认从环境变量读取）
+            enable_gitnexus: 是否启用 GitNexus 知识图谱索引
         """
         self._repos: dict[str, RepositoryRef] = {}
         self.base_path = Path(base_path) if base_path is not None else _get_default_base_path()
@@ -126,6 +133,11 @@ class RepoSyncService:
 
         self.enable_zoekt = enable_zoekt if enable_zoekt is not None else os.getenv("ROOTSEEKER_REPO_ENABLE_ZOEKT", "true").lower() == "true"
         self.enable_qdrant = enable_qdrant if enable_qdrant is not None else os.getenv("ROOTSEEKER_REPO_ENABLE_QDRANT", "true").lower() == "true"
+        self.enable_gitnexus = (
+            enable_gitnexus
+            if enable_gitnexus is not None
+            else os.getenv("ROOTSEEKER_REPO_ENABLE_GITNEXUS", "true").lower() == "true"
+        )
 
         self.zoekt_indexer = (
             ZoektIndexer(endpoint=zoekt_endpoint, timeout_seconds=zoekt_timeout_seconds)
@@ -142,6 +154,10 @@ class RepoSyncService:
             if self.enable_qdrant
             else None
         )
+        gitnexus_cfg = gitnexus_config or GitNexusCliConfig.from_env()
+        if enable_gitnexus is not None:
+            gitnexus_cfg.enabled = bool(enable_gitnexus)
+        self.gitnexus_indexer = GitNexusIndexer(config=gitnexus_cfg) if self.enable_gitnexus else None
         self.credential_resolver = credential_resolver
 
     def register(self, repo: RepositoryRef) -> None:
@@ -172,6 +188,8 @@ class RepoSyncService:
         repo_name: str,
         trigger_index: bool = True,
         force_reclone: bool = False,
+        *,
+        force_gitnexus: bool = False,
     ) -> RepoSyncResult:
         """
         同步仓库（Git clone 或 pull）
@@ -180,6 +198,7 @@ class RepoSyncService:
             repo_name: 仓库名称
             trigger_index: 是否触发索引
             force_reclone: 是否删除本地目录后重新 clone
+            force_gitnexus: 是否对 GitNexus 使用 analyze --force 强制重建知识图谱
 
         Returns:
             RepoSyncResult: 同步结果
@@ -234,9 +253,10 @@ class RepoSyncService:
 
             logger.info(f"Synced repository {repo_name} at commit {commit_hash}")
 
-            # 触发索引
+            # 触发索引：Zoekt（词法）+ Qdrant（语义）+ GitNexus（结构图）
             zoekt_status = None
             qdrant_status = None
+            gitnexus_status = None
 
             if trigger_index:
                 files = scan_code_files(local_path)
@@ -254,18 +274,32 @@ class RepoSyncService:
                     qdrant_status = self.qdrant_indexer.index_chunks(repo_name=repo_name, chunks=chunks)
                     logger.info(f"Qdrant index status for {repo_name}: {qdrant_status.ready}")
 
+                if self.gitnexus_indexer:
+                    gitnexus_status = self.gitnexus_indexer.index_repository(
+                        repo_name=repo_name,
+                        local_path=local_path,
+                        force=True if force_gitnexus else None,
+                    )
+                    logger.info(f"GitNexus index status for {repo_name}: {gitnexus_status.ready}")
+
                 repo.sync_status.files_indexed = len(files)
-                index_statuses = [s for s in (zoekt_status, qdrant_status) if s is not None]
-                if any(not status.ready for status in index_statuses):
+                # GitNexus 失败不阻断 Zoekt/Qdrant 成功路径；仅 zoekt/qdrant 计入硬失败。
+                hard_statuses = [s for s in (zoekt_status, qdrant_status) if s is not None]
+                soft_errors: list[str] = []
+                if gitnexus_status is not None and not gitnexus_status.ready:
+                    soft_errors.append(
+                        str(gitnexus_status.detail.get("error", "gitnexus not ready"))
+                    )
+                if any(not status.ready for status in hard_statuses):
                     repo.sync_status.state = RepoSyncState.FAILED
                     repo.sync_status.error_message = "; ".join(
                         str(status.detail.get("error", f"{status.kind.value} not ready"))
-                        for status in index_statuses
+                        for status in hard_statuses
                         if not status.ready
                     )
                 else:
                     repo.sync_status.state = RepoSyncState.COMPLETED
-                    repo.sync_status.error_message = None
+                    repo.sync_status.error_message = "; ".join(soft_errors) if soft_errors else None
                 repo.sync_status.last_index_at = utc_now()
 
             return RepoSyncResult(
@@ -274,6 +308,7 @@ class RepoSyncService:
                 message=repo.sync_status.error_message or f"Synced and indexed at {commit_hash}",
                 zoekt_status=zoekt_status,
                 qdrant_status=qdrant_status,
+                gitnexus_status=gitnexus_status,
             )
 
         except ValueError as e:
@@ -306,12 +341,116 @@ class RepoSyncService:
                 message=error_msg,
             )
 
-    def sync_all(self, trigger_index: bool = True) -> list[RepoSyncResult]:
+    def sync_all(self, trigger_index: bool = True, *, force_gitnexus: bool = False) -> list[RepoSyncResult]:
         """同步所有仓库"""
         results = []
         for repo_name in list(self._repos.keys()):
-            results.append(self.sync(repo_name, trigger_index=trigger_index))
+            results.append(
+                self.sync(repo_name, trigger_index=trigger_index, force_gitnexus=force_gitnexus)
+            )
         return results
+
+    def has_remote_updates(self, repo_name: str) -> bool:
+        """Fetch remote and compare local HEAD with origin/<branch>."""
+        repo = self._repos.get(repo_name)
+        if not repo:
+            raise KeyError(f"Repository not found: {repo_name}")
+        local_path = Path(repo.local_path) if repo.local_path else self.base_path / repo.name
+        if not local_path.exists() or not (local_path / ".git").exists():
+            # Not cloned yet — treat as needing sync.
+            return bool(repo.url)
+        if not repo.url:
+            return False
+
+        clone_url = self._authenticated_git_url(repo)
+        self._set_origin_url(local_path, clone_url)
+        branch = self._get_current_branch(local_path) or repo.default_branch or "main"
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", branch],
+            cwd=str(local_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_subprocess_env(),
+        )
+        if fetch.returncode != 0:
+            # Missing remote branch: try default detection once.
+            if _is_missing_remote_branch_error(fetch.stderr or fetch.stdout or ""):
+                detected = detect_remote_default_branch(clone_url)
+                if detected and detected != branch:
+                    branch = detected
+                    fetch = subprocess.run(
+                        ["git", "fetch", "origin", branch],
+                        cwd=str(local_path),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        env=_git_subprocess_env(),
+                    )
+            if fetch.returncode != 0:
+                detail = fetch.stderr or fetch.stdout or "git fetch failed"
+                raise subprocess.CalledProcessError(
+                    returncode=fetch.returncode,
+                    cmd=["git", "fetch", "origin", branch],
+                    stderr=detail,
+                )
+
+        local_hash = self._get_commit_hash(local_path)
+        remote_hash = self._remote_commit_hash(local_path, branch)
+        return bool(remote_hash) and remote_hash != local_hash
+
+    def sync_changed(self, trigger_index: bool = True) -> dict[str, Any]:
+        """Sync only repositories whose remote commit differs from local HEAD.
+
+        Changed repos are pulled and re-indexed with GitNexus ``analyze --force``.
+        """
+        checked: list[str] = []
+        changed: list[str] = []
+        skipped: list[str] = []
+        failed_checks: list[dict[str, str]] = []
+        results: list[RepoSyncResult] = []
+
+        for repo_name in list(self._repos.keys()):
+            checked.append(repo_name)
+            try:
+                needs_sync = self.has_remote_updates(repo_name)
+            except Exception as exc:  # noqa: BLE001
+                failed_checks.append(
+                    {"repo_name": repo_name, "error": sanitize_git_error_message(str(exc))}
+                )
+                logger.warning("has_remote_updates failed for %s: %s", repo_name, exc)
+                continue
+            if not needs_sync:
+                skipped.append(repo_name)
+                continue
+            changed.append(repo_name)
+            results.append(
+                self.sync(repo_name, trigger_index=trigger_index, force_gitnexus=True)
+            )
+
+        synced = [r.repo.name for r in results if r.success]
+        return {
+            "checked": checked,
+            "changed": changed,
+            "synced": synced,
+            "skipped": skipped,
+            "failed_checks": failed_checks,
+            "results": results,
+            "ok": not failed_checks and all(r.success for r in results),
+        }
+
+    def _remote_commit_hash(self, path: Path, branch: str) -> str | None:
+        result = subprocess.run(
+            ["git", "rev-parse", f"origin/{branch}"],
+            cwd=str(path),
+            capture_output=True,
+            text=True,
+            check=False,
+            env=_git_subprocess_env(),
+        )
+        if result.returncode != 0:
+            return None
+        return (result.stdout or "").strip() or None
 
     def _resolve_git_credentials(self, repo: RepositoryRef) -> GitCredentials | None:
         metadata = dict(repo.metadata or {})
@@ -497,6 +636,22 @@ class RepoSyncService:
                 kind=IndexKind.QDRANT,
                 ready=False,
                 detail={"error": "qdrant indexer disabled"},
+            )
+
+        if self.gitnexus_indexer:
+            repo = self._repos.get(repo_name)
+            local_path = None
+            if repo and repo.local_path:
+                local_path = repo.local_path
+            elif repo_name:
+                local_path = str(self.base_path / repo_name)
+            result["gitnexus"] = self.gitnexus_indexer.get_status(repo_name, local_path=local_path)
+        elif repo_name:
+            result["gitnexus"] = IndexStatus(
+                index_name=repo_name,
+                kind=IndexKind.GITNEXUS,
+                ready=False,
+                detail={"error": "gitnexus indexer disabled"},
             )
 
         return result

@@ -21,6 +21,7 @@ from rootseeker.code_index.internal_repo_tools import (
     repo_register_tool,
     repo_semantic_search_tool,
     repo_sync_all_tool,
+    repo_sync_changed_tool,
     repo_sync_tool,
     repo_unregister_tool,
 )
@@ -43,6 +44,13 @@ EXPECTED_TOOLS = [
     "code.semantic_search",
     "code.read",
     "code.find_callers",
+    "graph.impact",
+    "graph.context",
+    "graph.query",
+    "graph.cypher",
+    "graph.trace",
+    "graph.list_repos",
+    "graph.detect_changes",
     "index.get_status",
     "notify.send",
     "repo.register",
@@ -51,6 +59,7 @@ EXPECTED_TOOLS = [
     "repo.get",
     "repo.unregister",
     "repo.sync_all",
+    "repo.sync_changed",
     "repo.index_status",
     "repo.semantic_search",
     "lsp.references",
@@ -74,6 +83,7 @@ class RecordingAdapter:
             base_path=self.base_path,
             enable_zoekt=False,
             enable_qdrant=False,
+            enable_gitnexus=False,
         )
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
@@ -152,7 +162,36 @@ class RecordingAdapter:
             "static_callers": [{"path": "Caller.java", "line": 10}],
             "aligned": {"matched": True},
             "entrypoints": [],
+            "source": "zoekt",
         }
+
+    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_impact", args)
+        return {"ok": True, "symbol": args.get("symbol"), "result": {"upstream": []}}
+
+    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_context", args)
+        return {"ok": True, "symbol": args.get("symbol"), "result": {}}
+
+    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_query", args)
+        return {"ok": True, "search_query": args.get("search_query") or args.get("query"), "result": []}
+
+    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_cypher", args)
+        return {"ok": True, "query": args.get("query"), "result": []}
+
+    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_trace", args)
+        return {"ok": True, "source": args.get("source"), "target": args.get("target"), "result": []}
+
+    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_list_repos", args)
+        return {"ok": True, "repos": []}
+
+    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("graph_detect_changes", args)
+        return {"ok": True, "result": {}}
 
     def get_index_status(self) -> dict[str, Any]:
         self._record("get_index_status")
@@ -185,6 +224,10 @@ class RecordingAdapter:
     def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]:
         self._record("repo_sync_all", args)
         return repo_sync_all_tool(self.repo_sync_service, args)
+
+    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
+        self._record("repo_sync_changed", args)
+        return repo_sync_changed_tool(self.repo_sync_service, args)
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
         self._record("repo_index_status", args)
@@ -244,7 +287,7 @@ def test_all_expected_tools_are_registered(gateway) -> None:
     _gw, registry, _audit = gateway
     names = sorted(spec.name for spec in registry.list_specs())
     assert names == sorted(EXPECTED_TOOLS)
-    assert len(names) == 24
+    assert len(names) == 32
 
 
 def test_every_tool_is_invoked_and_reaches_adapter(adapter: RecordingAdapter, gateway) -> None:
@@ -280,6 +323,13 @@ def test_every_tool_is_invoked_and_reaches_adapter(adapter: RecordingAdapter, ga
             {"call_chain": ["Foo.bar (Foo.java:9)", "BazController.run (BazController.java:1)"], "limit": 5},
             "find_callers",
         ),
+        ("graph.impact", {"symbol": "Foo.bar", "direction": "upstream"}, "graph_impact"),
+        ("graph.context", {"symbol": "Foo.bar"}, "graph_context"),
+        ("graph.query", {"search_query": "auth flow"}, "graph_query"),
+        ("graph.cypher", {"query": "MATCH (n) RETURN count(n) LIMIT 1"}, "graph_cypher"),
+        ("graph.trace", {"source": "A.b", "target": "C.d"}, "graph_trace"),
+        ("graph.list_repos", {}, "graph_list_repos"),
+        ("graph.detect_changes", {"repo": "demo"}, "graph_detect_changes"),
         ("index.get_status", {}, "get_index_status"),
         ("notify.send", {"channel": "webhook", "message": "hi"}, "send_notification"),
         (
@@ -518,7 +568,7 @@ def test_repo_lifecycle_validation_and_happy_path(adapter: RecordingAdapter, gat
     with patch.object(adapter.repo_sync_service, "sync_all", return_value=[]) as mocked_all:
         all_res = _invoke(gw, "repo.sync_all", {"trigger_index": False})
         assert all_res.content["total"] == 0
-        mocked_all.assert_called_once_with(trigger_index=False)
+        mocked_all.assert_called_once_with(trigger_index=False, force_gitnexus=False)
 
     removed = _invoke(gw, "repo.unregister", {"name": "life"})
     assert removed.content["ok"] is True
@@ -560,6 +610,7 @@ WRITE_TOOLS = [
     "repo.sync",
     "repo.unregister",
     "repo.sync_all",
+    "repo.sync_changed",
 ]
 
 
@@ -574,6 +625,7 @@ def test_all_write_tools_denied_when_policy_blocks(adapter: RecordingAdapter, to
         "repo.sync": {"name": "n"},
         "repo.unregister": {"name": "n"},
         "repo.sync_all": {"trigger_index": False},
+        "repo.sync_changed": {"trigger_index": False},
     }[tool_name]
     before = list(adapter.calls)
     res = _invoke(gw, tool_name, args)
@@ -680,6 +732,24 @@ def test_incident_normalize_channel_variants_and_missing_fields(adapter: Recordi
     assert "service_name" in sparse.content["missing_fields"]
     assert sparse.content["case_request"]["service_name"] == "unknown-service"
 
+    inferred = _invoke(
+        gw,
+        "incident.normalize",
+        {
+            "payload": {
+                "source": "admin-error-chat",
+                "message": (
+                    "2026-07-14 13:49:24.473 [training-manage-api] [http-nio-30000-exec-34] "
+                    "[ERROR] DuplicateKeyException in PopRecordService.insertPopRecordLogic"
+                ),
+            }
+        },
+    )
+    assert inferred.ok
+    assert inferred.content["case_request"]["service_name"] == "training-manage-api"
+    assert inferred.content["extracted"]["service_name"] == "training-manage-api"
+    assert "service_name" not in inferred.content["missing_fields"]
+
     prom = _invoke(
         gw,
         "incident.normalize",
@@ -759,6 +829,13 @@ TOOL_REACH_MATRIX: list[tuple[str, dict[str, Any], str | None]] = [
     ("code.semantic_search", {"query": "x"}, "semantic_search_code"),
     ("code.read", {"path": "a.py"}, "read_code"),
     ("code.find_callers", {"call_chain": []}, "find_callers"),
+    ("graph.impact", {"symbol": "Foo.bar"}, "graph_impact"),
+    ("graph.context", {"symbol": "Foo.bar"}, "graph_context"),
+    ("graph.query", {"search_query": "x"}, "graph_query"),
+    ("graph.cypher", {"query": "MATCH (n) RETURN n LIMIT 1"}, "graph_cypher"),
+    ("graph.trace", {"source": "a", "target": "b"}, "graph_trace"),
+    ("graph.list_repos", {}, "graph_list_repos"),
+    ("graph.detect_changes", {}, "graph_detect_changes"),
     ("index.get_status", {}, "get_index_status"),
     ("notify.send", {"channel": "webhook", "message": "m"}, "send_notification"),
     ("repo.register", {"name": "r1", "url": "https://example.com/r1.git"}, "repo_register"),

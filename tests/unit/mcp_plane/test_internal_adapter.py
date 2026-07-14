@@ -42,6 +42,27 @@ class FixedAdapter:
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
         return {"target": None, "runtime_chain": [], "static_callers": [], "aligned": None, "entrypoints": []}
 
+    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": {}}
+
+    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": {}}
+
+    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": []}
+
+    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": []}
+
+    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": []}
+
+    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "repos": []}
+
+    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": {}}
+
     def semantic_search_code(self, query: str, repo_name: str | None = None, limit: int = 10) -> dict[str, Any]:
         return {"ok": True, "query": query, "hits": [], "limit": limit}
 
@@ -68,6 +89,9 @@ class FixedAdapter:
 
     def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": True, "total": 0, "results": []}
+
+    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "checked": [], "changed": [], "synced": [], "skipped": [], "results": []}
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "error": "not wired"}

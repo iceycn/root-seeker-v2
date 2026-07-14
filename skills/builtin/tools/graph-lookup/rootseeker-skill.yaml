@@ -1,0 +1,16 @@
+slug: tools/graph-lookup
+skill_kind: tool
+tags:
+  - builtin
+  - graph
+  - code
+tools:
+  - graph.impact
+  - graph.context
+  - graph.query
+  - graph.cypher
+  - graph.trace
+  - graph.list_repos
+  - graph.detect_changes
+source_kind: builtin
+version: 1.1.0

@@ -12,11 +12,12 @@ description: "内置默认值班日志链路排查 Flow，按步骤加载工具 
 错误排查工作台在生成 AI 分析时，不会上传完整 tool inputs/outputs 或整段堆栈，而是优先使用：
 
 1. `normalize-incident` 提取的 `exception_summary` 与 `call_chain`
-2. `find-callers`（`code.find_callers`）的 caller 对齐与 HTTP 入口（供 AI `caller_trace`）
-3. 规则引擎 report 摘要
-4. 少量证据预览
+2. `graph-impact` / `graph-context`（GitNexus 影响面与符号上下文）
+3. `find-callers`（`code.find_callers`，图谱优先 + Zoekt 回退）的 caller 对齐与 HTTP 入口
+4. 规则引擎 report 摘要
+5. 少量证据预览
 
-因此 `incident.normalize` 必须尽量从原始日志中提取**业务调用链主方法**（如 `Controller -> Service -> Mapper`），供后续 AI 与 code lookup 复用。
+因此 `incident.normalize` 必须尽量从原始日志中提取**业务调用链主方法**（如 `Controller -> Service -> Mapper`），供后续 AI 与 code/graph lookup 复用。
 
 ## 工具 Skill 索引
 
@@ -28,6 +29,7 @@ description: "内置默认值班日志链路排查 Flow，按步骤加载工具 
 | trace | `tools/trace-chain` |
 | index/repo | `tools/index-repo-context` |
 | code | `tools/code-lookup` |
+| graph | `tools/graph-lookup` |
 | notify | `tools/notify-send` |
 
 所有工具调用必须经过 MCP Gateway，不允许伪造结果。

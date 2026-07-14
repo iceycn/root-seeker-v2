@@ -39,6 +39,8 @@ def test_default_flow_closed_loop_from_alert_payload() -> None:
         "repo.list",
         "code.search",
         "code.read",
+        "graph.impact",
+        "graph.context",
         "code.find_callers",
         "notify.send",
     }
@@ -56,6 +58,8 @@ def test_default_flow_closed_loop_from_alert_payload() -> None:
         "repo.list",
         "code.search",
         "code.read",
+        "graph.impact",
+        "graph.context",
         "code.find_callers",
         "notify.send",
     ]

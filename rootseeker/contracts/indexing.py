@@ -14,6 +14,7 @@ __all__ = ["IndexKind", "IndexStatus"]
 class IndexKind(StrEnum):
     ZOEKT = "zoekt"
     QDRANT = "qdrant"
+    GITNEXUS = "gitnexus"
     OTHER = "other"
 
 

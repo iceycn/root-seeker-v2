@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from apps.scheduler.main import main, run_loop, run_once
-from rootseeker.cron import JobRunResult, JobRunStatus
+from apps.admin.config_store import (
+    DEFAULT_FLOW_REPLAY_JOB_ID,
+    REPO_SYNC_CHANGED_JOB_ID,
+    AdminConfigStore,
+)
+from apps.scheduler.main import _build_executor, main, run_loop, run_once
+from rootseeker.cron import CronJobSpec, JobRunResult, JobRunStatus
 
 
 def _result(status: JobRunStatus = JobRunStatus.SUCCEEDED) -> JobRunResult:
@@ -23,6 +29,14 @@ def _result(status: JobRunStatus = JobRunStatus.SUCCEEDED) -> JobRunResult:
             "case_count": 5,
         },
     )
+
+
+def _replay_only_config(tmp_path: Path) -> Path:
+    path = tmp_path / "admin-config.json"
+    store = AdminConfigStore(path)
+    store.upsert_cron_job({"job_id": REPO_SYNC_CHANGED_JOB_ID, "enabled": False})
+    store.upsert_cron_job({"job_id": DEFAULT_FLOW_REPLAY_JOB_ID, "enabled": True})
+    return path
 
 
 class TestSchedulerMain:
@@ -59,6 +73,7 @@ class TestSchedulerMain:
                 timezone="UTC",
                 state_path=None,
                 run_immediately=True,
+                config_path=None,
             )
             assert result == 0
 
@@ -90,7 +105,10 @@ class TestRunOnce:
                 }
                 mock_task_runtime.run_once.return_value = mock_executed
 
-                result = run_once(state_path=tmp_path / "cron-state.json")
+                result = run_once(
+                    state_path=tmp_path / "cron-state.json",
+                    config_path=_replay_only_config(tmp_path),
+                )
 
                 assert result == 0
                 mock_task_runtime.submit.assert_called_once()
@@ -110,7 +128,10 @@ class TestRunOnce:
                 mock_task_runtime.submit.return_value = mock_submitted_task
                 mock_task_runtime.run_once.return_value = None
 
-                result = run_once(state_path=tmp_path / "cron-state.json")
+                result = run_once(
+                    state_path=tmp_path / "cron-state.json",
+                    config_path=_replay_only_config(tmp_path),
+                )
 
                 assert result == 2
 
@@ -138,7 +159,10 @@ class TestRunOnce:
                 }
                 mock_task_runtime.run_once.return_value = mock_executed
 
-                result = run_once(state_path=tmp_path / "cron-state.json")
+                result = run_once(
+                    state_path=tmp_path / "cron-state.json",
+                    config_path=_replay_only_config(tmp_path),
+                )
 
                 assert result == 2
 
@@ -162,9 +186,33 @@ class TestRunOnce:
                 mock_executed.payload = {}
                 mock_task_runtime.run_once.return_value = mock_executed
 
-                result = run_once(state_path=tmp_path / "cron-state.json")
+                result = run_once(
+                    state_path=tmp_path / "cron-state.json",
+                    config_path=_replay_only_config(tmp_path),
+                )
 
                 assert result == 2
+
+
+class TestRepoSyncChangedHandler:
+    def test_executor_dispatches_repo_sync_changed(self, tmp_path: Path) -> None:
+        config_path = _replay_only_config(tmp_path)
+        store = AdminConfigStore(config_path)
+        store.upsert_cron_job({"job_id": REPO_SYNC_CHANGED_JOB_ID, "enabled": True})
+        executor = _build_executor(tmp_path, admin_store=store)
+        job = CronJobSpec(
+            job_id=REPO_SYNC_CHANGED_JOB_ID,
+            name="仓库增量同步",
+            schedule="@hourly",
+            handler="repo.sync_changed",
+        )
+        with patch(
+            "apps.scheduler.main.repo_sync_changed_tool",
+            return_value={"ok": True, "changed": [], "synced": [], "skipped": ["a"], "results": []},
+        ) as mocked:
+            result = executor(job)
+        assert result.status == JobRunStatus.SUCCEEDED
+        mocked.assert_called_once()
 
 
 class TestRunLoop:

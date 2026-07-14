@@ -2,10 +2,15 @@
 # Build context: ./docker
 FROM alpine:3.19
 
+RUN apk add --no-cache python3
+
 COPY bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 COPY bin/zoekt-index /usr/local/bin/zoekt-index
-RUN chmod +x /usr/local/bin/zoekt-webserver /usr/local/bin/zoekt-index && \
+COPY zoekt_index_http_server.py /usr/local/bin/zoekt_index_http_server.py
+COPY zoekt-entrypoint.sh /usr/local/bin/zoekt-entrypoint.sh
+RUN chmod +x /usr/local/bin/zoekt-webserver /usr/local/bin/zoekt-index \
+        /usr/local/bin/zoekt-entrypoint.sh && \
     mkdir -p /data/index
 
-EXPOSE 6070
-CMD ["zoekt-webserver", "-index", "/data/index", "-listen", ":6070", "-rpc"]
+EXPOSE 6070 6071
+CMD ["/usr/local/bin/zoekt-entrypoint.sh"]
