@@ -1,48 +1,107 @@
 # RootSeeker V2
 
-面向生产环境日志链路的**企业级故障排查系统**。从告警接入、日志与链路采集、代码索引检索，到根因分析与报告通知，提供可编排、可审计、可回放的全链路自动化排查能力。
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.1.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+  <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
+</p>
 
-> **当前阶段**：MVP 主链路已在开发环境端到端跑通；核心平台模块已实现，部分能力仍在生产化加固中。详见 [实现状态](docs/implementation-status.md)。
+**RootSeeker V2** 是面向公司内网的 **AI 驱动故障排查与根因发现平台**。从一条告警或报错日志出发，自动还原故障现场、检索私有代码与知识图谱、汇聚证据并产出可落地的根因报告——帮你告别「通灵」式 Debug。
+
+**核心价值**：把研发从繁杂的证据收集中解放出来，缩短排查时长，减少现网应急损失。支持告警接入 → 日志/链路采集 → 代码检索与图谱 → 根因分析与多渠道通知的全链路自动化；Skill 可编排、MCP 可审计、Case 可回放。支持私有化部署，代码与日志可不出内网。
+
+**使用它能带来什么**：不再对着堆栈瞎猜；自动关联 Trace / 日志上下文；Zoekt + Qdrant + GitNexus 构建私有代码索引；报告可推送飞书 / 钉钉 / 企微 / Slack；运维控制台支持仓库同步、定时任务与错误排查助手。
+
+> **当前阶段**：MVP 主链路已在开发环境端到端跑通。详见 [实现状态](docs/implementation-status.md)。
+
+> 📮 项目快速迭代中：需求与建议欢迎通过 [Issue](https://github.com/iceycn/root-seeker-v2/issues) 提交。
+
+---
 
 ## 目录
 
-- [核心能力](#核心能力)
+- [为什么选择 RootSeeker？](#为什么选择-rootseeker)
+- [核心特性](#核心特性)
+- [工作原理](#工作原理)
 - [快速开始](#快速开始)
+- [Hybrid 本地开发](#hybrid-本地开发)
 - [常用命令](#常用命令)
-- [默认排查链路](#默认排查链路)
-- [API 服务](#api-服务)
-- [管理控制台](#管理控制台)
-- [代码检索（Zoekt + Qdrant）](#代码检索zoekt--qdrant)
-- [Docker 部署](#docker-部署)
+- [API 与管理控制台](#api-与管理控制台)
+- [代码索引](#代码索引)
 - [配置说明](#配置说明)
 - [项目结构](#项目结构)
 - [模块状态](#模块状态)
+- [相关文档](#相关文档)
+- [贡献指南](#贡献指南)
+- [License](#license)
 
-## 核心能力
+---
 
-| 能力 | 说明 |
-| --- | --- |
-| **Skill 驱动流程** | 内置 `default-log-triage` 流程，按步骤加载工具 Skill，经 MCP Gateway 调用外部能力 |
-| **MCP 工具平面** | 统一内部/外部工具调用，内置策略守卫与审计 |
-| **证据与根因** | 证据归集、多假设推理、规则引擎 + 可选 LLM 报告增强 |
-| **代码索引** | Git 仓库同步、Zoekt 词法检索、Qdrant 语义搜索、GitNexus 知识图谱、LSP 符号查询 |
-| **多渠道接入** | Webhook / 阿里云 SLS / Prometheus 等告警归一化；飞书 / 钉钉 / 企微 / Slack 等通知 |
-| **控制平面** | Gateway WebSocket、Case/Flow/Skill/Tool 方法、审批与回放质量门禁 |
-| **持久化与回放** | SQLite 可选持久化；Case 回放与评估质量门禁 |
+## 为什么选择 RootSeeker？
 
-**环境要求**：Docker + Docker Compose（推荐快速体验）· Python 3.11+（本地开发与贡献代码）
+传统故障排查依赖人工经验，SRE 需要在日志平台、监控系统和 IDE 之间反复横跳。RootSeeker 旨在解决这些痛点：
+
+- **告别「通灵」式 Debug**：不再对着报错堆栈瞎猜，结合代码检索定位到具体文件与行号。
+- **全息现场还原**：自动拉取关联日志与 Trace 上下文（API 入参、SQL、RPC 等）。
+- **懂你的私有代码**：Zoekt 词法检索 + Qdrant 语义搜索 + GitNexus 知识图谱，覆盖精确匹配与业务意图。
+- **可编排、可审计**：内置 Skill Flow 经 MCP Gateway 调用工具，策略守卫与审计贯穿全程。
+- **可运维**：Admin 控制台管理仓库同步、定时任务、错误排查助手与索引状态。
+
+---
+
+## 核心特性
+
+- **Skill 驱动流程**：内置 `default-log-triage`，按步骤经 MCP Gateway 调用工具，可编排、可断点恢复。
+- **MCP 工具平面**：统一内外部工具调用，含策略守卫、审批与审计。
+- **证据与根因**：证据归集、多假设推理；规则引擎 + 可选 LLM 增强报告。
+- **三引擎代码索引**：Zoekt（词法）+ Qdrant（语义）+ GitNexus（图谱），均支持容器内远程索引。
+- **运维控制台**：仓库注册/同步、定时任务（如每小时同步变更仓）、错误排查助手、服务目录。
+- **多渠道接入与触达**：Webhook / 阿里云 SLS / Prometheus 入站；飞书 / 钉钉 / 企微 / Slack 出站。
+- **持久化与回放**：SQLite 可选持久化；Case 回放与质量门禁。
+- **数据安全**：支持私有化部署与本地/内网 LLM，代码与日志可不出公网。
+
+**环境要求**：Docker + Compose（推荐）· Python 3.11+（本地开发）
+
+---
+
+## 工作原理
+
+默认排查链路（`default-log-triage`）：告警归一化 → 服务目录 → 日志查询 → 链路追踪 → 仓库/索引 → 代码检索 / 图谱 → 报告通知。
+
+```mermaid
+flowchart LR
+  A[告警/Case] --> B[Skill Flow]
+  B --> C[Step]
+  C --> D[Plugin Capability]
+  D --> E[MCP ToolCall]
+  E --> F[Evidence]
+  F --> G[RootCauseEngine]
+  G --> H[CaseReport]
+  H --> I[Notify]
+```
+
+1. **接入**：Webhook / SLS / Prometheus 等归一化为 Case。
+2. **编排**：Skill 按步骤调度 Plugin Capability，经 MCP Gateway 调用工具。
+3. **证据**：日志、链路、代码检索与图谱结果归集为 Evidence。
+4. **根因**：RootCauseEngine 多假设推理；可选 LLM 增强报告文案。
+5. **触达**：推送通知，并可在 Admin 中回放与审计。
+
+---
 
 ## 快速开始
 
-推荐使用 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus），无需本机安装 Python 依赖。
+推荐 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus）。
 
-### 1. 准备配置
+### 1. 克隆并准备配置
 
 ```bash
-cp .env.docker .env   # 按需修改 LLM、SLS 等（不配置也可启动基础服务）
+git clone https://github.com/iceycn/root-seeker-v2.git
+cd root-seeker-v2
+cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能力
 ```
 
-### 2. 启动服务
+### 2. 启动
 
 ```bash
 make docker-up
@@ -55,178 +114,151 @@ docker compose up -d --build
 | 地址 | 说明 |
 | --- | --- |
 | http://localhost:8000/healthz | API 健康检查 |
-| http://localhost:8000/docs | Swagger API 文档 |
+| http://localhost:8000/docs | Swagger |
 | http://localhost:8010/admin | 管理控制台 |
-| http://localhost:7474/healthz | GitNexus 知识图谱 sidecar |
+| http://localhost:6070 | Zoekt 搜索 |
+| http://localhost:6071/healthz | Zoekt 远程索引 HTTP |
+| http://localhost:6333 | Qdrant |
+| http://localhost:7474/healthz | GitNexus sidecar |
 
 ```bash
 curl http://localhost:8000/healthz
-docker compose logs -f api    # 查看日志
-make docker-down              # 停止服务
+docker compose logs -f api
+make docker-down
 ```
 
-默认使用 SQLite 持久化 + hash embedding，**无需外部 AI 服务**即可运行。如需 LLM 报告增强，在 `.env` 中配置 `ROOTSEEKER_LLM_*`。
+默认使用 SQLite + hash embedding，**无需外部 AI** 即可运行。需要 LLM 报告增强时，在 `.env` 配置 `ROOTSEEKER_LLM_*`。
 
-### 本地开发（可选）
+---
 
-贡献代码或跑单元测试时使用：
+## Hybrid 本地开发
+
+适合本机改 Python 代码、索引服务仍跑在 Docker：
+
+```powershell
+# Windows
+.\scripts\start-local.ps1
+```
+
+脚本会：
+
+1. 启动 `zoekt` / `qdrant` / `gitnexus`（`docker-compose.hybrid.yml`，挂载 `./repos`）
+2. 配置路径映射（本机 `repos` → 容器 `/repos`、`/data/repos`）
+3. 在本机拉起 API `:8000` 与 Admin `:8010`
+
+关键环境变量（`start-local.ps1` 已设置）：
+
+| 变量 | 示例 |
+| --- | --- |
+| `ROOTSEEKER_ZOEKT_ENDPOINT` | `http://127.0.0.1:6070` |
+| `ROOTSEEKER_ZOEKT_INDEX_ENDPOINT` | `http://127.0.0.1:6071` |
+| `ROOTSEEKER_ZOEKT_PATH_MAP` | `<abs>/repos:/repos` |
+| `ROOTSEEKER_GITNEXUS_ENDPOINT` | `http://127.0.0.1:7474` |
+| `ROOTSEEKER_GITNEXUS_PATH_MAP` | `<abs>/repos:/data/repos` |
+| `ROOTSEEKER_REPO_BASE_PATH` | `repos` |
+
+仅重建索引侧车：
+
+```powershell
+.\scripts\start_gitnexus_docker.ps1
+# 或
+docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d --build zoekt qdrant gitnexus
+```
+
+纯本地 Python（无 Docker 索引）时：
 
 ```bash
 pip install -e ".[dev]"   # 或 make install
 pytest                    # 或 make test
-make demo                 # 本地端到端演示（无需启动服务）
-make api && make demo-api # API 联调
+make demo                 # 本地端到端演示
 ```
+
+---
 
 ## 常用命令
 
-### 本地开发
+### 本地
 
 | 命令 | 说明 |
 | --- | --- |
-| `make install` | 安装项目及开发依赖 |
-| `make test` | 运行全部测试 |
+| `make install` | 安装依赖 |
+| `make test` | 全部测试 |
 | `make demo` | 本地端到端演示 |
-| `make api` | 启动 API（`:8000`） |
-| `make admin` | 启动管理控制台（`:8010`） |
-| `make demo-api` | API 联调脚本 |
-| `make worker` | 单次 Worker 任务（含 demo seed） |
-| `make worker-loop` | Worker 轮询模式 |
-| `make scheduler` | 单次 Cron 调度 |
-| `make scheduler-loop` | Cron 轮询模式 |
+| `make api` / `make admin` | 启动 API / Admin |
+| `make worker-loop` | Worker 轮询 |
+| `make scheduler-loop` | Cron 轮询 |
 
-### CLI 入口
+### CLI
 
 ```bash
-rootseeker demo          # 本地演示
-rootseeker replay        # Case 回放
-rootseeker-admin         # 管理控制台
-rootseeker-worker        # 后台任务 Worker
-rootseeker-scheduler     # 定时调度器
+rootseeker demo
+rootseeker replay
+rootseeker-admin
+rootseeker-worker --loop --interval-seconds 5
+rootseeker-scheduler --loop --interval-seconds 60
 ```
-
-**Worker 常用参数**：`--loop --interval-seconds --max-empty-polls --max-runs --seed-demo`
-
-**Scheduler 常用参数**：`--loop --schedule --timezone --state-path --run-immediately/--no-run-immediately --interval-seconds --max-runs --retries --retry-delay-seconds`
 
 ### Docker
 
 | 命令 | 说明 |
 | --- | --- |
 | `make docker-up` | 构建并启动全部服务 |
-| `make docker-down` | 停止服务 |
-| `make docker-logs` | 查看 API 日志 |
-| `make docker-ps` | 查看容器状态 |
+| `make docker-down` | 停止 |
+| `make docker-logs` | API 日志 |
+| `make docker-ps` | 容器状态 |
 
-## 默认排查链路
+---
 
-内置 Flow `default-log-triage` 按步骤执行：告警归一化 → 服务目录解析 → 日志查询 → 链路追踪 → 仓库索引 → 代码检索 → 报告通知。
+## API 与管理控制台
 
-```mermaid
-flowchart LR
-  A[告警/Case] --> B[Skill Flow]
-  B --> C[Step]
-  C --> D[Plugin Capability]
-  D --> E[MCP ToolCall]
-  E --> F[Tool Result]
-  F --> G[Evidence]
-  G --> H[RootCauseEngine]
-  H --> I[CaseReport]
-  I --> J[Notify]
-```
-
-运行时调用链：
-
-```
-Case → Skill → Step → Plugin → MCP ToolCall → Evidence → RootCauseEngine → CaseReport → notify
-```
-
-## API 服务
-
-```bash
-uvicorn apps.api.main:app --reload --port 8000
-# 或
-make api
-```
-
-### 主要端点
+### API（`:8000`）
 
 | 端点 | 说明 |
 | --- | --- |
-| `GET /healthz` · `GET /readyz` | 健康检查与就绪探针 |
+| `GET /healthz` · `GET /readyz` | 健康 / 就绪 |
 | `GET /metrics` | Prometheus 指标 |
-| `GET /skills` | 可用 Skill 列表 |
 | `POST /cases/run-default` | 执行默认排查流程 |
-| `GET /cases/{case_id}` | Case 详情 |
-| `GET /reports/{case_id}` | 分析报告 |
-| `GET /evidence/{case_id}` | 证据包 |
-| `GET /cases/{case_id}/audit` | 审计记录 |
-| `GET /flows/checkpoints` | Flow 检查点列表 |
-| `POST /webhook/{channel}` | 外部告警接入（webhook / aliyun / sls / prometheus） |
-| `WebSocket /gateway/ws` | 控制平面通信 |
-| `GET /gateway/connections` | 活跃 WebSocket 连接 |
+| `GET /cases/{case_id}` · `/reports/{case_id}` · `/evidence/{case_id}` | Case / 报告 / 证据 |
+| `POST /webhook/{channel}` | 告警接入 |
+| `WebSocket /gateway/ws` | 控制平面 |
 
-### API 文档
+文档：http://localhost:8000/docs
 
-- Swagger UI：http://localhost:8000/docs
-- ReDoc：http://localhost:8000/redoc
-- OpenAPI JSON：http://localhost:8000/openapi.json
-
-## 管理控制台
-
-独立于 API 的运维管理界面，用于 Skill/插件/MCP 工具、仓库同步、服务目录、代码语义搜索等日常操作。
-
-```bash
-make admin
-# 或
-ADMIN_PORT=8010 rootseeker-admin
-# 或
-uvicorn apps.admin.main:app --host 127.0.0.1 --port 8010
-```
+### Admin（`:8010`）
 
 访问：http://127.0.0.1:8010/admin
 
-**当前能力：**
+主要能力：
 
-- 查看 Skills、Plugins 及已注册 MCP 工具
-- 注册 / 注销 / 同步 / 检查 Git 仓库
-- 触发 Zoekt / Qdrant 索引（与 API 共用同一套 repo tools）
-- 查看与更新内存服务目录
-- Qdrant 语义代码搜索
-- 运行时健康与索引状态
+- Skills / Plugins / MCP 工具一览
+- Git 仓库注册、同步、强制重建图谱
+- **定时任务**（如每小时同步有变更仓库并重建 GitNexus）
+- **错误排查助手**（粘贴日志触发默认 Flow）
+- 服务目录、语义代码搜索、运行时与索引状态
 
-## 代码检索（Zoekt + Qdrant）
+---
 
-代码索引支持 **本机二进制**（推荐本地开发）和 **Docker Compose** 两种方式。
+## 代码索引
 
-### 本机开发（无 Docker）
+完整栈与 Hybrid 模式均通过 **容器内远程索引**，无需本机安装 `zoekt-index` / `gitnexus` CLI。
 
-使用仓库内 `config/qdrant_config.yaml`，数据目录为 `./data/`。
+| 组件 | 端口 | 作用 |
+| --- | --- | --- |
+| Zoekt | 6070 搜索 · **6071 索引** | 词法代码搜索 / 远程 `zoekt-index` |
+| Qdrant | 6333 | 语义向量检索 |
+| GitNexus | 7474 | 知识图谱 analyze / 查询 sidecar |
 
-**1. 安装 Zoekt（需 Go）**
-
-```bash
-go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
-go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
-export PATH="$(go env GOPATH)/bin:$PATH"
-```
-
-**2. 安装 Qdrant 二进制**
-
-从 [Qdrant Releases](https://github.com/qdrant/qdrant/releases) 下载对应平台，将可执行文件命名为 `qdrant` 并加入 `PATH`，或放到 `tools/qdrant/qdrant`，或通过 `ROOTSEEKER_QDRANT_BINARY` 指定绝对路径。
-
-**3. 启动与联调**
+仅启动索引服务：
 
 ```bash
-./scripts/install_local_codesearch_deps.sh   # 检查/安装 Zoekt，提示 Qdrant
-./scripts/start_zoekt_qdrant.sh              # 后台启动，日志见 data/run/*.log
-./scripts/run_real_codesearch_smoke.sh       # 示例仓 + 索引 + 语义搜索联调
-./scripts/stop_zoekt_qdrant.sh               # 停止本机进程
+docker compose up -d --build zoekt qdrant gitnexus
 ```
 
-**4. Embedding 配置**
+仓库克隆目录默认 `ROOTSEEKER_REPO_BASE_PATH=repos`。Hybrid 下请保证 `ROOTSEEKER_ZOEKT_PATH_MAP` / `ROOTSEEKER_GITNEXUS_PATH_MAP` 指向同一本机目录。
 
-默认 `ROOTSEEKER_EMBEDDING_PROVIDER=hash`，使用本地确定性向量，适合无外部服务的 Qdrant 写入/查询联调。接入真实 embedding 服务：
+### Embedding
+
+默认 `ROOTSEEKER_EMBEDDING_PROVIDER=hash`（本地确定性向量）。接入真实模型：
 
 ```bash
 export ROOTSEEKER_EMBEDDING_PROVIDER=openai_compatible
@@ -236,145 +268,92 @@ export ROOTSEEKER_EMBEDDING_MODEL=text-embedding-3-small
 export ROOTSEEKER_EMBEDDING_DIMENSION=1536
 ```
 
-### Docker 方式
-
-默认 `docker compose up -d --build` 已包含 Zoekt、Qdrant、GitNexus。仅启动索引相关服务：
-
-```bash
-docker compose up -d --build zoekt qdrant gitnexus
-# 或使用脚本
-./scripts/start_zoekt_qdrant_docker.sh
-```
-
-## Docker 部署
-
-快速启动见上文 [快速开始](#快速开始)。以下为服务说明与可选组件。
-
-### 服务一览
-
-| 服务 | 端口 | 说明 |
-| --- | --- | --- |
-| api | 8000 | REST API |
-| admin | 8010 | 管理控制台 |
-| worker | — | 后台任务处理 |
-| scheduler | — | Cron 定时调度 |
-| zoekt | 6070 | 词法代码检索 |
-| qdrant | 6333 (gRPC 6334) | 向量语义检索 |
-| gitnexus | 7474 | 代码知识图谱（默认栈，非可选） |
-| jaeger | 16686 | 链路追踪可视化（可选 profile） |
-
-### 可选 Profile
-
-```bash
-# 链路追踪（唯一可选 profile；Zoekt/Qdrant/GitNexus 均在默认栈）
-docker compose --profile tracing up -d
-```
+---
 
 ## 配置说明
 
-- **Docker 部署**：以 [`.env.docker`](.env.docker) 为模板（`cp .env.docker .env`）
-- **本地开发 / 全量参考**：见 [`.env.example`](.env.example)
+- Docker：以 [`.env.docker`](.env.docker) 为模板（`cp .env.docker .env`）
+- 本地全量参考：[`.env.example`](.env.example)
 
-以下为常用配置分组。
+### 常用变量
 
-### 内部适配器
-
-```bash
-# composite（默认）：SLS / Jaeger / Zoekt + RepoSync
-export ROOTSEEKER_INTERNAL_ADAPTER_KIND=composite
-export ROOTSEEKER_NOTIFY_DEFAULT_URL=https://example.com/my-webhook
-
-# http：将内部工具委托给外部 HTTP 服务
-export ROOTSEEKER_INTERNAL_ADAPTER_KIND=http
-export ROOTSEEKER_INTERNAL_HTTP_BASE_URL=http://127.0.0.1:9000
-```
-
-### 持久化存储
-
-默认内存存储，适合本地冒烟测试。启用 SQLite：
-
-```bash
-export ROOTSEEKER_STORAGE_BACKEND=sqlite
-export ROOTSEEKER_SQLITE_DB_PATH=data/rootseeker.db
-```
-
-### Cron 调度状态
-
-```bash
-export ROOTSEEKER_CRON_STATE_PATH=data/cron/scheduler-state.json
-rootseeker-scheduler --loop --schedule "*/5 * * * *"
-```
-
-### LLM 报告增强
-
-配置 OpenAI 兼容接口后，默认排查流程会用模型增强 `CaseReport.summary` 与 `root_cause`，规则引擎结果保留在 report metadata 中：
-
-```bash
-export ROOTSEEKER_LLM_BASE_URL=https://api.openai.com/v1
-export ROOTSEEKER_LLM_API_KEY=...
-export ROOTSEEKER_LLM_MODEL=gpt-4o-mini
-# 可选
-export ROOTSEEKER_LLM_PROVIDER_NAME=openai
-export ROOTSEEKER_LLM_ENABLED=false   # 关闭 LLM 增强
-```
-
-### 审批工作流通知
-
-```bash
-export ROOTSEEKER_APPROVAL_WEBHOOK_URL=https://example.com/approval-workflow
-export ROOTSEEKER_APPROVAL_WEBHOOK_TIMEOUT_SECONDS=5
-```
-
-### 代码检索关键变量
-
-| 变量 | 说明 |
+| 分组 | 变量 |
 | --- | --- |
-| `ZOEKT_ENDPOINT` / `ROOTSEEKER_ZOEKT_ENDPOINT` | Zoekt HTTP API |
-| `QDRANT_ENDPOINT` / `ROOTSEEKER_QDRANT_ENDPOINT` | Qdrant REST |
-| `QDRANT_COLLECTION_NAME` | 向量集合名（默认 `code_chunks`） |
-| `ROOTSEEKER_ZOEKT_INDEX_DIR` | zoekt-index 输出目录 |
-| `ROOTSEEKER_EMBEDDING_PROVIDER` | `hash`（默认）或 `openai_compatible` |
-| `SLS_*` | 阿里云 SLS 日志服务 |
-| `JAEGER_ENDPOINT` | Jaeger 链路追踪 |
+| 适配器 | `ROOTSEEKER_INTERNAL_ADAPTER_KIND`（默认 `composite`） |
+| 存储 | `ROOTSEEKER_STORAGE_BACKEND=sqlite` · `ROOTSEEKER_SQLITE_DB_PATH` |
+| Zoekt | `ROOTSEEKER_ZOEKT_ENDPOINT` · `ROOTSEEKER_ZOEKT_INDEX_ENDPOINT` · `ROOTSEEKER_ZOEKT_PATH_MAP` |
+| Qdrant | `ROOTSEEKER_QDRANT_ENDPOINT` · `ROOTSEEKER_QDRANT_COLLECTION_NAME` |
+| GitNexus | `ROOTSEEKER_GITNEXUS_ENDPOINT` · `ROOTSEEKER_GITNEXUS_PATH_MAP` |
+| 仓库 | `ROOTSEEKER_REPO_BASE_PATH` · `ROOTSEEKER_REPO_ENABLE_*` |
+| LLM | `ROOTSEEKER_LLM_BASE_URL` · `ROOTSEEKER_LLM_API_KEY` · `ROOTSEEKER_LLM_MODEL` |
+| 日志/链路 | `SLS_*` · `JAEGER_ENDPOINT` |
+| 代理 | `HTTP_PROXY` / `HTTPS_PROXY`（容器内会映射到 `host.docker.internal`；本机 hybrid 保持 `127.0.0.1`） |
+
+可选 tracing profile：
+
+```bash
+docker compose --profile tracing up -d
+```
+
+---
 
 ## 项目结构
 
 ```
 rootseeker/     # 核心运行时与业务模块
-apps/           # 应用入口（api / admin / worker / scheduler / cli）
+apps/           # api / admin / worker / scheduler / cli
 skills/         # 内置与自定义 Skill
 plugins/        # 内置与自定义 Plugin
-mcp_servers/    # 内部与外部 MCP 工具实现
+mcp_servers/    # MCP 工具实现
+docker/         # Zoekt / GitNexus 镜像与 sidecar
 tests/          # 单元、集成与回放测试
-scripts/        # 可运行辅助脚本
-docs/           # 架构与实现状态文档
-k8s/            # Kubernetes 部署清单
+scripts/        # 启动与联调脚本
+docs/           # 架构与实现状态
+k8s/            # Kubernetes 清单
 ```
+
+---
 
 ## 模块状态
 
-状态说明：`Completed` 已实现并有测试覆盖 · `Partial` 已实现但待加固 · `Planned` 尚未达到目标设计深度
+`Completed` 已实现并有测试 · `Partial` 已实现待加固 · `Planned` 未达目标深度
 
 | 模块 | 状态 |
 | --- | --- |
-| 骨架、契约、存储/审计 | Completed |
-| Plugin / Skill / MCP 平面 | Completed |
-| 服务目录、日志平面、代码索引 | Completed |
-| 证据、根因引擎、Task/Flow 运行时 | Completed |
-| 默认 Flow + API/Worker/Scheduler 入口 | Completed |
-| 回放/评估 + CLI/Cron 回放 | Completed |
-| 渠道路由（多渠道归一化与通知） | Completed |
-| Gateway 控制平面（WebSocket + 鉴权/限流） | Completed |
-| 基础设施（安全文件、网络守卫、脱敏） | Completed |
-| LLM 报告增强、检查点恢复、Skill 自动合成 | Completed |
-| SQLite 持久化、多渠道适配器 | Completed |
+| 契约、存储/审计、Plugin / Skill / MCP | Completed |
+| 服务目录、日志平面、代码索引（含远程 Zoekt / GitNexus） | Completed |
+| 证据、根因、Task/Flow、默认排查 Flow | Completed |
+| API / Admin / Worker / Scheduler / 定时仓库同步 | Completed |
+| 渠道路由、Gateway、SQLite、LLM 报告增强 | Completed |
 | Agent Runtime（LLM 工具规划、自修复） | Partial |
 | 审批策略、部署策略编排 | Partial |
 
-详细范围与缺口见 [docs/implementation-status.md](docs/implementation-status.md)。
+详情：[docs/implementation-status.md](docs/implementation-status.md)
+
+---
 
 ## 相关文档
 
 - [实现状态与缺口](docs/implementation-status.md)
 - [Case 状态机](docs/architecture/case-state-machine.md)
 - [状态机总览](docs/architecture/state-machines.md)
+
+---
+
+## 贡献指南
+
+欢迎提交 Pull Request 或 Issue！
+
+1. Fork 本仓库
+2. 新建特性分支
+3. 提交代码并确保测试通过
+4. 新建 Pull Request
+
+---
+
+## License
+
+MIT License © 2026 iceycn / RootSeeker Team
+
+见 [LICENSE](LICENSE)。
+```
