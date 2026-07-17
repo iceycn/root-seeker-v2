@@ -91,7 +91,8 @@ flowchart LR
 
 ## 快速开始
 
-推荐 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus）。
+推荐 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus）。  
+部署包说明见 [docker/README.md](docker/README.md)。
 
 ### 1. 克隆并准备配置
 
@@ -104,8 +105,9 @@ cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能
 ### 2. 启动
 
 ```bash
-make docker-up
+./start.sh            # 推荐：缺 Zoekt 二进制时会自动下载
 # 或
+make docker-up
 docker compose up -d --build
 ```
 

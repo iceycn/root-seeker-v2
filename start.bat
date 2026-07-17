@@ -38,7 +38,14 @@ if "%COMMAND%"=="ps" (
 )
 goto :usage
 
+:ensure_zoekt_bins
+if exist "docker\bin\zoekt-index" if exist "docker\bin\zoekt-webserver" goto :eof
+echo [INFO] Zoekt binaries missing; downloading via docker\prepare-zoekt.ps1 ...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%docker\prepare-zoekt.ps1"
+goto :eof
+
 :docker_build
+call :ensure_zoekt_bins
 echo [INFO] Building RootSeeker V2 Docker images...
 docker compose build
 echo [OK] Images built successfully.
@@ -50,6 +57,7 @@ if not exist .env (
     copy .env.docker .env
     echo [WARN] Review .env and configure LLM keys if needed.
 )
+call :ensure_zoekt_bins
 echo [INFO] Starting RootSeeker V2 services...
 docker compose up -d --build
 echo.

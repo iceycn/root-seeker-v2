@@ -27,7 +27,15 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; }
 # Docker Compose Functions
 # ==============================
 
+ensure_zoekt_bins() {
+    if [ ! -x "$SCRIPT_DIR/docker/bin/zoekt-index" ] || [ ! -x "$SCRIPT_DIR/docker/bin/zoekt-webserver" ]; then
+        info "Zoekt binaries missing; downloading via docker/prepare-zoekt.sh ..."
+        bash "$SCRIPT_DIR/docker/prepare-zoekt.sh"
+    fi
+}
+
 docker_build() {
+    ensure_zoekt_bins
     info "Building RootSeeker V2 Docker images..."
     docker compose build
     ok "Images built successfully."
@@ -41,6 +49,7 @@ docker_up() {
         warn "Review .env and configure LLM keys if needed."
     fi
 
+    ensure_zoekt_bins
     info "Starting RootSeeker V2 services..."
     docker compose up -d --build
 
