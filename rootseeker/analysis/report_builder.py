@@ -45,7 +45,9 @@ def build_case_report(
             "context_used_tokens": context.used_tokens,
         },
     )
-    client, skip_reason = (llm_client, "") if llm_client is not None else _build_default_llm_client(settings)
+    client, skip_reason = (
+        (llm_client, "") if llm_client is not None else _build_default_llm_client(settings)
+    )
     if client is None:
         skipped = LlmReportResult(ok=False, skipped=True, reason=skip_reason or "not_configured")
         return apply_llm_report_result(report, skipped)

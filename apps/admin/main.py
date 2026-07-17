@@ -22,17 +22,17 @@ from rootseeker.analysis.call_chain import (
     extract_exception_summary,
     merge_call_chain_summaries,
 )
-from rootseeker.analysis.service_identity import resolve_service_name
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
+from rootseeker.analysis.service_identity import resolve_service_name
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
 from rootseeker.code_index.git_auth import GitCredentials
-from rootseeker.code_index.repo_tools import set_repo_sync_service
 from rootseeker.code_index.repo_sync import RepoSyncService
+from rootseeker.code_index.repo_tools import set_repo_sync_service
+from rootseeker.contracts.common import utc_now
 from rootseeker.contracts.repository import RepositoryRef, RepoSyncState
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.contracts.tool import ToolCallRequest
-from rootseeker.contracts.common import utc_now
 from rootseeker.cron import CronJobState, CronJobStatus
 from rootseeker.cron.state_store import FileCronStateStore
 from rootseeker.flow_runtime import build_execution_trace
@@ -74,7 +74,12 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
         "api_key_url": "https://platform.deepseek.com/api_keys",
         "metadata": {
             "display_name": "深度求索 (DeepSeek)",
-            "models": ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-pro", "deepseek-v4-flash"],
+            "models": [
+                "deepseek-chat",
+                "deepseek-reasoner",
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+            ],
         },
     },
     {
@@ -87,7 +92,10 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
         "enabled": False,
         "builtin": True,
         "api_key_url": "https://open.bigmodel.cn/usercenter/apikeys",
-        "metadata": {"display_name": "智谱 AI", "models": ["glm-4-plus", "glm-4-air", "glm-4-flash"]},
+        "metadata": {
+            "display_name": "智谱 AI",
+            "models": ["glm-4-plus", "glm-4-air", "glm-4-flash"],
+        },
     },
     {
         "name": "moonshot",
@@ -116,7 +124,11 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
         "api_key_url": "https://cloud.siliconflow.cn/account/ak",
         "metadata": {
             "display_name": "硅基流动 (SiliconFlow)",
-            "models": ["deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen2.5-72B-Instruct"],
+            "models": [
+                "deepseek-ai/DeepSeek-V3",
+                "deepseek-ai/DeepSeek-R1",
+                "Qwen/Qwen2.5-72B-Instruct",
+            ],
         },
     },
     {
@@ -156,7 +168,10 @@ BUILTIN_AI_PROVIDERS: list[dict[str, Any]] = [
         "enabled": False,
         "builtin": True,
         "api_key_url": "https://bailian.console.aliyun.com/",
-        "metadata": {"display_name": "百炼 (DashScope)", "models": ["qwen-max", "qwen-plus", "qwen-turbo"]},
+        "metadata": {
+            "display_name": "百炼 (DashScope)",
+            "models": ["qwen-max", "qwen-plus", "qwen-turbo"],
+        },
     },
     {
         "name": "volces",
@@ -229,7 +244,9 @@ def _prepare_ai_provider(provider: dict[str, Any]) -> dict[str, Any]:
     return prepared
 
 
-def _persist_ai_provider_if_changed(store: AdminConfigStore, provider: dict[str, Any]) -> dict[str, Any]:
+def _persist_ai_provider_if_changed(
+    store: AdminConfigStore, provider: dict[str, Any]
+) -> dict[str, Any]:
     prepared = _prepare_ai_provider(provider)
     if prepared.get("base_url") != provider.get("base_url"):
         store.upsert_ai_provider(prepared)
@@ -395,7 +412,9 @@ ADMIN_WEB_DIST = Path(__file__).parents[1] / "admin-web" / "dist"
 ADMIN_WEB_INDEX = ADMIN_WEB_DIST / "index.html"
 
 
-def _invoke_admin_tool(runtime: DevRuntime, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _invoke_admin_tool(
+    runtime: DevRuntime, tool_name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
     req = ToolCallRequest(
         case_id=ADMIN_CASE_ID,
         step_id=ADMIN_STEP_ID,
@@ -446,7 +465,9 @@ def _admin_repo_credential_resolver(store: AdminConfigStore):
         remote_name = str(metadata.get("remote_name") or "").strip()
         if not remote_name:
             return None
-        remote = next((item for item in store.list_repo_remotes() if item.get("name") == remote_name), None)
+        remote = next(
+            (item for item in store.list_repo_remotes() if item.get("name") == remote_name), None
+        )
         if remote is None:
             return None
         token = str(remote.get("token") or "").strip()
@@ -701,7 +722,9 @@ def _normalize_remote_repo(provider: str, item: Any) -> dict[str, Any] | None:
 
 
 def _normalize_default_branch(provider: str, item: dict[str, Any]) -> str:
-    branch = item.get("default_branch") or item.get("defaultBranch") or item.get("default_branch_name")
+    branch = (
+        item.get("default_branch") or item.get("defaultBranch") or item.get("default_branch_name")
+    )
     if branch:
         return str(branch)
     if _normalize_repo_provider(provider) == "yunxiao":
@@ -756,12 +779,16 @@ def _fetch_yunxiao_default_branch(
     client: httpx.Client,
     detail: dict[str, Any] | None = None,
 ) -> str:
-    detail = detail if detail is not None else _fetch_yunxiao_repository_detail(
-        base=base,
-        owner=owner,
-        repository_id=repository_id,
-        token=token,
-        client=client,
+    detail = (
+        detail
+        if detail is not None
+        else _fetch_yunxiao_repository_detail(
+            base=base,
+            owner=owner,
+            repository_id=repository_id,
+            token=token,
+            client=client,
+        )
     )
     branch = detail.get("defaultBranch") or detail.get("default_branch")
     if branch:
@@ -967,7 +994,9 @@ def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
         data = response.json()
         repos = [
             repo
-            for repo in (_normalize_remote_repo(provider, item) for item in _extract_repo_items(data))
+            for repo in (
+                _normalize_remote_repo(provider, item) for item in _extract_repo_items(data)
+            )
             if repo is not None
         ]
     if provider == "yunxiao" and repos:
@@ -991,9 +1020,16 @@ def _discover_remote_repos(req: AdminDiscoverReposRequest) -> dict[str, Any]:
         repos = [
             repo
             for repo in repos
-            if query in str(repo.get("name", "")).lower() or query in str(repo.get("full_name", "")).lower()
+            if query in str(repo.get("name", "")).lower()
+            or query in str(repo.get("full_name", "")).lower()
         ]
-    return {"ok": True, "provider": provider, "url": url, "repos": [_public_discovered_repo(repo) for repo in repos], "total": len(repos)}
+    return {
+        "ok": True,
+        "provider": provider,
+        "url": url,
+        "repos": [_public_discovered_repo(repo) for repo in repos],
+        "total": len(repos),
+    }
 
 
 def _mask_secret(value: str) -> str:
@@ -1018,7 +1054,9 @@ def _discover_repos_from_remote(
     req: AdminDiscoverReposFromRemoteRequest,
     registered: list[RepositoryRef] | None = None,
 ) -> dict[str, Any]:
-    remote = next((item for item in store.list_repo_remotes() if item.get("name") == req.remote_name), None)
+    remote = next(
+        (item for item in store.list_repo_remotes() if item.get("name") == req.remote_name), None
+    )
     if remote is None:
         raise HTTPException(status_code=404, detail="repo remote not found")
     provider = _normalize_repo_provider(str(remote.get("provider") or "github"))
@@ -1071,7 +1109,11 @@ def _has_ready_ai_provider(store: AdminConfigStore) -> bool:
     provider = _configured_ai_provider(store)
     if provider is None:
         return False
-    return bool(str(provider.get("base_url") or "").strip() and str(provider.get("api_key") or "").strip() and _configured_ai_model(store, provider))
+    return bool(
+        str(provider.get("base_url") or "").strip()
+        and str(provider.get("api_key") or "").strip()
+        and _configured_ai_model(store, provider)
+    )
 
 
 KIMI_MESSAGE_BYTE_LIMIT = 1_900_000
@@ -1207,7 +1249,9 @@ def _caller_trace_from_flow(flow_result: Any) -> dict[str, Any] | None:
 
 def _compact_caller_trace(outputs: dict[str, Any]) -> dict[str, Any]:
     aligned = outputs.get("aligned") if isinstance(outputs.get("aligned"), dict) else {}
-    static_callers = outputs.get("static_callers") if isinstance(outputs.get("static_callers"), list) else []
+    static_callers = (
+        outputs.get("static_callers") if isinstance(outputs.get("static_callers"), list) else []
+    )
     compact_callers: list[dict[str, Any]] = []
     for item in static_callers[:8]:
         if not isinstance(item, dict):
@@ -1259,8 +1303,7 @@ def _build_llm_error_chat_payload(
     case = flow_result.case.model_dump(mode="json")
     report = flow_result.report.model_dump(mode="json")
     evidence_preview = [
-        item.model_dump(mode="json")
-        for item in flow_result.evidence_pack.items[:8]
+        item.model_dump(mode="json") for item in flow_result.evidence_pack.items[:8]
     ]
     call_chain = _call_chain_from_flow(flow_result, content)
     caller_trace = _caller_trace_from_flow(flow_result)
@@ -1298,7 +1341,7 @@ def _build_llm_error_chat_payload(
         ("caller_trace", None),
         ("call_chain", (call_chain or [])[:3]),
         ("call_chain", []),
-        ("report", {"summary": _truncate_text(str((report.get("summary") or "")), max_chars=500)}),
+        ("report", {"summary": _truncate_text(str(report.get("summary") or ""), max_chars=500)}),
         ("case", {"case_id": case.get("case_id"), "title": case.get("title")}),
     )
     for key, value in shrink_steps:
@@ -1307,7 +1350,10 @@ def _build_llm_error_chat_payload(
         payload[key] = value
 
     excerpt = str(payload.get("error_excerpt") or "")
-    while len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > byte_limit and len(excerpt) > 200:
+    while (
+        len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > byte_limit
+        and len(excerpt) > 200
+    ):
         excerpt = _truncate_text(excerpt, max_chars=max(200, len(excerpt) // 2))
         payload["error_excerpt"] = excerpt
 
@@ -1316,7 +1362,7 @@ def _build_llm_error_chat_payload(
             "exception_summary": _truncate_text(str(exception_summary or ""), max_chars=500),
             "error_excerpt": _truncate_text(str(content or ""), max_chars=500),
             "case": {"case_id": case.get("case_id"), "title": case.get("title")},
-            "report": {"summary": _truncate_text(str((report.get("summary") or "")), max_chars=300)},
+            "report": {"summary": _truncate_text(str(report.get("summary") or ""), max_chars=300)},
             "truncation": {
                 "reason": "payload_hard_truncated",
                 "byte_limit": byte_limit,
@@ -1363,7 +1409,11 @@ def _run_llm_analysis(
     api_key = str(provider.get("api_key") or "")
     model = _configured_ai_model(store, provider)
     if not base_url or not api_key or not model:
-        return {"ok": False, "skipped": True, "reason": "AI provider missing base_url/api_key/model"}
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": "AI provider missing base_url/api_key/model",
+        }
     config = LlmReportConfig(
         base_url=base_url,
         api_key=api_key,
@@ -1493,14 +1543,23 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.put("/api/settings")
     def update_settings(req: AdminSettingsUpdateRequest) -> dict[str, Any]:
-        return {"ok": True, "settings": store.update_settings(req.settings), "config_path": str(store.path)}
+        return {
+            "ok": True,
+            "settings": store.update_settings(req.settings),
+            "config_path": str(store.path),
+        }
 
     @app.get("/api/env-vars")
     def list_env_vars() -> dict[str, Any]:
         items = store.list_env_vars()
         return {
             "items": [
-                {**item, "masked_value": "******" if item.get("secret") and item.get("value") else item.get("value", "")}
+                {
+                    **item,
+                    "masked_value": "******"
+                    if item.get("secret") and item.get("value")
+                    else item.get("value", ""),
+                }
                 for item in items
             ],
             "total": len(items),
@@ -1592,7 +1651,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/api/ai-providers/{name}/test")
     def test_ai_provider(name: str) -> dict[str, Any]:
-        provider = next((item for item in store.list_ai_providers() if item.get("name") == name), None)
+        provider = next(
+            (item for item in store.list_ai_providers() if item.get("name") == name), None
+        )
         if provider is None:
             raise HTTPException(status_code=404, detail=f"AI provider not found: {name}")
         provider = _persist_ai_provider_if_changed(store, provider)
@@ -1728,10 +1789,18 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"cron job not found: {job_id}")
         payload = dict(existing)
         updates = req.model_dump(exclude_unset=True)
-        if existing.get("builtin") and "handler" in updates and updates["handler"] != existing.get("handler"):
-            raise HTTPException(status_code=400, detail="builtin cron job handler cannot be changed")
+        if (
+            existing.get("builtin")
+            and "handler" in updates
+            and updates["handler"] != existing.get("handler")
+        ):
+            raise HTTPException(
+                status_code=400, detail="builtin cron job handler cannot be changed"
+            )
         if "handler" in updates and updates["handler"] not in ALLOWED_CRON_HANDLERS:
-            raise HTTPException(status_code=400, detail=f"unsupported handler: {updates['handler']}")
+            raise HTTPException(
+                status_code=400, detail=f"unsupported handler: {updates['handler']}"
+            )
         payload.update(updates)
         payload["job_id"] = job_id
         try:
@@ -1741,7 +1810,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         if "enabled" in updates:
             cron_store = _cron_state_store()
             state = cron_store.get_state(job_id) or CronJobState(job_id=job_id)
-            state.status = CronJobStatus.DISABLED if updates["enabled"] is False else CronJobStatus.IDLE
+            state.status = (
+                CronJobStatus.DISABLED if updates["enabled"] is False else CronJobStatus.IDLE
+            )
             state.updated_at = utc_now()
             cron_store.save_state(state)
         return {"ok": True, "job": _cron_job_with_state(saved)}
@@ -1824,7 +1895,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         return {"items": items, "total": len(items)}
 
     @app.post("/api/error-chat")
-    def submit_error_chat(req: AdminErrorChatSubmitRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+    def submit_error_chat(
+        req: AdminErrorChatSubmitRequest, background_tasks: BackgroundTasks
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         service_name = resolve_service_name(req.service_name, text=req.content)
         result = runtime.run_default_flow_from_payload(
@@ -1856,7 +1929,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
                 "flow_run_id": flow_run_id,
                 "evidence_count": len(result.evidence_pack.items),
                 "evidence_summary": result.evidence_pack.summary,
-                "evidence_items": [evidence.model_dump(mode="json") for evidence in result.evidence_pack.items],
+                "evidence_items": [
+                    evidence.model_dump(mode="json") for evidence in result.evidence_pack.items
+                ],
                 "flow_elapsed_ms": flow_elapsed_ms,
                 "ai_analysis": ai_analysis,
                 "tool_results": [tool.model_dump(mode="json") for tool in result.tool_results],
@@ -1904,7 +1979,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             "slug": slug,
             "source_kind": skill.source_kind.value,
             "skill_md": skill_path.read_text(encoding="utf-8"),
-            "rootseeker_skill_yaml": sidecar_path.read_text(encoding="utf-8") if sidecar_path.exists() else "",
+            "rootseeker_skill_yaml": sidecar_path.read_text(encoding="utf-8")
+            if sidecar_path.exists()
+            else "",
             "references": _read_skill_references(skill_dir),
             "runtime_spec": skill.model_dump(mode="json"),
             "tool_parameters": _skill_tool_parameters(runtime, skill),
@@ -1953,7 +2030,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.get("/api/plugins")
     def list_plugins() -> dict[str, Any]:
-        items = [plugin.model_dump(mode="json") for plugin in runtime.plugin_registry.list_plugins()]
+        items = [
+            plugin.model_dump(mode="json") for plugin in runtime.plugin_registry.list_plugins()
+        ]
         return {"items": items, "total": len(items)}
 
     @app.get("/api/tools")
@@ -1972,7 +2051,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/api/repo-remotes")
     def upsert_repo_remote(req: AdminRepoRemoteRequest) -> dict[str, Any]:
-        existing = next((item for item in store.list_repo_remotes() if item.get("name") == req.name), {})
+        existing = next(
+            (item for item in store.list_repo_remotes() if item.get("name") == req.name), {}
+        )
         token = req.token or str(existing.get("token") or "")
         git_username = _resolve_repo_remote_git_username(req, existing)
         provider = _normalize_repo_provider(str(req.provider or "github"))
@@ -2053,9 +2134,15 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         if isinstance(repo_payload, dict):
             store.upsert_repo(RepositoryRef.model_validate(repo_payload))
         if req.trigger_index:
-            sync_result = _invoke_admin_tool(runtime, "repo.sync", {"name": name, "trigger_index": True})
+            sync_result = _invoke_admin_tool(
+                runtime, "repo.sync", {"name": name, "trigger_index": True}
+            )
             _persist_repo_state(store, runtime, name)
-            return {"ok": bool(result.get("ok")) and bool(sync_result.get("ok")), "repo": repo_payload, "sync": sync_result}
+            return {
+                "ok": bool(result.get("ok")) and bool(sync_result.get("ok")),
+                "repo": repo_payload,
+                "sync": sync_result,
+            }
         return result
 
     @app.get("/api/repos/{repo_name}")
@@ -2128,7 +2215,12 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         store.delete_catalog(tenant, environment, service_name)
         # Runtime catalog is in-memory; rebuild deletion by replacing with config-backed entries.
         runtime.service_catalog.remove(tenant, environment, service_name)
-        return {"ok": True, "tenant": tenant, "environment": environment, "service_name": service_name}
+        return {
+            "ok": True,
+            "tenant": tenant,
+            "environment": environment,
+            "service_name": service_name,
+        }
 
     app.state.runtime = runtime
     return app

@@ -3,11 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
+from rootseeker.code_index.search_query import build_zoekt_search_query
 from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.contracts.report import CaseReport
-
-from rootseeker.code_index.search_query import build_zoekt_search_query
-from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 
 __all__ = ["RuleStepArgumentResolver", "build_notify_args"]
 
@@ -102,7 +101,9 @@ class RuleStepArgumentResolver:
                 or _path_from_symptom(symptom)
             )
             if not path:
-                return {"_skip_reason": "No code search hit, explicit code_path, or file path in symptom."}
+                return {
+                    "_skip_reason": "No code search hit, explicit code_path, or file path in symptom."
+                }
             payload: dict[str, Any] = {"path": str(path)}
             repo = service_name or _repo_from_code_search(step_outputs)
             if repo:
@@ -147,6 +148,7 @@ class RuleStepArgumentResolver:
         if action in {"graph.list_repos", "index.get_status", "repo.list"}:
             return {}
         return {}
+
 
 def build_notify_args(*, case_request: CaseCreateRequest, report: CaseReport) -> dict[str, Any]:
     cause_title = report.root_cause.title if report.root_cause is not None else "pending"

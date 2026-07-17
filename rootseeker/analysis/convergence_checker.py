@@ -59,9 +59,7 @@ class ConvergenceChecker:
         iterations_remaining = max(0, self._max_iterations - current_iteration)
 
         is_converged = (
-            confidence_met
-            and evidence_sufficient
-            and gap >= self._min_gap
+            confidence_met and evidence_sufficient and gap >= self._min_gap
         ) or current_iteration >= self._max_iterations
 
         recommendation = self._build_recommendation(

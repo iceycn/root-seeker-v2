@@ -19,17 +19,6 @@ from typing import Any
 from mcp_servers.external.jaeger_adapter import JaegerConfig, JaegerTraceAdapter
 from mcp_servers.external.sls_adapter import SlsConfig, SlsLogAdapter
 from mcp_servers.external.zoekt_adapter import ZoektCodeAdapter, ZoektConfig
-from rootseeker.code_index.internal_repo_tools import (
-    repo_get_tool,
-    repo_index_status_tool,
-    repo_list_tool,
-    repo_register_tool,
-    repo_semantic_search_tool,
-    repo_sync_all_tool,
-    repo_sync_changed_tool,
-    repo_sync_tool,
-    repo_unregister_tool,
-)
 from rootseeker.code_index.gitnexus_adapter import GitNexusAdapter
 from rootseeker.code_index.gitnexus_cli import GitNexusCliConfig
 from rootseeker.code_index.graph_tools import (
@@ -40,6 +29,17 @@ from rootseeker.code_index.graph_tools import (
     graph_list_repos_tool,
     graph_query_tool,
     graph_trace_tool,
+)
+from rootseeker.code_index.internal_repo_tools import (
+    repo_get_tool,
+    repo_index_status_tool,
+    repo_list_tool,
+    repo_register_tool,
+    repo_semantic_search_tool,
+    repo_sync_all_tool,
+    repo_sync_changed_tool,
+    repo_sync_tool,
+    repo_unregister_tool,
 )
 from rootseeker.code_index.lsp_tools import (
     find_symbol_references,

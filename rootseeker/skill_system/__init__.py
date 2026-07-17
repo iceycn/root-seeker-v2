@@ -2,7 +2,11 @@ from rootseeker.skill_system.composer import SkillComposer
 from rootseeker.skill_system.content_loader import SkillContentLoader, SkillStepContext
 from rootseeker.skill_system.discovery import discover_skill_files
 from rootseeker.skill_system.draft_builder import SkillDraft, SkillDraftBuilder
-from rootseeker.skill_system.parser import load_skill_body, load_skill_from_path, parse_skill_document
+from rootseeker.skill_system.parser import (
+    load_skill_body,
+    load_skill_from_path,
+    parse_skill_document,
+)
 from rootseeker.skill_system.publisher import PublishedSkill, PublishStatus, SkillPublisher
 from rootseeker.skill_system.registry import (
     DEFAULT_BUILTIN_SKILL_SLUG,

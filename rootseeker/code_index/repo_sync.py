@@ -42,7 +42,9 @@ def _git_subprocess_env() -> dict[str, str]:
     return env
 
 
-def _run_git(args: list[str], *, cwd: str | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
+def _run_git(
+    args: list[str], *, cwd: str | None = None, check: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Run a git command with UTF-8 decoding (Windows GBK-safe)."""
     return subprocess.run(
         args,
@@ -97,6 +99,7 @@ def _is_container_style_repo_path(value: str) -> bool:
 
 class RepoSyncResult:
     """同步结果"""
+
     def __init__(
         self,
         repo: RepositoryRef,
@@ -150,8 +153,16 @@ class RepoSyncService:
         self.base_path = Path(base_path) if base_path is not None else _get_default_base_path()
         self.base_path.mkdir(parents=True, exist_ok=True)
 
-        self.enable_zoekt = enable_zoekt if enable_zoekt is not None else os.getenv("ROOTSEEKER_REPO_ENABLE_ZOEKT", "true").lower() == "true"
-        self.enable_qdrant = enable_qdrant if enable_qdrant is not None else os.getenv("ROOTSEEKER_REPO_ENABLE_QDRANT", "true").lower() == "true"
+        self.enable_zoekt = (
+            enable_zoekt
+            if enable_zoekt is not None
+            else os.getenv("ROOTSEEKER_REPO_ENABLE_ZOEKT", "true").lower() == "true"
+        )
+        self.enable_qdrant = (
+            enable_qdrant
+            if enable_qdrant is not None
+            else os.getenv("ROOTSEEKER_REPO_ENABLE_QDRANT", "true").lower() == "true"
+        )
         self.enable_gitnexus = (
             enable_gitnexus
             if enable_gitnexus is not None
@@ -176,7 +187,9 @@ class RepoSyncService:
         gitnexus_cfg = gitnexus_config or GitNexusCliConfig.from_env()
         if enable_gitnexus is not None:
             gitnexus_cfg.enabled = bool(enable_gitnexus)
-        self.gitnexus_indexer = GitNexusIndexer(config=gitnexus_cfg) if self.enable_gitnexus else None
+        self.gitnexus_indexer = (
+            GitNexusIndexer(config=gitnexus_cfg) if self.enable_gitnexus else None
+        )
         self.credential_resolver = credential_resolver
 
     def register(self, repo: RepositoryRef) -> None:
@@ -341,7 +354,9 @@ class RepoSyncService:
                 repo.default_branch = branch
 
             # 更新同步状态
-            repo.sync_status.state = RepoSyncState.INDEXING if trigger_index else RepoSyncState.COMPLETED
+            repo.sync_status.state = (
+                RepoSyncState.INDEXING if trigger_index else RepoSyncState.COMPLETED
+            )
             repo.sync_status.last_sync_at = utc_now()
             repo.sync_status.commit_hash = commit_hash
             repo.local_path = str(local_path)
@@ -366,7 +381,9 @@ class RepoSyncService:
                     logger.info(f"Zoekt index status for {repo_name}: {zoekt_status.ready}")
 
                 if self.qdrant_indexer:
-                    qdrant_status = self.qdrant_indexer.index_chunks(repo_name=repo_name, chunks=chunks)
+                    qdrant_status = self.qdrant_indexer.index_chunks(
+                        repo_name=repo_name, chunks=chunks
+                    )
                     logger.info(f"Qdrant index status for {repo_name}: {qdrant_status.ready}")
 
                 if self.gitnexus_indexer:
@@ -436,7 +453,9 @@ class RepoSyncService:
                 message=error_msg,
             )
 
-    def sync_all(self, trigger_index: bool = True, *, force_gitnexus: bool = False) -> list[RepoSyncResult]:
+    def sync_all(
+        self, trigger_index: bool = True, *, force_gitnexus: bool = False
+    ) -> list[RepoSyncResult]:
         """同步所有仓库"""
         results = []
         for repo_name in list(self._repos.keys()):
@@ -468,7 +487,9 @@ class RepoSyncService:
                 detected = detect_remote_default_branch(clone_url)
                 if detected and detected != branch:
                     branch = detected
-                    fetch = _run_git(["git", "fetch", "origin", branch], cwd=str(local_path), check=False)
+                    fetch = _run_git(
+                        ["git", "fetch", "origin", branch], cwd=str(local_path), check=False
+                    )
             if fetch.returncode != 0:
                 detail = fetch.stderr or fetch.stdout or "git fetch failed"
                 raise subprocess.CalledProcessError(
@@ -513,7 +534,9 @@ class RepoSyncService:
                 failed_checks.append(
                     {
                         "repo_name": repo_name,
-                        "error": sanitize_git_error_message(result.message or "remote branch missing"),
+                        "error": sanitize_git_error_message(
+                            result.message or "remote branch missing"
+                        ),
                     }
                 )
                 logger.warning(
@@ -624,11 +647,19 @@ class RepoSyncService:
     def _run_git_fetch_reset(self, path: Path, branch: str) -> str | None:
         fetch = _run_git(["git", "fetch", "origin", branch], cwd=str(path), check=False)
         if fetch.returncode != 0:
-            return fetch.stderr or fetch.stdout or f"git fetch failed with exit code {fetch.returncode}"
+            return (
+                fetch.stderr
+                or fetch.stdout
+                or f"git fetch failed with exit code {fetch.returncode}"
+            )
 
         reset = _run_git(["git", "reset", "--hard", f"origin/{branch}"], cwd=str(path), check=False)
         if reset.returncode != 0:
-            return reset.stderr or reset.stdout or f"git reset failed with exit code {reset.returncode}"
+            return (
+                reset.stderr
+                or reset.stdout
+                or f"git reset failed with exit code {reset.returncode}"
+            )
         return None
 
     def _git_clone(self, url: str, path: Path, branch: str) -> tuple[str, str]:
@@ -664,10 +695,14 @@ class RepoSyncService:
         )
 
     def _run_git_clone(self, url: str, path: Path, branch: str) -> str | None:
-        result = _run_git(["git", "clone", "--branch", branch, "--single-branch", url, str(path)], check=False)
+        result = _run_git(
+            ["git", "clone", "--branch", branch, "--single-branch", url, str(path)], check=False
+        )
         if result.returncode == 0:
             return None
-        return result.stderr or result.stdout or f"git clone failed with exit code {result.returncode}"
+        return (
+            result.stderr or result.stdout or f"git clone failed with exit code {result.returncode}"
+        )
 
     def _get_commit_hash(self, path: Path) -> str:
         """获取当前 commit hash"""

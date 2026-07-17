@@ -44,4 +44,6 @@ class GatewayBroadcaster:
                 continue
             connection.inbox.append(event)
             delivered += 1
-        return BroadcastResult(topic=event.topic, delivered_count=delivered, dropped_clients=dropped)
+        return BroadcastResult(
+            topic=event.topic, delivered_count=delivered, dropped_clients=dropped
+        )

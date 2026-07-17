@@ -139,7 +139,9 @@ class ToolCallLoop:
             content_preview=self._preview(result.content),
             error_code=result.error.code if result.error is not None else None,
             error_message=result.error.message if result.error is not None else None,
-            plan_metadata={key: value for key, value in dict(plan_metadata or {}).items() if value is not None},
+            plan_metadata={
+                key: value for key, value in dict(plan_metadata or {}).items() if value is not None
+            },
         )
 
     def _preview(self, content: dict) -> dict:

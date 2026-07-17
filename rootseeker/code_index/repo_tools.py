@@ -154,7 +154,9 @@ def create_repo_handlers(sync_service: RepoSyncService | None = None) -> dict[st
 
         return {
             "ok": success,
-            "message": f"Repository {name} unregistered" if success else f"Repository {name} not found",
+            "message": f"Repository {name} unregistered"
+            if success
+            else f"Repository {name} not found",
         }
 
     def repo_sync_all(args: dict[str, Any]) -> dict[str, Any]:
@@ -196,10 +198,7 @@ def create_repo_handlers(sync_service: RepoSyncService | None = None) -> dict[st
         return {
             "ok": True,
             "repo_name": name,
-            "indexes": {
-                kind: status.model_dump(mode="json")
-                for kind, status in statuses.items()
-            },
+            "indexes": {kind: status.model_dump(mode="json") for kind, status in statuses.items()},
         }
 
     def repo_semantic_search(args: dict[str, Any]) -> dict[str, Any]:

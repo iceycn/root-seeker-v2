@@ -121,7 +121,11 @@ def build_zoekt_search_query(symptom: str, *, include_noise_filters: bool = True
         query = " ".join(ranked)
         return _with_filters(query, include_noise_filters)
 
-    words = [w for w in re.findall(r"[A-Za-z0-9_]+", first_line) if w.lower() not in _STOPWORDS and len(w) >= 3]
+    words = [
+        w
+        for w in re.findall(r"[A-Za-z0-9_]+", first_line)
+        if w.lower() not in _STOPWORDS and len(w) >= 3
+    ]
     if len(words) >= 2:
         phrase = " ".join(words[:8])
         return _with_filters(f'"{phrase}"', include_noise_filters)

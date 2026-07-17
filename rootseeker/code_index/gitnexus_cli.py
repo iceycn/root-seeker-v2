@@ -70,15 +70,20 @@ class GitNexusCliConfig:
     def from_env(cls) -> GitNexusCliConfig:
         enabled_raw = (os.getenv("ROOTSEEKER_REPO_ENABLE_GITNEXUS") or "true").strip().lower()
         timeout_raw = (os.getenv("ROOTSEEKER_GITNEXUS_TIMEOUT_SECONDS") or "").strip()
-        analyze_timeout_raw = (os.getenv("ROOTSEEKER_GITNEXUS_ANALYZE_TIMEOUT_SECONDS") or "").strip()
+        analyze_timeout_raw = (
+            os.getenv("ROOTSEEKER_GITNEXUS_ANALYZE_TIMEOUT_SECONDS") or ""
+        ).strip()
         workers_raw = (os.getenv("ROOTSEEKER_GITNEXUS_WORKERS") or "").strip()
         max_file_size_raw = (os.getenv("ROOTSEEKER_GITNEXUS_MAX_FILE_SIZE_KB") or "").strip()
         return cls(
             enabled=enabled_raw not in {"0", "false", "no", "off"},
             command=(os.getenv("ROOTSEEKER_GITNEXUS_COMMAND") or "").strip() or None,
             endpoint=(
-                (os.getenv("ROOTSEEKER_GITNEXUS_ENDPOINT") or os.getenv("GITNEXUS_ENDPOINT") or "")
-                .strip()
+                (
+                    os.getenv("ROOTSEEKER_GITNEXUS_ENDPOINT")
+                    or os.getenv("GITNEXUS_ENDPOINT")
+                    or ""
+                ).strip()
                 or None
             ),
             path_map=(os.getenv("ROOTSEEKER_GITNEXUS_PATH_MAP") or "").strip() or None,
@@ -150,7 +155,9 @@ class GitNexusCli:
             )
         if self.config.endpoint:
             return self._run_http(args, cwd=cwd, timeout_seconds=timeout_seconds)
-        return self._run_cli(args, cwd=cwd, timeout_seconds=timeout_seconds, prefer_json=prefer_json)
+        return self._run_cli(
+            args, cwd=cwd, timeout_seconds=timeout_seconds, prefer_json=prefer_json
+        )
 
     def analyze(
         self,
@@ -165,7 +172,9 @@ class GitNexusCli:
             args.append("--skip-agents-md")
         if self.config.skip_skills:
             args.append("--skip-skills")
-        args.extend(["--index-only", "--max-file-size", str(max(1, int(self.config.max_file_size_kb)))])
+        args.extend(
+            ["--index-only", "--max-file-size", str(max(1, int(self.config.max_file_size_kb)))]
+        )
         use_force = self.config.force_analyze if force is None else force
         if use_force:
             args.append("--force")
@@ -181,7 +190,9 @@ class GitNexusCli:
             prefer_json=False,
         )
 
-    def list_repos(self, *, limit: int | None = None, offset: int | None = None) -> GitNexusCommandResult:
+    def list_repos(
+        self, *, limit: int | None = None, offset: int | None = None
+    ) -> GitNexusCommandResult:
         args = ["list"]
         if limit is not None:
             args.extend(["--limit", str(limit)])
@@ -189,7 +200,9 @@ class GitNexusCli:
             args.extend(["--offset", str(offset)])
         return self.run(args)
 
-    def status(self, *, cwd: Path | str | None = None, repo: str | None = None) -> GitNexusCommandResult:
+    def status(
+        self, *, cwd: Path | str | None = None, repo: str | None = None
+    ) -> GitNexusCommandResult:
         args = ["status"]
         if repo:
             args.extend(["--repo", repo])

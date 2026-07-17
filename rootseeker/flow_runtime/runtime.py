@@ -23,7 +23,9 @@ class FlowRuntime:
 
     def run_default(self, case_request: CaseCreateRequest) -> FlowExecutionResult:
         result = self._executor.execute_default(case_request)
-        self.checkpoints.save(result.trace.execution_id, _build_checkpoint_payload(result, status="completed"))
+        self.checkpoints.save(
+            result.trace.execution_id, _build_checkpoint_payload(result, status="completed")
+        )
         return result
 
     def resume_default(

@@ -173,17 +173,21 @@ class SkillDraftBuilder:
         # Extract from contributing factors
         if report.root_cause and report.root_cause.contributing_factors:
             for factor in report.root_cause.contributing_factors[:3]:
-                triggers.append({
-                    "type": "keyword",
-                    "pattern": factor,
-                    "source": "auto_extracted",
-                })
+                triggers.append(
+                    {
+                        "type": "keyword",
+                        "pattern": factor,
+                        "source": "auto_extracted",
+                    }
+                )
 
         if not triggers:
-            triggers.append({
-                "type": "manual",
-                "description": "Manually configure triggers",
-            })
+            triggers.append(
+                {
+                    "type": "manual",
+                    "description": "Manually configure triggers",
+                }
+            )
 
         return triggers
 

@@ -67,7 +67,9 @@ class ReplayRunner:
                     replay_id=case.replay_id,
                     run_id=run_id,
                     case_id=run.case.case_id,
-                    skill_name=run.case.selected_skills[0] if run.case.selected_skills else "unknown",
+                    skill_name=run.case.selected_skills[0]
+                    if run.case.selected_skills
+                    else "unknown",
                     flow_plugin_id=DEFAULT_FLOW_PLUGIN_ID,
                     passed=run.case.status.value == "completed",
                     metrics=m,

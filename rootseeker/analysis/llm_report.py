@@ -8,14 +8,13 @@ from typing import Any
 
 import httpx
 
+from rootseeker.analysis.root_cause_engine import RootCauseAnalysisResult
+from rootseeker.contracts.evidence import ContextWindow, EvidencePack, RootCauseConclusion
+from rootseeker.contracts.report import CaseReport
 from rootseeker.infra_core.openai_compat import (
     build_openai_compat_chat_payload,
     build_openai_compat_headers,
 )
-
-from rootseeker.analysis.root_cause_engine import RootCauseAnalysisResult
-from rootseeker.contracts.evidence import ContextWindow, EvidencePack, RootCauseConclusion
-from rootseeker.contracts.report import CaseReport
 from rootseeker.infra_core.settings import RootSeekerSettings
 
 __all__ = [
@@ -82,7 +81,9 @@ class LlmReportResult:
     error: str | None = None
     reason: str | None = None
 
-    def to_payload(self, *, include_content: bool = True, include_raw: bool = False) -> dict[str, Any]:
+    def to_payload(
+        self, *, include_content: bool = True, include_raw: bool = False
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "ok": self.ok,
             "skipped": self.skipped,
@@ -259,7 +260,9 @@ def apply_llm_report_result(report: CaseReport, result: LlmReportResult) -> Case
 
     summary = _as_text(parsed.get("summary")) or report.summary
     root_cause = _build_root_cause_from_parsed(parsed, report.root_cause)
-    return report.model_copy(update={"summary": summary, "root_cause": root_cause, "metadata": metadata})
+    return report.model_copy(
+        update={"summary": summary, "root_cause": root_cause, "metadata": metadata}
+    )
 
 
 def parse_llm_report_content(content: str) -> dict[str, Any] | None:
@@ -324,7 +327,9 @@ def _build_root_cause_from_parsed(
         root_node.get("confidence", parsed.get("confidence")),
         fallback_confidence,
     )
-    factors = _string_list(root_node.get("contributing_factors") or parsed.get("contributing_factors"))
+    factors = _string_list(
+        root_node.get("contributing_factors") or parsed.get("contributing_factors")
+    )
     if not factors:
         factors = list(fallback_factors)
     return RootCauseConclusion(

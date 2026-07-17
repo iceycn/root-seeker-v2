@@ -162,4 +162,6 @@ def repo_semantic_search_tool(service: RepoSyncService, args: dict[str, Any]) ->
         return {"ok": False, "error": "query is required", "result": []}
     repo_name = args.get("repo_name")
     limit = int(args.get("limit", 10))
-    return service.semantic_search(query=query, repo_name=str(repo_name) if repo_name else None, limit=limit)
+    return service.semantic_search(
+        query=query, repo_name=str(repo_name) if repo_name else None, limit=limit
+    )

@@ -63,7 +63,9 @@ def _parse_field(raw: str, minimum: int, maximum: int) -> _CronField:
     if raw.startswith("*/"):
         step = _parse_int(raw[2:], minimum=1, maximum=maximum)
         return _CronField(values=frozenset(range(minimum, maximum + 1, step)))
-    values = frozenset(_parse_int(part, minimum=minimum, maximum=maximum) for part in raw.split(","))
+    values = frozenset(
+        _parse_int(part, minimum=minimum, maximum=maximum) for part in raw.split(",")
+    )
     return _CronField(values=values)
 
 

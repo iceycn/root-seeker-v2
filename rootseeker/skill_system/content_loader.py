@@ -5,7 +5,7 @@ from pathlib import Path
 
 from rootseeker.contracts.skill import SkillSpec, SkillStepDefinition
 from rootseeker.infra_core.settings import RootSeekerSettings
-from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME, load_skill_body
+from rootseeker.skill_system.parser import load_skill_body
 
 __all__ = ["SkillContentLoader", "SkillStepContext"]
 
@@ -98,10 +98,7 @@ class SkillContentLoader:
                 paths.extend(str(item).strip() for item in value if str(item).strip())
         refs_dir = self._skill_dir(tool_skill) / "references"
         if refs_dir.is_dir() and not paths:
-            paths.extend(
-                f"references/{path.name}"
-                for path in sorted(refs_dir.glob("*.md"))
-            )
+            paths.extend(f"references/{path.name}" for path in sorted(refs_dir.glob("*.md")))
         return paths
 
     def _apply_budget(self, context: SkillStepContext) -> SkillStepContext:

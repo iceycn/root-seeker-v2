@@ -8,9 +8,9 @@ from typing import Any
 
 from apps.admin.config_store import (
     ALLOWED_CRON_HANDLERS,
-    AdminConfigStore,
     BUILTIN_CRON_JOBS,
     DEFAULT_FLOW_REPLAY_JOB_ID,
+    AdminConfigStore,
 )
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.code_index.git_auth import GitCredentials
@@ -334,7 +334,9 @@ def _admin_repo_credential_resolver(store: AdminConfigStore):
         remote_name = str(metadata.get("remote_name") or "").strip()
         if not remote_name:
             return None
-        remote = next((item for item in store.list_repo_remotes() if item.get("name") == remote_name), None)
+        remote = next(
+            (item for item in store.list_repo_remotes() if item.get("name") == remote_name), None
+        )
         if remote is None:
             return None
         token = str(remote.get("token") or "").strip()
@@ -401,7 +403,9 @@ def _build_executor(repo_root: Path, *, admin_store: AdminConfigStore | None = N
             service = _build_repo_sync_service(repo_root, store)
             payload = repo_sync_all_tool(service, {"trigger_index": True})
             results = payload.get("results") or []
-            ok = bool(payload.get("ok", True)) and all(bool(item.get("success")) for item in results)
+            ok = bool(payload.get("ok", True)) and all(
+                bool(item.get("success")) for item in results
+            )
             return JobRunResult(
                 job_id=job.job_id,
                 status=JobRunStatus.SUCCEEDED if ok else JobRunStatus.FAILED,
@@ -439,7 +443,9 @@ def _build_executor(repo_root: Path, *, admin_store: AdminConfigStore | None = N
             status=status,
             started_at=started_at,
             finished_at=utc_now(),
-            message="" if status == JobRunStatus.SUCCEEDED else "deployment policy did not allow release",
+            message=""
+            if status == JobRunStatus.SUCCEEDED
+            else "deployment policy did not allow release",
             payload={
                 "task_id": executed.task_id,
                 "task_status": executed.status.value,
@@ -489,7 +495,9 @@ def _print_run_result(result: JobRunResult) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="rootseeker-scheduler", description="RootSeeker scheduler")
+    parser = argparse.ArgumentParser(
+        prog="rootseeker-scheduler", description="RootSeeker scheduler"
+    )
     parser.add_argument("--loop", action="store_true", help="run scheduler loop")
     parser.add_argument("--suite-name", default="cron-default-flow")
     parser.add_argument("--repeat-each", type=int, default=1)

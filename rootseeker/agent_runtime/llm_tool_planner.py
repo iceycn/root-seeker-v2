@@ -20,8 +20,7 @@ class LlmToolPlanner(Protocol):
         case_request: CaseCreateRequest,
         tools: list[ToolSpec],
         history_summary: str | None = None,
-    ) -> ToolPlanResult:
-        ...
+    ) -> ToolPlanResult: ...
 
 
 class OpenAICompatibleToolPlanner:

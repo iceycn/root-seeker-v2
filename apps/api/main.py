@@ -33,6 +33,7 @@ class WebhookResponse(BaseModel):
 
 class RegisterRepoRequest(BaseModel):
     """注册仓库请求"""
+
     name: str = Field(min_length=1, description="仓库名称")
     url: str = Field(min_length=1, description="Git 仓库 URL")
     branch: str = Field(default="main", description="默认分支")
@@ -41,12 +42,14 @@ class RegisterRepoRequest(BaseModel):
 
 class SyncRepoRequest(BaseModel):
     """同步仓库请求"""
+
     trigger_index: bool = Field(default=True, description="是否触发索引")
     force_reclone: bool = Field(default=False, description="是否删除本地目录后重新 clone")
 
 
 class RepoResponse(BaseModel):
     """仓库操作响应"""
+
     ok: bool
     message: str = ""
     repo: dict[str, Any] | None = None
@@ -54,6 +57,7 @@ class RepoResponse(BaseModel):
 
 class SyncRepoResponse(BaseModel):
     """同步仓库响应"""
+
     ok: bool
     repo_name: str
     message: str
@@ -65,6 +69,7 @@ class SyncRepoResponse(BaseModel):
 
 class ListRepoResponse(BaseModel):
     """仓库列表响应"""
+
     ok: bool
     repos: list[dict[str, Any]]
     total: int
@@ -113,6 +118,7 @@ class GraphTraceRequest(BaseModel):
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
     repo: str | None = None
+
 
 _REPO_REST_CASE_ID = "api-repo-rest"
 _REPO_REST_STEP_ID = "route"
@@ -328,7 +334,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
                         "name": step.name,
                         "status": step.status.value,
                         "tool_name": step.tool_name,
-                        "outputs": result.case.steps[idx].outputs if idx < len(result.case.steps) else {},
+                        "outputs": result.case.steps[idx].outputs
+                        if idx < len(result.case.steps)
+                        else {},
                     }
                     for idx, step in enumerate(trace.steps)
                 ],
@@ -360,10 +368,12 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         connection_id = conn.connection_id
 
         # Send connection established message
-        await websocket.send_json({
-            "frame_type": "connected",
-            "connection_id": connection_id,
-        })
+        await websocket.send_json(
+            {
+                "frame_type": "connected",
+                "connection_id": connection_id,
+            }
+        )
 
         # Start heartbeat task
         heartbeat_task = asyncio.create_task(ws_transport.heartbeat_loop(connection_id))
@@ -426,7 +436,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             },
         )
         if not content.get("ok"):
-            raise HTTPException(status_code=400, detail=str(content.get("error", "register failed")))
+            raise HTTPException(
+                status_code=400, detail=str(content.get("error", "register failed"))
+            )
 
         return RepoResponse(
             ok=True,
@@ -553,7 +565,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             {"query": req.query, "repo_name": req.repo_name, "limit": req.limit},
         )
         if not content.get("ok"):
-            raise HTTPException(status_code=400, detail=str(content.get("error", "semantic search failed")))
+            raise HTTPException(
+                status_code=400, detail=str(content.get("error", "semantic search failed"))
+            )
         return content
 
     @app.post("/code/find_callers")
@@ -568,7 +582,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/graph/impact")
     def graph_impact(req: GraphSymbolRequest) -> dict[str, Any]:
-        return _invoke_builtin_repo_tool(runtime, "graph.impact", req.model_dump(mode="json", exclude_none=True))
+        return _invoke_builtin_repo_tool(
+            runtime, "graph.impact", req.model_dump(mode="json", exclude_none=True)
+        )
 
     @app.post("/graph/context")
     def graph_context(req: GraphSymbolRequest) -> dict[str, Any]:
@@ -585,15 +601,21 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/graph/query")
     def graph_query(req: GraphQueryRequest) -> dict[str, Any]:
-        return _invoke_builtin_repo_tool(runtime, "graph.query", req.model_dump(mode="json", exclude_none=True))
+        return _invoke_builtin_repo_tool(
+            runtime, "graph.query", req.model_dump(mode="json", exclude_none=True)
+        )
 
     @app.post("/graph/cypher")
     def graph_cypher(req: GraphCypherRequest) -> dict[str, Any]:
-        return _invoke_builtin_repo_tool(runtime, "graph.cypher", req.model_dump(mode="json", exclude_none=True))
+        return _invoke_builtin_repo_tool(
+            runtime, "graph.cypher", req.model_dump(mode="json", exclude_none=True)
+        )
 
     @app.post("/graph/trace")
     def graph_trace(req: GraphTraceRequest) -> dict[str, Any]:
-        return _invoke_builtin_repo_tool(runtime, "graph.trace", req.model_dump(mode="json", exclude_none=True))
+        return _invoke_builtin_repo_tool(
+            runtime, "graph.trace", req.model_dump(mode="json", exclude_none=True)
+        )
 
     @app.post("/graph/list_repos")
     def graph_list_repos(limit: int | None = None, offset: int | None = None) -> dict[str, Any]:
@@ -606,7 +628,9 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.post("/graph/detect_changes")
     def graph_detect_changes(repo: str | None = None) -> dict[str, Any]:
-        return _invoke_builtin_repo_tool(runtime, "graph.detect_changes", {"repo": repo} if repo else {})
+        return _invoke_builtin_repo_tool(
+            runtime, "graph.detect_changes", {"repo": repo} if repo else {}
+        )
 
     app.state.runtime = runtime
     return app

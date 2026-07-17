@@ -19,11 +19,11 @@ from rootseeker.contracts.tool import ToolCallRequest, ToolCallResult
 from rootseeker.infra_core.settings import RootSeekerSettings
 from rootseeker.mcp_plane import McpGateway, ToolRegistry
 from rootseeker.skill_runtime.evidence_mapper import map_tool_result_to_evidence
-from rootseeker.skill_runtime.result_sanitize import sanitize_tool_result_for_persistence
 from rootseeker.skill_runtime.llm_step_argument_planner import (
     OpenAICompatibleStepArgumentPlanner,
     StepArgumentPlan,
 )
+from rootseeker.skill_runtime.result_sanitize import sanitize_tool_result_for_persistence
 from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumentResolver
 from rootseeker.skill_runtime.step_argument_validation import validate_step_arguments
 from rootseeker.skill_system.composer import SkillComposer
@@ -53,8 +53,10 @@ class StepArgumentPlanner:
         rule_resolver: RuleStepArgumentResolver | None = None,
     ) -> None:
         self.settings = settings or RootSeekerSettings()
-        self.llm_planner = llm_planner if llm_planner is not None else OpenAICompatibleStepArgumentPlanner.from_settings(
-            self.settings
+        self.llm_planner = (
+            llm_planner
+            if llm_planner is not None
+            else OpenAICompatibleStepArgumentPlanner.from_settings(self.settings)
         )
         self.rule_resolver = rule_resolver or RuleStepArgumentResolver()
 
@@ -95,7 +97,9 @@ class StepArgumentPlanner:
                     return llm_plan
 
         if not self.settings.skill_llm_argument_fallback_enabled:
-            return StepArgumentPlan(arguments={}, skip=True, skip_reason="LLM planning failed and fallback disabled.")
+            return StepArgumentPlan(
+                arguments={}, skip=True, skip_reason="LLM planning failed and fallback disabled."
+            )
 
         raw = self.rule_resolver.resolve(
             action,
@@ -194,7 +198,9 @@ def execute_skill_flow(
         if case_step.status == StepStatus.COMPLETED:
             if case_step.step_id in prior_outputs:
                 tool_skill = _resolve_tool_skill(skill_registry, flow_step)
-                prior_content = sanitize_tool_result_for_persistence(prior_outputs[case_step.step_id])
+                prior_content = sanitize_tool_result_for_persistence(
+                    prior_outputs[case_step.step_id]
+                )
                 prior_outputs[case_step.step_id] = prior_content
                 case_step.outputs = dict(prior_content)
                 map_tool_result_to_evidence(

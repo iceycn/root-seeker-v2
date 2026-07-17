@@ -61,7 +61,9 @@ class AttemptRunner:
         allow_default_fallback: bool = True,
     ) -> AttemptResult:
         history_summary = build_attempt_history_summary(prior_attempts or [])
-        prompt_messages = self.prompt_builder.build_messages(case_request, history_summary=history_summary)
+        prompt_messages = self.prompt_builder.build_messages(
+            case_request, history_summary=history_summary
+        )
         route = self.model_router.select_route(case_request)
         if route.mode == "llm_tool_plan" and self.tool_planner is not None:
             planned_attempt = self._run_llm_tool_plan(
@@ -154,7 +156,9 @@ class AttemptRunner:
             for step_id in list(pending_step_ids):
                 call = calls_by_step_id[step_id]
                 blocked_dependencies = [
-                    dep_step_id for dep_step_id in call.depends_on if dep_step_id in blocking_step_ids
+                    dep_step_id
+                    for dep_step_id in call.depends_on
+                    if dep_step_id in blocking_step_ids
                 ]
                 if not blocked_dependencies:
                     continue
@@ -182,7 +186,10 @@ class AttemptRunner:
             ready_step_ids = [
                 step_id
                 for step_id in pending_step_ids
-                if all(dep_step_id in finished_step_ids for dep_step_id in calls_by_step_id[step_id].depends_on)
+                if all(
+                    dep_step_id in finished_step_ids
+                    for dep_step_id in calls_by_step_id[step_id].depends_on
+                )
             ]
             if not ready_step_ids:
                 if skipped_this_wave:
@@ -305,7 +312,9 @@ def _build_failed_planner_attempt(
     reason: str,
     plan_result: ToolPlanResult | None = None,
 ) -> AttemptResult:
-    payload = plan_result.to_payload() if plan_result is not None else {"ok": False, "error": reason}
+    payload = (
+        plan_result.to_payload() if plan_result is not None else {"ok": False, "error": reason}
+    )
     if "error" not in payload:
         payload["error"] = reason
     return AttemptResult(
@@ -326,7 +335,9 @@ def _build_failed_planner_attempt(
     )
 
 
-def _build_case_from_plan(case_request: CaseCreateRequest, plan_result: ToolPlanResult) -> CaseRecord:
+def _build_case_from_plan(
+    case_request: CaseCreateRequest, plan_result: ToolPlanResult
+) -> CaseRecord:
     assert plan_result.plan is not None
     case_id = new_id("case-")
     skill_slug = "agent/llm-tool-plan"

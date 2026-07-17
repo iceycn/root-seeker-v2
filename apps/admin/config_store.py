@@ -234,7 +234,9 @@ class AdminConfigStore:
 
     def delete_repo_remote(self, name: str) -> None:
         data = self.load()
-        data["repo_remotes"] = [item for item in data.get("repo_remotes", []) if item.get("name") != name]
+        data["repo_remotes"] = [
+            item for item in data.get("repo_remotes", []) if item.get("name") != name
+        ]
         self.save(data)
 
     def list_catalog(self) -> list[ServiceCatalogEntry]:
@@ -299,7 +301,9 @@ class AdminConfigStore:
     def list_env_vars(self) -> list[dict[str, Any]]:
         return list(self.load().get("env_vars", []))
 
-    def upsert_env_var(self, key: str, value: str, *, secret: bool = False, scope: str = "runtime") -> None:
+    def upsert_env_var(
+        self, key: str, value: str, *, secret: bool = False, scope: str = "runtime"
+    ) -> None:
         if not key:
             raise ValueError("env key is required")
         data = self.load()
@@ -334,7 +338,9 @@ class AdminConfigStore:
 
     def delete_ai_provider(self, name: str) -> None:
         data = self.load()
-        data["ai_providers"] = [item for item in data.get("ai_providers", []) if item.get("name") != name]
+        data["ai_providers"] = [
+            item for item in data.get("ai_providers", []) if item.get("name") != name
+        ]
         settings = dict(data.get("settings", {}))
         if settings.get("ROOTSEEKER_DEFAULT_AI_PROVIDER") == name:
             settings.pop("ROOTSEEKER_DEFAULT_AI_PROVIDER", None)
@@ -416,7 +422,9 @@ class AdminConfigStore:
             # Builtin jobs: only name/schedule/timezone/enabled/notes are editable.
             payload = dict(existing)
             if "name" in incoming:
-                payload["name"] = str(incoming.get("name") or payload.get("name") or job_id).strip() or job_id
+                payload["name"] = (
+                    str(incoming.get("name") or payload.get("name") or job_id).strip() or job_id
+                )
             if "schedule" in incoming:
                 payload["schedule"] = str(incoming.get("schedule") or "").strip()
             if "timezone" in incoming:

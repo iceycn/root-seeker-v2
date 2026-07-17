@@ -9,7 +9,9 @@ from rootseeker.infra_core.secret_ref import SecretRef, SecretRefKind
 __all__ = ["resolve_secret"]
 
 
-def resolve_secret(ref: SecretRef, *, workspace_root: Path | None = None, timeout_seconds: float = 3.0) -> str:
+def resolve_secret(
+    ref: SecretRef, *, workspace_root: Path | None = None, timeout_seconds: float = 3.0
+) -> str:
     if ref.kind == SecretRefKind.ENV:
         value = os.getenv(ref.ref)
         if value is None:

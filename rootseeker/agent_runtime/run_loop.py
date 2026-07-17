@@ -27,7 +27,9 @@ class AgentRunLoop:
         self.flow_runtime = flow_runtime or FlowRuntime(runtime)
         self.attempt_runner = attempt_runner or AttemptRunner(self.flow_runtime)
         configured_attempts = RootSeekerSettings().agent_max_attempts
-        self.max_attempts = max(1, max_attempts if max_attempts is not None else configured_attempts)
+        self.max_attempts = max(
+            1, max_attempts if max_attempts is not None else configured_attempts
+        )
 
     def run(self, case_request: CaseCreateRequest) -> AgentRunResult:
         final_result: AgentRunResult | None = None

@@ -90,16 +90,18 @@ class JaegerTraceAdapter:
         if trace_data:
             for trace in trace_data:
                 for span in trace.get("spans", []):
-                    spans.append({
-                        "span_id": span.get("spanID", ""),
-                        "parent_span_id": span.get("parentSpanID", ""),
-                        "operation_name": span.get("operationName", ""),
-                        "service_name": span.get("process", {}).get("serviceName", ""),
-                        "start_ms": span.get("startTime", 0) // 1000,  # Convert to milliseconds
-                        "duration_ms": span.get("duration", 0) // 1000,
-                        "tags": span.get("tags", []),
-                        "logs": span.get("logs", []),
-                    })
+                    spans.append(
+                        {
+                            "span_id": span.get("spanID", ""),
+                            "parent_span_id": span.get("parentSpanID", ""),
+                            "operation_name": span.get("operationName", ""),
+                            "service_name": span.get("process", {}).get("serviceName", ""),
+                            "start_ms": span.get("startTime", 0) // 1000,  # Convert to milliseconds
+                            "duration_ms": span.get("duration", 0) // 1000,
+                            "tags": span.get("tags", []),
+                            "logs": span.get("logs", []),
+                        }
+                    )
 
         return {
             "trace_id": trace_id,
@@ -155,11 +157,14 @@ class JaegerTraceAdapter:
             traces = []
             for trace in data.get("data", []):
                 trace_id = trace.get("traceID", "")
-                traces.append({
-                    "trace_id": trace_id,
-                    "span_count": len(trace.get("spans", [])),
-                    "duration_ms": max(s.get("duration", 0) for s in trace.get("spans", [])) // 1000,
-                })
+                traces.append(
+                    {
+                        "trace_id": trace_id,
+                        "span_count": len(trace.get("spans", [])),
+                        "duration_ms": max(s.get("duration", 0) for s in trace.get("spans", []))
+                        // 1000,
+                    }
+                )
 
             return {
                 "traces": traces,

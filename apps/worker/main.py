@@ -75,9 +75,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="rootseeker-worker", description="RootSeeker worker")
     parser.add_argument("--loop", action="store_true", help="run worker polling loop")
     parser.add_argument("--interval-seconds", type=float, default=2.0)
-    parser.add_argument("--max-empty-polls", type=int, default=5, help="0 means unlimited idle polls")
+    parser.add_argument(
+        "--max-empty-polls", type=int, default=5, help="0 means unlimited idle polls"
+    )
     parser.add_argument("--max-runs", type=int, default=100, help="0 means unlimited task runs")
-    parser.add_argument("--seed-demo", action="store_true", help="submit one demo task before polling")
+    parser.add_argument(
+        "--seed-demo", action="store_true", help="submit one demo task before polling"
+    )
     return parser
 
 

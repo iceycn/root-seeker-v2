@@ -161,7 +161,9 @@ class FeishuChannelAdapter(ChannelAdapter):
                 error=str(e),
             )
 
-    def _build_content(self, msg_type: str, message: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _build_content(
+        self, msg_type: str, message: str, metadata: dict[str, Any]
+    ) -> dict[str, Any]:
         """Build Feishu message content based on type."""
         if msg_type == "text":
             return {"text": message}
@@ -221,7 +223,9 @@ class DingTalkChannelAdapter(ChannelAdapter):
                 error=str(e),
             )
 
-    def _build_content(self, msg_type: str, message: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _build_content(
+        self, msg_type: str, message: str, metadata: dict[str, Any]
+    ) -> dict[str, Any]:
         """Build DingTalk message content based on type."""
         if msg_type == "text":
             return {"content": message}
@@ -283,7 +287,9 @@ class WeChatWorkAdapter(ChannelAdapter):
                 error=str(e),
             )
 
-    def _build_content(self, msg_type: str, message: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    def _build_content(
+        self, msg_type: str, message: str, metadata: dict[str, Any]
+    ) -> dict[str, Any]:
         """Build WeChat Work message content based on type."""
         if msg_type == "text":
             return {"content": message}

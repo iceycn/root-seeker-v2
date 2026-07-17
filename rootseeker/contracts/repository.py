@@ -13,15 +13,17 @@ __all__ = ["RepositoryRef", "RepoSyncStatus", "RepoSyncState"]
 
 class RepoSyncState(StrEnum):
     """仓库同步状态"""
-    PENDING = "pending"          # 待同步
-    SYNCING = "syncing"          # 同步中
-    INDEXING = "indexing"        # 索引中
-    COMPLETED = "completed"      # 已完成
-    FAILED = "failed"            # 失败
+
+    PENDING = "pending"  # 待同步
+    SYNCING = "syncing"  # 同步中
+    INDEXING = "indexing"  # 索引中
+    COMPLETED = "completed"  # 已完成
+    FAILED = "failed"  # 失败
 
 
 class RepoSyncStatus(RootSeekerModel):
     """仓库同步状态详情"""
+
     state: RepoSyncState = RepoSyncState.PENDING
     last_sync_at: datetime | None = None
     last_index_at: datetime | None = None
@@ -33,6 +35,7 @@ class RepoSyncStatus(RootSeekerModel):
 
 class RepositoryRef(RootSeekerModel):
     """代码仓库引用"""
+
     name: str = Field(min_length=1, description="仓库名称，唯一标识")
     url: str | None = Field(default=None, description="Git 仓库 URL")
     default_branch: str | None = Field(default="main", description="默认分支")

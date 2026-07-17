@@ -115,7 +115,9 @@ class HypothesisValidator:
             content = self._get_item_content(item).lower()
             # Check if item indicates success but hypothesis suggests failure
             if any(ck in content for ck in contradiction_keywords):
-                if any(hk in hypothesis.statement.lower() for hk in ["error", "fail", "异常", "故障"]):
+                if any(
+                    hk in hypothesis.statement.lower() for hk in ["error", "fail", "异常", "故障"]
+                ):
                     contradicting += 1
 
         return contradicting
@@ -132,7 +134,21 @@ class HypothesisValidator:
     def _extract_keywords(self, text: str) -> list[str]:
         """Extract meaningful keywords from text."""
         # Simple keyword extraction - in production would use NLP
-        stop_words = {"the", "a", "an", "is", "are", "was", "were", "by", "for", "to", "of", "and", "or"}
+        stop_words = {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "by",
+            "for",
+            "to",
+            "of",
+            "and",
+            "or",
+        }
         words = text.lower().split()
         return [w for w in words if w not in stop_words and len(w) > 2]
 

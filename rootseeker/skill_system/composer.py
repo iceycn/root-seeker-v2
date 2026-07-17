@@ -3,7 +3,7 @@ from __future__ import annotations
 from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.contracts.skill import SkillExecutionPlan, SkillKind, SkillSpec
 from rootseeker.infra_core.settings import RootSeekerSettings
-from rootseeker.skill_system.registry import DEFAULT_FLOW_SKILL_SLUG, SkillRegistry
+from rootseeker.skill_system.registry import SkillRegistry
 
 __all__ = ["SkillComposer"]
 

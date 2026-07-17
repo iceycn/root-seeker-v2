@@ -34,7 +34,9 @@ def build_internal_adapter_from_settings(
 ) -> InternalToolAdapter:
     if settings.internal_adapter_kind == "http":
         if not settings.internal_http_base_url:
-            raise ValueError("ROOTSEEKER_INTERNAL_HTTP_BASE_URL is required when internal_adapter_kind=http")
+            raise ValueError(
+                "ROOTSEEKER_INTERNAL_HTTP_BASE_URL is required when internal_adapter_kind=http"
+            )
         return HttpInternalToolAdapter(
             base_url=settings.internal_http_base_url,
             timeout_seconds=settings.internal_http_timeout_seconds,

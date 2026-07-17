@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from rootseeker.contracts.case import CaseCreateRequest
+from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumentResolver
 
 __all__ = [
     "ToolPlan",
@@ -14,6 +15,8 @@ __all__ = [
     "build_default_tool_arguments",
     "parse_tool_plan_content",
 ]
+
+_rule_resolver = RuleStepArgumentResolver()
 
 
 @dataclass(frozen=True)
@@ -132,11 +135,6 @@ def parse_tool_plan_content(
         final_answer=final_answer if isinstance(final_answer, str) else None,
         raw=parsed,
     )
-
-
-from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumentResolver
-
-_rule_resolver = RuleStepArgumentResolver()
 
 
 def build_default_tool_arguments(tool_name: str, case_request: CaseCreateRequest) -> dict[str, Any]:

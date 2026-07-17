@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 __all__ = ["extract_call_chain_summary", "extract_exception_summary", "merge_call_chain_summaries"]
 

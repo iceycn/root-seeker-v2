@@ -164,4 +164,6 @@ INTERNAL_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def parameter_schema_for(tool_name: str) -> dict[str, Any]:
-    return dict(INTERNAL_TOOL_PARAMETER_SCHEMAS.get(tool_name, {"type": "object", "properties": {}}))
+    return dict(
+        INTERNAL_TOOL_PARAMETER_SCHEMAS.get(tool_name, {"type": "object", "properties": {}})
+    )

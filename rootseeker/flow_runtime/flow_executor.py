@@ -31,7 +31,9 @@ class FlowExecutor:
             case_steps=result.case.steps,
         )
         step_outputs = {step.step_id: dict(step.outputs) for step in result.case.steps}
-        return FlowExecutionResult(case_id=result.case.case_id, trace=trace, step_outputs=step_outputs)
+        return FlowExecutionResult(
+            case_id=result.case.case_id, trace=trace, step_outputs=step_outputs
+        )
 
     def execute_from_checkpoint(
         self,
@@ -55,4 +57,6 @@ class FlowExecutor:
             case_steps=result.case.steps,
         )
         step_outputs = {step.step_id: dict(step.outputs) for step in result.case.steps}
-        return FlowExecutionResult(case_id=result.case.case_id, trace=trace, step_outputs=step_outputs)
+        return FlowExecutionResult(
+            case_id=result.case.case_id, trace=trace, step_outputs=step_outputs
+        )

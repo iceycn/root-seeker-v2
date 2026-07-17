@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 class LspServerType(StrEnum):
     """支持的 LSP 服务器类型"""
+
     PYRIGHT = "pyright"
     PYLSP = "pylsp"
     GOPALS = "gopls"
@@ -36,6 +37,7 @@ class LspServerType(StrEnum):
 @dataclass
 class LspPosition:
     """LSP 位置"""
+
     line: int
     character: int
 
@@ -46,6 +48,7 @@ class LspPosition:
 @dataclass
 class LspRange:
     """LSP 范围"""
+
     start: LspPosition
     end: LspPosition
 
@@ -56,6 +59,7 @@ class LspRange:
 @dataclass
 class LspLocation:
     """LSP 位置（文件 + 范围）"""
+
     uri: str
     range: LspRange
 
@@ -66,6 +70,7 @@ class LspLocation:
 @dataclass
 class LspSymbolInfo:
     """符号信息"""
+
     name: str
     kind: int
     location: LspLocation
@@ -83,6 +88,7 @@ class LspSymbolInfo:
 @dataclass
 class LspClientConfig:
     """LSP 客户端配置"""
+
     server_type: LspServerType = LspServerType.PYRIGHT
     server_command: list[str] | None = None
     server_path: str | None = None
@@ -357,7 +363,9 @@ class LspClient:
             return LspLocation(
                 uri=uri,
                 range=LspRange(
-                    start=LspPosition(line=start.get("line", 0), character=start.get("character", 0)),
+                    start=LspPosition(
+                        line=start.get("line", 0), character=start.get("character", 0)
+                    ),
                     end=LspPosition(line=end.get("line", 0), character=end.get("character", 0)),
                 ),
             )
@@ -387,8 +395,7 @@ class LspClient:
             return contents.get("value", "")
         if isinstance(contents, list):
             return "\n".join(
-                c.get("value", str(c)) if isinstance(c, dict) else str(c)
-                for c in contents
+                c.get("value", str(c)) if isinstance(c, dict) else str(c) for c in contents
             )
         return None
 

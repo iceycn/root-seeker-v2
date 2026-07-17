@@ -119,6 +119,8 @@ class McpGateway:
             return result
 
         latency_ms = max(0, int((time.perf_counter() - started) * 1000))
-        result = ToolCallResult(ok=True, tool_name=request.tool_name, content=content, latency_ms=latency_ms)
+        result = ToolCallResult(
+            ok=True, tool_name=request.tool_name, content=content, latency_ms=latency_ms
+        )
         _audit(True, None, content)
         return result

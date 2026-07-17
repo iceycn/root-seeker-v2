@@ -57,7 +57,9 @@ class QdrantIndexer:
     ) -> None:
         self.endpoint = (endpoint or _get_default_endpoint()).rstrip("/")
         self.collection_name = collection_name or _get_default_collection_name()
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else _get_default_timeout()
+        self.timeout_seconds = (
+            timeout_seconds if timeout_seconds is not None else _get_default_timeout()
+        )
         self._api_key = api_key if api_key is not None else _get_default_api_key()
         self.embedding_provider = embedding_provider or build_embedding_provider_from_env()
 
@@ -167,7 +169,10 @@ class QdrantIndexer:
                 )
 
             embeddings = self.embedding_provider.embed_documents(
-                [self._embed_text(chunk.path, chunk.content, symbol=chunk.symbol) for chunk in chunks]
+                [
+                    self._embed_text(chunk.path, chunk.content, symbol=chunk.symbol)
+                    for chunk in chunks
+                ]
             )
             if len(embeddings) != len(chunks):
                 raise RuntimeError(
@@ -191,11 +196,13 @@ class QdrantIndexer:
                     payload["symbol"] = chunk.symbol
                 if chunk.symbol_kind:
                     payload["symbol_kind"] = chunk.symbol_kind
-                points.append({
-                    "id": self._point_id(chunk),
-                    "vector": embedding,
-                    "payload": payload,
-                })
+                points.append(
+                    {
+                        "id": self._point_id(chunk),
+                        "vector": embedding,
+                        "payload": payload,
+                    }
+                )
 
             batch_size = 128
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
@@ -258,16 +265,18 @@ class QdrantIndexer:
                 stable_key = (
                     f"{repo_name}:{file_info.get('path')}:{file_info.get('sha256', '')}:{i}"
                 )
-                points.append({
-                    "id": str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key)),
-                    "vector": embedding,
-                    "payload": {
-                        "repo": repo_name,
-                        "path": file_info.get("path"),
-                        "language": file_info.get("language", "unknown"),
-                        "content_preview": file_info.get("content", "")[:500],
-                    },
-                })
+                points.append(
+                    {
+                        "id": str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key)),
+                        "vector": embedding,
+                        "payload": {
+                            "repo": repo_name,
+                            "path": file_info.get("path"),
+                            "language": file_info.get("language", "unknown"),
+                            "content_preview": file_info.get("content", "")[:500],
+                        },
+                    }
+                )
 
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
                 response = client.put(
@@ -317,11 +326,7 @@ class QdrantIndexer:
             }
 
             if repo_name:
-                payload["filter"] = {
-                    "must": [
-                        {"key": "repo", "match": {"value": repo_name}}
-                    ]
-                }
+                payload["filter"] = {"must": [{"key": "repo", "match": {"value": repo_name}}]}
             payload["with_payload"] = True
 
             with httpx.Client(timeout=self.timeout_seconds, trust_env=False) as client:
@@ -350,7 +355,10 @@ class QdrantIndexer:
         Vector hits are re-ranked with lexical overlap against path/preview so
         weak hash embeddings do not surface unrelated corpora.
         """
-        from rootseeker.code_index.search_query import extract_code_identifiers, lexical_overlap_score
+        from rootseeker.code_index.search_query import (
+            extract_code_identifiers,
+            lexical_overlap_score,
+        )
 
         fetch_limit = max(limit, min(100, max(limit, 1) * max(1, candidate_multiplier)))
         vector = self.embedding_provider.embed_query(query)

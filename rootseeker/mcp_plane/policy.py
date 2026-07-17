@@ -33,12 +33,19 @@ class PolicyGuard:
     def enforce(self, request: ToolCallRequest, spec: ToolSpec) -> None:
         if self._deny_write and spec.permission_level != ToolPermissionLevel.READ:
             raise PolicyDeniedError(f"Write tool blocked by policy: {request.tool_name}")
-        if not self._require_approval_for_write or spec.permission_level == ToolPermissionLevel.READ:
+        if (
+            not self._require_approval_for_write
+            or spec.permission_level == ToolPermissionLevel.READ
+        ):
             return
         if self._approval_store is None:
             raise PolicyDeniedError(f"Approval store not configured for tool: {request.tool_name}")
-        approval_id = str(request.arguments.get("approval_id") or request.arguments.get("_approval_id") or "")
-        if approval_id and self._approval_store.is_approved_for(approval_id, request=request, spec=spec):
+        approval_id = str(
+            request.arguments.get("approval_id") or request.arguments.get("_approval_id") or ""
+        )
+        if approval_id and self._approval_store.is_approved_for(
+            approval_id, request=request, spec=spec
+        ):
             return
         approval = self._approval_store.create_for_tool(
             request=request,

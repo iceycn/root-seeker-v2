@@ -12,10 +12,14 @@ class StructuredLogger:
         self._records: list[dict[str, Any]] = []
 
     def info(self, event: str, payload: dict[str, Any] | None = None) -> None:
-        self._records.append({"level": "info", "event": event, "payload": redact_payload(payload or {})})
+        self._records.append(
+            {"level": "info", "event": event, "payload": redact_payload(payload or {})}
+        )
 
     def error(self, event: str, payload: dict[str, Any] | None = None) -> None:
-        self._records.append({"level": "error", "event": event, "payload": redact_payload(payload or {})})
+        self._records.append(
+            {"level": "error", "event": event, "payload": redact_payload(payload or {})}
+        )
 
     def list_records(self) -> list[dict[str, Any]]:
         return list(self._records)

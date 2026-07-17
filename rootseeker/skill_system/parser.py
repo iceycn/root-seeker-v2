@@ -98,7 +98,9 @@ def load_skill_from_path(path: Path) -> SkillSpec:
     skill_dir = path.parent
     sidecar = path.with_name(ROOTSEEKER_SKILL_SPEC_FILENAME)
     if not sidecar.exists():
-        return SkillSpec.model_validate(_normalize_skill_dict(_parse_frontmatter_dict(text), skill_dir=skill_dir))
+        return SkillSpec.model_validate(
+            _normalize_skill_dict(_parse_frontmatter_dict(text), skill_dir=skill_dir)
+        )
     frontmatter = _parse_frontmatter(text)
     data = _parse_rootseeker_skill_spec(sidecar)
     data.setdefault("name", frontmatter.get("name"))

@@ -8,7 +8,9 @@ from rootseeker.contracts.common import new_id
 __all__ = ["build_agent_event"]
 
 
-def build_agent_event(*, action: str, actor: str, target: str, detail: dict[str, Any]) -> AuditEvent:
+def build_agent_event(
+    *, action: str, actor: str, target: str, detail: dict[str, Any]
+) -> AuditEvent:
     return AuditEvent(
         event_id=new_id("agent-evt-"),
         category=AuditCategory.SYSTEM,

@@ -25,7 +25,9 @@ class PluginManifest(RootSeekerModel):
     description: str = ""
     enabled_by_default: bool = True
     capabilities: list[str] = Field(default_factory=list)
-    mcp_tools: list[str] = Field(default_factory=list, description="Tool names this plugin registers")
+    mcp_tools: list[str] = Field(
+        default_factory=list, description="Tool names this plugin registers"
+    )
     entry_point: str | None = Field(default=None, description="Importable module or package path")
     config_schema: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)

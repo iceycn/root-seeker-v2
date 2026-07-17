@@ -34,9 +34,8 @@ def _get_default_timeout() -> float:
 
 
 def _get_default_index_timeout() -> float:
-    raw = (
-        os.getenv("ROOTSEEKER_ZOEKT_INDEX_TIMEOUT_SECONDS")
-        or os.getenv("ZOEKT_INDEX_TIMEOUT_SECONDS")
+    raw = os.getenv("ROOTSEEKER_ZOEKT_INDEX_TIMEOUT_SECONDS") or os.getenv(
+        "ZOEKT_INDEX_TIMEOUT_SECONDS"
     )
     return float(raw) if raw else 600.0
 
@@ -46,10 +45,9 @@ def _get_default_index_dir() -> Path:
 
 
 def _get_default_index_endpoint() -> str | None:
-    explicit = (
-        (os.getenv("ROOTSEEKER_ZOEKT_INDEX_ENDPOINT") or "").strip()
-        or (os.getenv("ZOEKT_INDEX_ENDPOINT") or "").strip()
-    )
+    explicit = (os.getenv("ROOTSEEKER_ZOEKT_INDEX_ENDPOINT") or "").strip() or (
+        os.getenv("ZOEKT_INDEX_ENDPOINT") or ""
+    ).strip()
     if explicit:
         return explicit.rstrip("/")
     return None
@@ -83,7 +81,9 @@ class ZoektIndexer:
         index_timeout_seconds: float | None = None,
     ) -> None:
         self.endpoint = (endpoint or _get_default_endpoint()).rstrip("/")
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else _get_default_timeout()
+        self.timeout_seconds = (
+            timeout_seconds if timeout_seconds is not None else _get_default_timeout()
+        )
         self.index_timeout_seconds = (
             index_timeout_seconds
             if index_timeout_seconds is not None
@@ -120,7 +120,11 @@ class ZoektIndexer:
                 index_name=repo_name,
                 kind=IndexKind.ZOEKT,
                 ready=False,
-                detail={"error": "local_path is required for zoekt-index", "repo_url": repo_url, "branch": branch},
+                detail={
+                    "error": "local_path is required for zoekt-index",
+                    "repo_url": repo_url,
+                    "branch": branch,
+                },
             )
         if not path.exists():
             return IndexStatus(
@@ -150,8 +154,8 @@ class ZoektIndexer:
         assert self.index_endpoint is not None
         mapped = _rewrite_path_for_sidecar(str(path), self.path_map)
         remote_index_dir = (
-            (os.getenv("ROOTSEEKER_ZOEKT_REMOTE_INDEX_DIR") or "").strip() or "/data/index"
-        )
+            os.getenv("ROOTSEEKER_ZOEKT_REMOTE_INDEX_DIR") or ""
+        ).strip() or "/data/index"
         try:
             with httpx.Client(timeout=self.index_timeout_seconds, trust_env=False) as client:
                 response = client.post(
@@ -173,7 +177,9 @@ class ZoektIndexer:
                         ready=False,
                         detail={
                             "mode": "remote",
-                            "error": body.get("stderr") or body.get("error") or response.text[:4000],
+                            "error": body.get("stderr")
+                            or body.get("error")
+                            or response.text[:4000],
                             "status_code": response.status_code,
                             "local_path": str(path),
                             "mapped_path": mapped,

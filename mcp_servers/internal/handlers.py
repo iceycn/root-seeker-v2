@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from mcp_servers.internal.tool_schemas import parameter_schema_for
 from mcp_servers.internal.adapters import InternalToolAdapter
+from mcp_servers.internal.tool_schemas import parameter_schema_for
 from rootseeker.analysis.call_chain import extract_call_chain_summary, extract_exception_summary
 from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 from rootseeker.channel_routing import webhook_payload_to_case_create
@@ -47,7 +47,9 @@ def register_internal_tools(
             "symptom": case_request.symptom,
             "source": case_request.source,
             "severity": metadata.get("severity"),
-            "time_window": metadata.get("time_window") or metadata.get("start_time") or metadata.get("end_time"),
+            "time_window": metadata.get("time_window")
+            or metadata.get("start_time")
+            or metadata.get("end_time"),
             "code_path": metadata.get("code_path") or _extract_code_path(symptom_text),
             "code_symbol": metadata.get("code_symbol"),
             "exception_summary": extract_exception_summary(source_text),
@@ -57,7 +59,15 @@ def register_internal_tools(
         }
         missing_fields = [
             field
-            for field in ("service_name", "tenant", "environment", "trace_id", "symptom", "source", "time_window")
+            for field in (
+                "service_name",
+                "tenant",
+                "environment",
+                "trace_id",
+                "symptom",
+                "source",
+                "time_window",
+            )
             if not extracted.get(field) or extracted.get(field) in {"unknown", "unknown-service"}
         ]
         return {
@@ -545,5 +555,8 @@ def register_internal_tools(
 
 
 def _extract_code_path(symptom: str) -> str | None:
-    match = re.search(r"([A-Za-z0-9_./-]+\.(?:java|kt|py|go|ts|tsx|js|jsx|cs|rb|php|scala|rs|cpp|c|h))(?::\d+)?", symptom)
+    match = re.search(
+        r"([A-Za-z0-9_./-]+\.(?:java|kt|py|go|ts|tsx|js|jsx|cs|rb|php|scala|rs|cpp|c|h))(?::\d+)?",
+        symptom,
+    )
     return match.group(1) if match else None

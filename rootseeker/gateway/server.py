@@ -58,9 +58,9 @@ class GatewayServer:
             frame = GatewayRequestFrame.model_validate(payload)
         except ValidationError as exc:
             err = GatewayValidationError(str(exc))
-            return self._error_response(request_id=payload.get("request_id", "unknown"), err=err).model_dump(
-                mode="json"
-            )
+            return self._error_response(
+                request_id=payload.get("request_id", "unknown"), err=err
+            ).model_dump(mode="json")
         return self.handle_request(frame).model_dump(mode="json")
 
     def handle_request(self, frame: GatewayRequestFrame) -> GatewayResponseFrame:
@@ -112,7 +112,9 @@ class GatewayServer:
 
     def _register_builtin_methods(self) -> None:
         self.methods.register("system.ping", lambda _p: {"pong": True})
-        self.methods.register("system.list_methods", lambda _p: {"items": self.methods.list_methods()})
+        self.methods.register(
+            "system.list_methods", lambda _p: {"items": self.methods.list_methods()}
+        )
         self.methods.register("gateway.subscribe", self._method_subscribe)
         self.methods.register("gateway.unsubscribe", self._method_unsubscribe)
         self.methods.register("gateway.publish", self._method_publish)

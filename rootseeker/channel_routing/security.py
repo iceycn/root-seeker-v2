@@ -9,7 +9,9 @@ __all__ = ["ChannelSecurity"]
 
 
 class ChannelSecurity:
-    def __init__(self, *, allowlist_ips: set[str] | None = None, signing_secret: str | None = None) -> None:
+    def __init__(
+        self, *, allowlist_ips: set[str] | None = None, signing_secret: str | None = None
+    ) -> None:
         self._allowlist_ips = allowlist_ips or set()
         self._signing_secret = signing_secret
 

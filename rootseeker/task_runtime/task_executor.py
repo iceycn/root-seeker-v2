@@ -101,7 +101,9 @@ class TaskExecutor:
             task.payload["report_suite_name"] = result.report.suite_name
             task.payload["report_case_count"] = result.report.case_count
             task.payload["report_gate_passed"] = result.report.gate_passed
-            decision = DeploymentPolicyOrchestrator(self._runtime.approval_store).evaluate(result.report)
+            decision = DeploymentPolicyOrchestrator(self._runtime.approval_store).evaluate(
+                result.report
+            )
             task.payload["report_release_allowed"] = decision.release_allowed
             task.payload["deployment_decision"] = decision.to_payload()
             task.status = TaskStatus.COMPLETED

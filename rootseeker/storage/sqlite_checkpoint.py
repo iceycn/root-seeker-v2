@@ -41,7 +41,9 @@ class SqliteCheckpointStore:
                     updated_at TEXT NOT NULL
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_checkpoints_case ON checkpoints(flow_run_id)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_checkpoints_case ON checkpoints(flow_run_id)"
+            )
 
     def save(self, flow_run_id: str, payload: dict[str, Any]) -> None:
         existing = self.get_record(flow_run_id)

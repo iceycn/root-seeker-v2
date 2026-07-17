@@ -22,7 +22,9 @@ class MemoryServiceCatalog:
     def upsert(self, entry: ServiceCatalogEntry) -> None:
         self._by_key[self._key(entry.tenant, entry.environment, entry.service_name)] = entry
 
-    def resolve(self, tenant: str, environment: str, service_name: str) -> ServiceCatalogEntry | None:
+    def resolve(
+        self, tenant: str, environment: str, service_name: str
+    ) -> ServiceCatalogEntry | None:
         return self._by_key.get(self._key(tenant, environment, service_name))
 
     def list_entries(self) -> list[ServiceCatalogEntry]:
@@ -40,7 +42,9 @@ class MemoryServiceCatalog:
                 environment="prod",
                 service_name="api-gateway",
                 display_name="API Gateway",
-                log_sources=[{"type": "sls", "source_id": "lg-api", "project": "demo", "store": "ingress"}],
+                log_sources=[
+                    {"type": "sls", "source_id": "lg-api", "project": "demo", "store": "ingress"}
+                ],
                 trace_sources=[{"type": "jaeger", "source_id": "tr-api"}],
             )
         )

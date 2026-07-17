@@ -132,7 +132,9 @@ class HypothesisGenerator:
 
         return hypotheses[:5]  # Return top 5 hypotheses
 
-    def _find_matching_items(self, pack: EvidencePack, template: HypothesisTemplate) -> list[EvidenceItem]:
+    def _find_matching_items(
+        self, pack: EvidencePack, template: HypothesisTemplate
+    ) -> list[EvidenceItem]:
         """Find evidence items matching a template's keywords."""
         matching: list[EvidenceItem] = []
         for item in pack.items:
@@ -196,7 +198,9 @@ class HypothesisGenerator:
             },
         )
 
-    def _generate_type_hypotheses(self, pack: EvidencePack, used_items: set[str]) -> list[Hypothesis]:
+    def _generate_type_hypotheses(
+        self, pack: EvidencePack, used_items: set[str]
+    ) -> list[Hypothesis]:
         """Generate hypotheses based on evidence types."""
         type_groups: dict[str, list[EvidenceItem]] = {}
         for item in pack.items:

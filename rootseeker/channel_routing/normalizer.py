@@ -5,7 +5,12 @@ from typing import Any
 from rootseeker.analysis.service_identity import resolve_service_name
 from rootseeker.channel_routing.models import ChannelMessage, NormalizedInboundMessage
 
-__all__ = ["normalize_inbound", "normalize_aliyun_alert", "normalize_sls_alert", "normalize_prometheus_alert"]
+__all__ = [
+    "normalize_inbound",
+    "normalize_aliyun_alert",
+    "normalize_sls_alert",
+    "normalize_prometheus_alert",
+]
 
 
 def normalize_inbound(message: ChannelMessage) -> NormalizedInboundMessage:
@@ -23,7 +28,9 @@ def normalize_inbound(message: ChannelMessage) -> NormalizedInboundMessage:
 
     # Default webhook normalization
     title = str(payload.get("title") or payload.get("alert_name") or "Untitled alert")
-    symptom = str(payload.get("message") or payload.get("description") or payload.get("content") or title)
+    symptom = str(
+        payload.get("message") or payload.get("description") or payload.get("content") or title
+    )
     service_name = resolve_service_name(
         payload.get("service_name"),
         payload.get("service"),

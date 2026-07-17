@@ -201,7 +201,9 @@ class WebSocketTransport(GatewayTransport):
         # Handle ping/pong for heartbeat
         if frame_type == "ping":
             state.last_ping_at = utc_now()
-            await state.websocket.send_json({"frame_type": "pong", "timestamp": utc_now().isoformat()})
+            await state.websocket.send_json(
+                {"frame_type": "pong", "timestamp": utc_now().isoformat()}
+            )
             return None
 
         if frame_type == "pong":
@@ -278,6 +280,8 @@ class WebSocketTransport(GatewayTransport):
                     break
 
                 # Send ping
-                await state.websocket.send_json({"frame_type": "ping", "timestamp": utc_now().isoformat()})
+                await state.websocket.send_json(
+                    {"frame_type": "ping", "timestamp": utc_now().isoformat()}
+                )
         except Exception:
             await self.close(connection_id, reason="heartbeat_failed")

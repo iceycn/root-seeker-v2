@@ -20,7 +20,9 @@ class ContextCompactor:
     ) -> CompactedContext:
         source_size = _serialized_size(prompt_messages, tool_traces)
         token_estimate = max(1, source_size // 4) if source_size else 0
-        should_compact = len(tool_traces) > self.max_tool_traces or source_size > self.max_content_chars
+        should_compact = (
+            len(tool_traces) > self.max_tool_traces or source_size > self.max_content_chars
+        )
         if not should_compact:
             return CompactedContext(
                 compacted=False,
@@ -48,7 +50,9 @@ class ContextCompactor:
         )
 
 
-def _serialized_size(prompt_messages: list[dict[str, str]], tool_traces: list[ToolExecutionTrace]) -> int:
+def _serialized_size(
+    prompt_messages: list[dict[str, str]], tool_traces: list[ToolExecutionTrace]
+) -> int:
     payload = {
         "messages": prompt_messages,
         "tool_traces": [

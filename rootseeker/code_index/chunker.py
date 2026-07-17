@@ -54,10 +54,7 @@ class CodeChunk:
     @property
     def stable_key(self) -> str:
         symbol = self.symbol or ""
-        return (
-            f"{self.repo}:{self.path}:{self.start_line}:{self.end_line}:"
-            f"{symbol}:{self.sha256}"
-        )
+        return f"{self.repo}:{self.path}:{self.start_line}:{self.end_line}:{symbol}:{self.sha256}"
 
 
 _JAVA_TYPE_START = re.compile(
@@ -74,19 +71,15 @@ _JAVA_CTOR_START = re.compile(
 )
 _PY_DEF = re.compile(r"^(?P<indent>\s*)(?:async\s+)?def\s+(?P<name>[A-Za-z_][\w]*)\s*\(")
 _PY_CLASS = re.compile(r"^(?P<indent>\s*)class\s+(?P<name>[A-Za-z_][\w]*)\s*[:(]")
-_JS_FUNC = re.compile(
-    r"^\s*(?:export\s+)?(?:async\s+)?function\s+(?P<name>[A-Za-z_$][\w$]*)\s*\("
-)
+_JS_FUNC = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+(?P<name>[A-Za-z_$][\w$]*)\s*\(")
 _JS_CLASS = re.compile(r"^\s*(?:export\s+)?class\s+(?P<name>[A-Za-z_$][\w$]*)\b")
-_JS_METHOD = re.compile(
-    r"^\s*(?:async\s+)?(?P<name>[A-Za-z_$][\w$]*)\s*\([^;]*\)\s*\{"
-)
-_GO_FUNC = re.compile(
-    r"^func\s+(?:\([^)]+\)\s+)?(?P<name>[A-Za-z_][\w]*)\s*\("
-)
+_JS_METHOD = re.compile(r"^\s*(?:async\s+)?(?P<name>[A-Za-z_$][\w$]*)\s*\([^;]*\)\s*\{")
+_GO_FUNC = re.compile(r"^func\s+(?:\([^)]+\)\s+)?(?P<name>[A-Za-z_][\w]*)\s*\(")
 
 
-def chunk_code_file(repo_name: str, code_file: CodeFile, config: ChunkConfig | None = None) -> list[CodeChunk]:
+def chunk_code_file(
+    repo_name: str, code_file: CodeFile, config: ChunkConfig | None = None
+) -> list[CodeChunk]:
     cfg = config or ChunkConfig()
     lines = code_file.content.splitlines()
     if not lines:
@@ -165,7 +158,9 @@ def chunk_code_file(repo_name: str, code_file: CodeFile, config: ChunkConfig | N
     return chunks
 
 
-def chunk_code_files(repo_name: str, files: list[CodeFile], config: ChunkConfig | None = None) -> list[CodeChunk]:
+def chunk_code_files(
+    repo_name: str, files: list[CodeFile], config: ChunkConfig | None = None
+) -> list[CodeChunk]:
     chunks: list[CodeChunk] = []
     for code_file in files:
         chunks.extend(chunk_code_file(repo_name, code_file, config=config))
@@ -239,11 +234,15 @@ def _extract_python_spans(lines: list[str]) -> list[SymbolSpan]:
             continue
         class_match = _PY_CLASS.match(line)
         if class_match:
-            starts.append((idx + 1, len(class_match.group("indent")), class_match.group("name"), "class"))
+            starts.append(
+                (idx + 1, len(class_match.group("indent")), class_match.group("name"), "class")
+            )
             continue
         def_match = _PY_DEF.match(line)
         if def_match:
-            starts.append((idx + 1, len(def_match.group("indent")), def_match.group("name"), "function"))
+            starts.append(
+                (idx + 1, len(def_match.group("indent")), def_match.group("name"), "function")
+            )
 
     spans: list[SymbolSpan] = []
     for i, (start_line, indent, name, kind) in enumerate(starts):

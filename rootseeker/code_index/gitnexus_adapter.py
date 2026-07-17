@@ -327,7 +327,9 @@ class GitNexusAdapter:
             if not impact_payload.get("ok"):
                 last_error = str(impact_payload.get("stderr") or impact_payload.get("error") or "")
                 continue
-            callers = _extract_callers_from_impact(impact_payload.get("result"), max_depth=max_depth)
+            callers = _extract_callers_from_impact(
+                impact_payload.get("result"), max_depth=max_depth
+            )
             if callers:
                 return {
                     "ok": True,
@@ -338,7 +340,9 @@ class GitNexusAdapter:
                     "raw": impact_payload,
                 }
             context_payload = self.context(candidate, repo=repo, file=file)
-            callers = _extract_callers_from_context(context_payload.get("result"), max_depth=max_depth)
+            callers = _extract_callers_from_context(
+                context_payload.get("result"), max_depth=max_depth
+            )
             if callers:
                 return {
                     "ok": True,
@@ -365,7 +369,9 @@ def _repo_missing(payload: dict[str, Any]) -> bool:
             payload.get("stderr"),
             payload.get("stdout"),
             payload.get("error"),
-            (payload.get("result") or {}).get("error") if isinstance(payload.get("result"), dict) else "",
+            (payload.get("result") or {}).get("error")
+            if isinstance(payload.get("result"), dict)
+            else "",
         )
     ).lower()
     return "not found" in blob and "available" in blob
@@ -435,7 +441,15 @@ def _graph_hit_usable(data: Any) -> bool:
     if isinstance(data.get("by_depth"), dict) and any(data["by_depth"].values()):
         return True
     # context payloads: require actual relationship / process payload, not bare target
-    for key in ("incoming", "outgoing", "processes", "process", "categories", "categorized", "refs"):
+    for key in (
+        "incoming",
+        "outgoing",
+        "processes",
+        "process",
+        "categories",
+        "categorized",
+        "refs",
+    ):
         value = data.get(key)
         if value:
             return True
@@ -516,7 +530,9 @@ def _extract_callers_from_impact(data: Any, *, max_depth: int) -> list[dict[str,
             if isinstance(value, list):
                 items = value
                 break
-        by_depth = data.get("byDepth") if isinstance(data.get("byDepth"), dict) else data.get("by_depth")
+        by_depth = (
+            data.get("byDepth") if isinstance(data.get("byDepth"), dict) else data.get("by_depth")
+        )
         if not items and isinstance(by_depth, dict):
             for depth_key, group in by_depth.items():
                 if isinstance(group, list):
@@ -529,7 +545,9 @@ def _extract_callers_from_impact(data: Any, *, max_depth: int) -> list[dict[str,
                         items.append(item)
         if not items and isinstance(data.get("text"), str):
             return _parse_text_callers(data["text"], max_depth=max_depth)
-    return [_normalize_caller_item(item, default_depth=1) for item in items if item][: max(1, max_depth) * 20]
+    return [_normalize_caller_item(item, default_depth=1) for item in items if item][
+        : max(1, max_depth) * 20
+    ]
 
 
 def _extract_callers_from_context(data: Any, *, max_depth: int) -> list[dict[str, Any]]:
@@ -540,7 +558,9 @@ def _extract_callers_from_context(data: Any, *, max_depth: int) -> list[dict[str
     for key in ("incoming", "callers", "references", "refs", "used_by"):
         value = data.get(key)
         if isinstance(value, list) and value:
-            return [_normalize_caller_item(item, default_depth=1) for item in value][: max(1, max_depth) * 20]
+            return [_normalize_caller_item(item, default_depth=1) for item in value][
+                : max(1, max_depth) * 20
+            ]
     categorized = data.get("categorized") or data.get("refs")
     if isinstance(categorized, dict):
         for key in ("calls", "callers", "incoming", "references"):
@@ -622,7 +642,9 @@ def _parse_text_callers(text: str, *, max_depth: int) -> list[dict[str, Any]]:
         stripped = line.strip().lstrip("-*•").strip()
         if not stripped or len(stripped) < 3:
             continue
-        if any(token in stripped.lower() for token in ("upstream", "downstream", "impact", "depth")):
+        if any(
+            token in stripped.lower() for token in ("upstream", "downstream", "impact", "depth")
+        ):
             # Keep symbol-looking lines only.
             if "(" not in stripped and "." not in stripped:
                 continue

@@ -86,7 +86,9 @@ def _run_resume(repo_root: Path, args: argparse.Namespace) -> int:
 def _run_resume_list(repo_root: Path, args: argparse.Namespace) -> int:
     runtime = create_dev_runtime(repo_root)
     flow_runtime = FlowRuntime(runtime)
-    items = flow_runtime.list_checkpoints(case_id=args.case_id, status=args.status, limit=args.limit)
+    items = flow_runtime.list_checkpoints(
+        case_id=args.case_id, status=args.status, limit=args.limit
+    )
     print(f"checkpoint_count={len(items)}")
     for item in items:
         print(

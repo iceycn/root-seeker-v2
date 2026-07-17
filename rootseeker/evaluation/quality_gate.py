@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-__all__ = ["QualityGatePolicy", "QualityGateResult", "default_quality_gate_policy", "evaluate_quality_gate"]
+__all__ = [
+    "QualityGatePolicy",
+    "QualityGateResult",
+    "default_quality_gate_policy",
+    "evaluate_quality_gate",
+]
 
 
 @dataclass

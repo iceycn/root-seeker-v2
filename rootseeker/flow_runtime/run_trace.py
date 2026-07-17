@@ -37,7 +37,7 @@ def build_execution_trace(
     else:
         steps = [
             StepExecutionRecord(
-                step_id=f"step-{idx+1}",
+                step_id=f"step-{idx + 1}",
                 name=name,
                 status=StepStatus.COMPLETED,
             )

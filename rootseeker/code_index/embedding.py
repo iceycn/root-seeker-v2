@@ -22,11 +22,9 @@ __all__ = [
 class EmbeddingProvider(Protocol):
     dimension: int
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        ...
+    def embed_documents(self, texts: list[str]) -> list[list[float]]: ...
 
-    def embed_query(self, text: str) -> list[float]:
-        ...
+    def embed_query(self, text: str) -> list[float]: ...
 
 
 @dataclass
@@ -49,7 +47,9 @@ class HashEmbeddingProvider:
         vec = [0.0] * self.dimension
         tokens = self._tokens(text)
         for token in tokens:
-            digest = hashlib.blake2b(token.encode("utf-8", errors="ignore"), digest_size=16).digest()
+            digest = hashlib.blake2b(
+                token.encode("utf-8", errors="ignore"), digest_size=16
+            ).digest()
             for idx in range(0, len(digest), 2):
                 bucket = int.from_bytes(digest[idx : idx + 2], "big") % self.dimension
                 sign = 1.0 if digest[idx] % 2 == 0 else -1.0
@@ -94,7 +94,10 @@ class HttpEmbeddingProvider:
             response = client.post(url, json=payload, headers=self._headers())
             response.raise_for_status()
             data = response.json()
-        embeddings = [item["embedding"] for item in sorted(data.get("data", []), key=lambda item: item.get("index", 0))]
+        embeddings = [
+            item["embedding"]
+            for item in sorted(data.get("data", []), key=lambda item: item.get("index", 0))
+        ]
         if embeddings:
             self.dimension = len(embeddings[0])
         return embeddings

@@ -63,8 +63,12 @@ class SqliteReplayStore:
                     created_at TEXT NOT NULL
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_replay_cases_suite ON replay_cases(suite_name)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_replay_results_suite ON replay_results(suite_name)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_replay_cases_suite ON replay_cases(suite_name)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_replay_results_suite ON replay_results(suite_name)"
+            )
 
     def save_case(self, case_id: str, suite_name: str, payload: dict[str, Any]) -> None:
         with sqlite3.connect(self.db_path) as conn:
@@ -129,10 +133,19 @@ class SqliteReplayStore:
                 (result_id, suite_name, case_id, status, metrics, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (result_id, suite_name, case_id, status, json.dumps(metrics), utc_now().isoformat()),
+                (
+                    result_id,
+                    suite_name,
+                    case_id,
+                    status,
+                    json.dumps(metrics),
+                    utc_now().isoformat(),
+                ),
             )
 
-    def list_results(self, suite_name: str | None = None, limit: int = 100) -> list[ReplayResultRecord]:
+    def list_results(
+        self, suite_name: str | None = None, limit: int = 100
+    ) -> list[ReplayResultRecord]:
         with sqlite3.connect(self.db_path) as conn:
             if suite_name:
                 rows = conn.execute(

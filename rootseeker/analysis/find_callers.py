@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 __all__ = [
     "analyze_call_chain",
@@ -76,7 +77,7 @@ def align_runtime_static_chain(
 
     aligned: list[str] = []
     matched_indices: list[int] = []
-    for index, runtime_frame in enumerate(runtime_parsed):
+    for runtime_frame in runtime_parsed:
         signature = f"{runtime_frame['class_name']}.{runtime_frame['method_name']}"
         aligned.append(signature)
         for static_index, static_frame in enumerate(static_frames):
@@ -173,8 +174,7 @@ def analyze_call_chain(
                         "raw_ok": True,
                     },
                     "notes": (
-                        "基于 GitNexus 知识图谱的跨仓库 caller 追踪；"
-                        "失败时才会回退 Zoekt 启发式。"
+                        "基于 GitNexus 知识图谱的跨仓库 caller 追踪；失败时才会回退 Zoekt 启发式。"
                     ),
                 }
         graph_meta = {
@@ -195,9 +195,8 @@ def analyze_call_chain(
     )
     if graph_meta is not None:
         zoekt_result["graph"] = graph_meta
-        zoekt_result["notes"] = (
-            "GitNexus 无可用 caller，已回退 Zoekt 文本搜索启发式；"
-            + str(zoekt_result.get("notes") or "")
+        zoekt_result["notes"] = "GitNexus 无可用 caller，已回退 Zoekt 文本搜索启发式；" + str(
+            zoekt_result.get("notes") or ""
         )
     return zoekt_result
 
@@ -294,10 +293,9 @@ def _matches_expected_caller(
 ) -> bool:
     if expected is None:
         return False
-    return (
-        str(caller.get("caller_class") or "") == str(expected.get("class_name") or "")
-        and str(caller.get("caller_method") or "") == str(expected.get("method_name") or "")
-    )
+    return str(caller.get("caller_class") or "") == str(expected.get("class_name") or "") and str(
+        caller.get("caller_method") or ""
+    ) == str(expected.get("method_name") or "")
 
 
 def _caller_from_hit(
@@ -342,9 +340,11 @@ def _looks_like_definition(snippet: str, method_name: str) -> bool:
     stripped = snippet.strip()
     if not stripped:
         return False
-    if re.search(rf"\b(?:public|protected|private|static)\b.*\b{re.escape(method_name)}\s*\(", stripped):
+    if re.search(
+        rf"\b(?:public|protected|private|static)\b.*\b{re.escape(method_name)}\s*\(", stripped
+    ):
         return True
-    if re.search(rf"\b(?:class|interface|enum)\s+\w+", stripped):
+    if re.search(r"\b(?:class|interface|enum)\s+\w+", stripped):
         return True
     return False
 

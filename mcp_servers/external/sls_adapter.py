@@ -162,7 +162,9 @@ class SlsLogAdapter:
         if timestamp_raw is not None:
             try:
                 if isinstance(timestamp_raw, int | float) or str(timestamp_raw).isdigit():
-                    record["timestamp"] = datetime.fromtimestamp(float(timestamp_raw), UTC).isoformat()
+                    record["timestamp"] = datetime.fromtimestamp(
+                        float(timestamp_raw), UTC
+                    ).isoformat()
                 else:
                     record["timestamp"] = str(timestamp_raw)
             except Exception:

@@ -11,99 +11,78 @@ __all__ = ["HttpInternalToolAdapter", "InternalToolAdapter"]
 
 
 class InternalToolAdapter(Protocol):
-    def resolve_service(self, tenant: str, environment: str, service_name: str) -> ServiceCatalogEntry:
-        ...
+    def resolve_service(
+        self, tenant: str, environment: str, service_name: str
+    ) -> ServiceCatalogEntry: ...
 
-    def get_log_sources(self, tenant: str, environment: str, service_name: str) -> list[dict[str, Any]]:
-        ...
+    def get_log_sources(
+        self, tenant: str, environment: str, service_name: str
+    ) -> list[dict[str, Any]]: ...
 
-    def query_logs_by_trace_id(self, trace_id: str, service_name: str | None = None) -> dict[str, Any]:
-        ...
+    def query_logs_by_trace_id(
+        self, trace_id: str, service_name: str | None = None
+    ) -> dict[str, Any]: ...
 
-    def query_logs_by_template(self, template_id: str, service_name: str | None = None) -> dict[str, Any]:
-        ...
+    def query_logs_by_template(
+        self, template_id: str, service_name: str | None = None
+    ) -> dict[str, Any]: ...
 
-    def get_trace_chain(self, trace_id: str) -> dict[str, Any]:
-        ...
+    def get_trace_chain(self, trace_id: str) -> dict[str, Any]: ...
 
-    def search_code(self, query: str) -> dict[str, Any]:
-        ...
+    def search_code(self, query: str) -> dict[str, Any]: ...
 
-    def semantic_search_code(self, query: str, repo_name: str | None = None, limit: int = 10) -> dict[str, Any]:
-        ...
+    def semantic_search_code(
+        self, query: str, repo_name: str | None = None, limit: int = 10
+    ) -> dict[str, Any]: ...
 
-    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
-        ...
+    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]: ...
 
-    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def find_callers(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_context(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_query(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def graph_detect_changes(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def get_index_status(self) -> dict[str, Any]:
-        ...
+    def get_index_status(self) -> dict[str, Any]: ...
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]:
-        ...
+    def send_notification(self, channel: str, message: str) -> dict[str, Any]: ...
 
     # Repo operations
-    def repo_register(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_register(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_sync(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_sync(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_list(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_list(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_get(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_get(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_unregister(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_unregister(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_sync_all(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def repo_semantic_search(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def repo_semantic_search(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def lsp_references(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def lsp_references(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def lsp_definition(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def lsp_definition(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def lsp_hover(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def lsp_hover(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
-    def lsp_symbols(self, args: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def lsp_symbols(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
 
 @dataclass
@@ -181,7 +160,9 @@ class HttpInternalToolAdapter:
                 raise RuntimeError(f"unexpected response format: {type(data).__name__}")
             return data
 
-    def resolve_service(self, tenant: str, environment: str, service_name: str) -> ServiceCatalogEntry:
+    def resolve_service(
+        self, tenant: str, environment: str, service_name: str
+    ) -> ServiceCatalogEntry:
         data = self._post(
             self.route_resolve_service,
             {"tenant": tenant, "environment": environment, "service_name": service_name},
@@ -189,7 +170,9 @@ class HttpInternalToolAdapter:
         entry_payload = data.get("entry", data)
         return ServiceCatalogEntry.model_validate(entry_payload)
 
-    def get_log_sources(self, tenant: str, environment: str, service_name: str) -> list[dict[str, Any]]:
+    def get_log_sources(
+        self, tenant: str, environment: str, service_name: str
+    ) -> list[dict[str, Any]]:
         data = self._post(
             self.route_get_log_sources,
             {"tenant": tenant, "environment": environment, "service_name": service_name},
@@ -197,13 +180,17 @@ class HttpInternalToolAdapter:
         raw_sources = data.get("sources", [])
         return [dict(item) for item in raw_sources]
 
-    def query_logs_by_trace_id(self, trace_id: str, service_name: str | None = None) -> dict[str, Any]:
+    def query_logs_by_trace_id(
+        self, trace_id: str, service_name: str | None = None
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"trace_id": trace_id}
         if service_name:
             payload["service_name"] = service_name
         return self._post(self.route_query_log_by_trace, payload)
 
-    def query_logs_by_template(self, template_id: str, service_name: str | None = None) -> dict[str, Any]:
+    def query_logs_by_template(
+        self, template_id: str, service_name: str | None = None
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"template_id": template_id}
         if service_name:
             payload["service_name"] = service_name
@@ -215,7 +202,9 @@ class HttpInternalToolAdapter:
     def search_code(self, query: str) -> dict[str, Any]:
         return self._post(self.route_code_search, {"query": query})
 
-    def semantic_search_code(self, query: str, repo_name: str | None = None, limit: int = 10) -> dict[str, Any]:
+    def semantic_search_code(
+        self, query: str, repo_name: str | None = None, limit: int = 10
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {"query": query, "limit": limit}
         if repo_name:
             payload["repo_name"] = repo_name
@@ -232,19 +221,29 @@ class HttpInternalToolAdapter:
         )
 
     def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._post(self.route_graph_impact, args, timeout_seconds=self.find_callers_timeout_seconds)
+        return self._post(
+            self.route_graph_impact, args, timeout_seconds=self.find_callers_timeout_seconds
+        )
 
     def graph_context(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._post(self.route_graph_context, args, timeout_seconds=self.find_callers_timeout_seconds)
+        return self._post(
+            self.route_graph_context, args, timeout_seconds=self.find_callers_timeout_seconds
+        )
 
     def graph_query(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._post(self.route_graph_query, args, timeout_seconds=self.find_callers_timeout_seconds)
+        return self._post(
+            self.route_graph_query, args, timeout_seconds=self.find_callers_timeout_seconds
+        )
 
     def graph_cypher(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._post(self.route_graph_cypher, args, timeout_seconds=self.find_callers_timeout_seconds)
+        return self._post(
+            self.route_graph_cypher, args, timeout_seconds=self.find_callers_timeout_seconds
+        )
 
     def graph_trace(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._post(self.route_graph_trace, args, timeout_seconds=self.find_callers_timeout_seconds)
+        return self._post(
+            self.route_graph_trace, args, timeout_seconds=self.find_callers_timeout_seconds
+        )
 
     def graph_list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._post(self.route_graph_list_repos, args)
@@ -275,7 +274,9 @@ class HttpInternalToolAdapter:
         return self._post(self.route_repo_sync.format(name=name), payload)
 
     def repo_list(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._get(self.route_repo_list, params={k: v for k, v in args.items() if v is not None})
+        return self._get(
+            self.route_repo_list, params={k: v for k, v in args.items() if v is not None}
+        )
 
     def repo_get(self, args: dict[str, Any]) -> dict[str, Any]:
         name = str(args.get("name", ""))
@@ -291,7 +292,9 @@ class HttpInternalToolAdapter:
 
     def repo_sync_changed(self, args: dict[str, Any]) -> dict[str, Any]:
         trigger = args.get("trigger_index", True)
-        return self._post(f"{self.route_repo_sync_changed}?trigger_index={str(trigger).lower()}", {})
+        return self._post(
+            f"{self.route_repo_sync_changed}?trigger_index={str(trigger).lower()}", {}
+        )
 
     def repo_index_status(self, args: dict[str, Any]) -> dict[str, Any]:
         name = str(args.get("name", ""))

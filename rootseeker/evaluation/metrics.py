@@ -75,7 +75,10 @@ def _trace_found(run: DefaultFlowRunResult, trace_id: str) -> bool:
 
 
 def _sensitive_leaks(run: DefaultFlowRunResult) -> int:
-    corpus = [str(run.report.model_dump(mode="json")), str(run.evidence_pack.model_dump(mode="json"))]
+    corpus = [
+        str(run.report.model_dump(mode="json")),
+        str(run.evidence_pack.model_dump(mode="json")),
+    ]
     count = 0
     for text in corpus:
         for pattern in _SENSITIVE_PATTERNS:

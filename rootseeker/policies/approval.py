@@ -164,7 +164,9 @@ class ApprovalStore:
     def get(self, approval_id: str) -> ApprovalRequest | None:
         return self._items.get(approval_id)
 
-    def list(self, *, status: ApprovalStatus | str | None = None, limit: int = 200) -> list[ApprovalRequest]:
+    def list(
+        self, *, status: ApprovalStatus | str | None = None, limit: int = 200
+    ) -> list[ApprovalRequest]:
         items = list(self._items.values())
         if status is not None:
             expected = status if isinstance(status, ApprovalStatus) else ApprovalStatus(str(status))
@@ -172,7 +174,9 @@ class ApprovalStore:
         items.sort(key=lambda item: item.requested_at, reverse=True)
         return items[: max(0, limit)]
 
-    def approve(self, approval_id: str, *, actor: str = "system", reason: str = "") -> ApprovalRequest:
+    def approve(
+        self, approval_id: str, *, actor: str = "system", reason: str = ""
+    ) -> ApprovalRequest:
         approval = self._require(approval_id)
         approval.status = ApprovalStatus.APPROVED
         approval.decided_at = utc_now()
@@ -181,7 +185,9 @@ class ApprovalStore:
         self._emit("approval.approved", approval, actor=actor, reason=reason)
         return approval
 
-    def reject(self, approval_id: str, *, actor: str = "system", reason: str = "") -> ApprovalRequest:
+    def reject(
+        self, approval_id: str, *, actor: str = "system", reason: str = ""
+    ) -> ApprovalRequest:
         approval = self._require(approval_id)
         approval.status = ApprovalStatus.REJECTED
         approval.decided_at = utc_now()
@@ -190,7 +196,9 @@ class ApprovalStore:
         self._emit("approval.rejected", approval, actor=actor, reason=reason)
         return approval
 
-    def is_approved_for(self, approval_id: str, *, request: ToolCallRequest, spec: ToolSpec) -> bool:
+    def is_approved_for(
+        self, approval_id: str, *, request: ToolCallRequest, spec: ToolSpec
+    ) -> bool:
         approval = self.get(approval_id)
         if approval is None or approval.status != ApprovalStatus.APPROVED:
             return False

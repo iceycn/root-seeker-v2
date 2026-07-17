@@ -31,7 +31,7 @@ def render_prometheus_metrics(runtime: DevRuntime) -> str:
                 [
                     f"# HELP rootseeker_{name}_total RootSeeker {name} total.",
                     f"# TYPE rootseeker_{name}_total gauge",
-                    f'rootseeker_{name}_total {count}',
+                    f"rootseeker_{name}_total {count}",
                 ]
             )
         lines.extend(
@@ -87,7 +87,9 @@ def _render_runtime_activity_metrics(runtime: DevRuntime) -> list[str]:
             f'{{tool_name="{_escape_label(tool_name)}",ok="{ok}",error_code="{_escape_label(error_code)}"}} {count}'
         )
 
-    approval_counts = Counter(item.status.value for item in runtime.approval_store.list(limit=100000))
+    approval_counts = Counter(
+        item.status.value for item in runtime.approval_store.list(limit=100000)
+    )
     lines.extend(
         [
             "# HELP rootseeker_approvals_total Approval requests by status.",
@@ -95,5 +97,7 @@ def _render_runtime_activity_metrics(runtime: DevRuntime) -> list[str]:
         ]
     )
     for status in ("pending", "approved", "rejected"):
-        lines.append(f'rootseeker_approvals_total{{status="{status}"}} {approval_counts.get(status, 0)}')
+        lines.append(
+            f'rootseeker_approvals_total{{status="{status}"}} {approval_counts.get(status, 0)}'
+        )
     return lines

@@ -35,11 +35,12 @@ class ZoektConfig:
     @classmethod
     def from_env(cls) -> ZoektConfig:
         """Load configuration from environment variables."""
-        endpoint = (
-            (os.getenv("ZOEKT_ENDPOINT") or "").strip()
-            or (os.getenv("ROOTSEEKER_ZOEKT_ENDPOINT") or "").strip()
+        endpoint = (os.getenv("ZOEKT_ENDPOINT") or "").strip() or (
+            os.getenv("ROOTSEEKER_ZOEKT_ENDPOINT") or ""
+        ).strip()
+        timeout_raw = os.getenv("ZOEKT_TIMEOUT_SECONDS") or os.getenv(
+            "ROOTSEEKER_ZOEKT_TIMEOUT_SECONDS"
         )
-        timeout_raw = os.getenv("ZOEKT_TIMEOUT_SECONDS") or os.getenv("ROOTSEEKER_ZOEKT_TIMEOUT_SECONDS")
         timeout_seconds = float(timeout_raw) if timeout_raw else 10.0
         return cls(
             endpoint=endpoint,
@@ -208,23 +209,27 @@ class ZoektCodeAdapter:
         for ent in lst.get("Repos") or []:
             rm = ent.get("Repository") or {}
             im = ent.get("IndexMetadata") or {}
-            repos.append({
-                "name": rm.get("Name", ""),
-                "url": rm.get("URL", ""),
-                "source": (rm.get("Source") or "").strip(),
-                "index_time": im.get("IndexTime", ""),
-                "branches": rm.get("Branches") or [],
-            })
+            repos.append(
+                {
+                    "name": rm.get("Name", ""),
+                    "url": rm.get("URL", ""),
+                    "source": (rm.get("Source") or "").strip(),
+                    "index_time": im.get("IndexTime", ""),
+                    "branches": rm.get("Branches") or [],
+                }
+            )
 
         if not repos:
             for repo in data.get("RepoList") or []:
-                repos.append({
-                    "name": repo.get("Name", ""),
-                    "url": repo.get("URL", ""),
-                    "source": "",
-                    "index_time": repo.get("IndexTime", ""),
-                    "branches": repo.get("Branches") or [],
-                })
+                repos.append(
+                    {
+                        "name": repo.get("Name", ""),
+                        "url": repo.get("URL", ""),
+                        "source": "",
+                        "index_time": repo.get("IndexTime", ""),
+                        "branches": repo.get("Branches") or [],
+                    }
+                )
         return repos
 
     def _local_repo_root(self, repo: str | None, path: str | None = None) -> Path | None:
@@ -332,14 +337,16 @@ class ZoektCodeAdapter:
                     line_num = line_match.get("LineNumber", 0)
                     line_cell = line_match.get("Line", "")
                     snippet = _snippet_from_zoekt_line(line_cell)
-                    hits.append({
-                        "repo": repo,
-                        "path": file_name,
-                        "line_start": line_num,
-                        "line_end": line_num,
-                        "snippet": snippet.strip(),
-                        "score": float(line_match.get("Score") or 0.0),
-                    })
+                    hits.append(
+                        {
+                            "repo": repo,
+                            "path": file_name,
+                            "line_start": line_num,
+                            "line_end": line_num,
+                            "snippet": snippet.strip(),
+                            "score": float(line_match.get("Score") or 0.0),
+                        }
+                    )
         elif isinstance(result, list):
             for res in result:
                 repo_name = res.get("Repository", "")
@@ -353,14 +360,16 @@ class ZoektCodeAdapter:
                             snippet_use = snippet_try if snippet_try else snippet.strip()
                         else:
                             snippet_use = str(snippet or "")
-                        hits.append({
-                            "repo": repo_name,
-                            "path": file_name,
-                            "line_start": line_num,
-                            "line_end": line_num,
-                            "snippet": snippet_use,
-                            "score": float(line_match.get("Score") or 0.0),
-                        })
+                        hits.append(
+                            {
+                                "repo": repo_name,
+                                "path": file_name,
+                                "line_start": line_num,
+                                "line_end": line_num,
+                                "snippet": snippet_use,
+                                "score": float(line_match.get("Score") or 0.0),
+                            }
+                        )
 
         hits.sort(key=lambda item: float(item.get("score") or 0.0), reverse=True)
         truncated = len(hits) > max_hits
@@ -480,12 +489,14 @@ class ZoektCodeAdapter:
 
             repos = []
             for r in self._normalized_repos_from_list(data):
-                repos.append({
-                    "name": r["name"],
-                    "url": r["url"],
-                    "index_time": r["index_time"],
-                    "branches": r["branches"],
-                })
+                repos.append(
+                    {
+                        "name": r["name"],
+                        "url": r["url"],
+                        "index_time": r["index_time"],
+                        "branches": r["branches"],
+                    }
+                )
 
             return {
                 "ready": True,

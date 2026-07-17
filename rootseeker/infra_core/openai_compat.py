@@ -103,8 +103,11 @@ def resolve_mimo_base_url(
     url = _normalized(base_url)
 
     if provider_type == "anthropic_compatible":
-        if is_mimo_token_plan_key(key) or not url or url in _LEGACY_MIMO_BASE_URLS or url == _normalized(
-            MIMO_PAYG_BASE_URL
+        if (
+            is_mimo_token_plan_key(key)
+            or not url
+            or url in _LEGACY_MIMO_BASE_URLS
+            or url == _normalized(MIMO_PAYG_BASE_URL)
         ):
             return MIMO_TOKEN_PLAN_CN_ANTHROPIC_BASE_URL
         return url
