@@ -4,6 +4,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -247,7 +248,7 @@ class RepoSyncService:
         if not path.exists():
             return
 
-        def _onexc(func: Any, p: str, exc: BaseException) -> None:  # noqa: ANN401
+        def _clear_and_retry(func: Any, p: str, exc: BaseException) -> None:  # noqa: ANN401
             try:
                 Path(p).chmod(0o700)
             except OSError:
@@ -257,7 +258,15 @@ class RepoSyncService:
             except OSError as retry_exc:
                 raise retry_exc from exc
 
-        shutil.rmtree(path, onexc=_onexc)
+        # Python 3.12+ uses onexc; 3.11 still expects onerror(func, path, exc_info).
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_clear_and_retry)
+        else:
+
+            def _onerror(func: Any, p: str, exc_info: Any) -> None:  # noqa: ANN401
+                _clear_and_retry(func, p, exc_info[1])
+
+            shutil.rmtree(path, onerror=_onerror)
 
     def _is_usable_git_repo(self, path: Path) -> bool:
         """True when path is a git work tree with a resolvable HEAD commit."""

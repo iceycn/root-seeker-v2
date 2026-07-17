@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -21,8 +22,10 @@ def test_admin_health_status_and_page(tmp_path: Path) -> None:
 
     page = client.get("/admin")
     assert page.status_code == 200
-    assert '<div id="root">' in page.text
-    assert "/assets/" in page.text
+    # Prefer built SPA when dist exists; otherwise accept embedded fallback console.
+    assert ('<div id="root">' in page.text) or ("RootSeeker Admin" in page.text)
+    if '<div id="root">' in page.text:
+        assert "/assets/" in page.text
 
     status = client.get("/api/status")
     assert status.status_code == 200
@@ -38,7 +41,7 @@ def test_admin_builtin_skill_content_returns_standard_skill_md() -> None:
     data = response.json()
     assert data["skill_md"].startswith("---\nname: Default log triage\n")
     assert "rootseeker-skill-spec" not in data["skill_md"]
-    assert "\"slug\"" not in data["skill_md"]
+    assert '"slug"' not in data["skill_md"]
     assert data["runtime_spec"]["slug"] == "flows/default-log-triage"
     assert "flows/default-log-triage" in data["rootseeker_skill_yaml"]
     assert "tool_parameters" in data
@@ -224,7 +227,9 @@ def test_admin_discover_yunxiao_uses_list_payload_without_enrichment() -> None:
         per_page=50,
     )
 
-    with patch("apps.admin.main.get_with_retry", return_value=FakeResponse()) as get_with_retry_mock:
+    with patch(
+        "apps.admin.main.get_with_retry", return_value=FakeResponse()
+    ) as get_with_retry_mock:
         with patch("apps.admin.main._enrich_yunxiao_repos_parallel") as enrich_mock:
             result = _discover_remote_repos(req)
 
@@ -292,15 +297,16 @@ def test_admin_discover_yunxiao_enriches_when_list_lacks_clone_url() -> None:
 def test_admin_public_discovered_repo_strips_raw_payload() -> None:
     from apps.admin.main import _public_discovered_repo
 
-    payload = _public_discovered_repo({"name": "demo", "default_branch": "master", "raw": {"id": 1}})
+    payload = _public_discovered_repo(
+        {"name": "demo", "default_branch": "master", "raw": {"id": 1}}
+    )
     assert "raw" not in payload
     assert payload["default_branch"] == "master"
 
 
 def test_admin_annotate_discovered_repo_import_status_matches_full_name_and_url() -> None:
-    from rootseeker.contracts.repository import RepositoryRef, RepoSyncState, RepoSyncStatus
-
     from apps.admin.main import _annotate_discovered_repos_import_status
+    from rootseeker.contracts.repository import RepositoryRef, RepoSyncState, RepoSyncStatus
 
     registered = [
         RepositoryRef(
@@ -334,9 +340,8 @@ def test_admin_annotate_discovered_repo_import_status_matches_full_name_and_url(
 
 
 def test_admin_annotate_discovered_repo_marks_failed_as_reimportable() -> None:
-    from rootseeker.contracts.repository import RepositoryRef, RepoSyncState, RepoSyncStatus
-
     from apps.admin.main import _annotate_discovered_repos_import_status
+    from rootseeker.contracts.repository import RepositoryRef, RepoSyncState, RepoSyncStatus
 
     registered = [
         RepositoryRef(
@@ -347,7 +352,13 @@ def test_admin_annotate_discovered_repo_marks_failed_as_reimportable() -> None:
             metadata={"full_name": "org/repo", "source": "remote"},
         )
     ]
-    repos = [{"full_name": "org/repo", "clone_url": "https://codeup.aliyun.com/org/repo.git", "provider": "yunxiao"}]
+    repos = [
+        {
+            "full_name": "org/repo",
+            "clone_url": "https://codeup.aliyun.com/org/repo.git",
+            "provider": "yunxiao",
+        }
+    ]
 
     annotated = _annotate_discovered_repos_import_status(repos, registered)
 
@@ -364,9 +375,11 @@ def test_admin_discover_requires_existing_repo_remote(tmp_path: Path) -> None:
     assert response.status_code == 404
 
 
-def test_admin_discover_from_remote_prefers_request_owner_over_remote_default(tmp_path: Path) -> None:
-    from apps.admin.main import AdminDiscoverReposFromRemoteRequest, _discover_repos_from_remote
+def test_admin_discover_from_remote_prefers_request_owner_over_remote_default(
+    tmp_path: Path,
+) -> None:
     from apps.admin.config_store import AdminConfigStore
+    from apps.admin.main import AdminDiscoverReposFromRemoteRequest, _discover_repos_from_remote
 
     store = AdminConfigStore(tmp_path / "admin" / "config.json")
     store.upsert_repo_remote(
@@ -515,7 +528,9 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
 def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
 
-    response = client.post("/api/error-chat", json={"content": "NullPointerException at Foo.java:12"})
+    response = client.post(
+        "/api/error-chat", json={"content": "NullPointerException at Foo.java:12"}
+    )
 
     assert response.status_code == 200
     item = response.json()["item"]
@@ -603,9 +618,7 @@ def test_build_llm_error_chat_payload_stays_under_kimi_limit() -> None:
                 "metadata": {},
             }
         ),
-        evidence_pack=SimpleNamespace(
-            items=[_evidence_namespace(item) for item in evidence_items]
-        ),
+        evidence_pack=SimpleNamespace(items=[_evidence_namespace(item) for item in evidence_items]),
     )
 
     payload = _build_llm_error_chat_payload(content=huge, flow_result=flow_result)
@@ -650,4 +663,7 @@ def test_build_llm_error_chat_payload_hard_truncates_when_still_over_limit() -> 
     )
     serialized = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     assert len(serialized) <= 8_000
-    assert payload.get("truncation", {}).get("reason") in {"payload_too_large", "payload_hard_truncated"}
+    assert payload.get("truncation", {}).get("reason") in {
+        "payload_too_large",
+        "payload_hard_truncated",
+    }
