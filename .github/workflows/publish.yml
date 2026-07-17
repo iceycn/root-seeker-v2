@@ -1,13 +1,33 @@
 name: Publish
 
 on:
+  push:
+    branches: [main, master]
+    paths:
+      - "Dockerfile"
+      - "docker/**"
+      - "docker-compose.yml"
+      - "apps/**"
+      - "rootseeker/**"
+      - "mcp_servers/**"
+      - "plugins/**"
+      - "skills/**"
+      - "pyproject.toml"
+      - ".dockerignore"
+      - ".github/workflows/publish.yml"
   release:
     types: [published]
+  workflow_dispatch:
+
+env:
+  HUB_USER: wuhun0301
 
 jobs:
   build-and-push:
-    name: Build and Push Docker Image
+    name: Build and Push Docker Images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -21,17 +41,54 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Resolve tags
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="sha-${GITHUB_SHA::7}"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Ensure Zoekt binaries
+        run: |
+          if [[ ! -x docker/bin/zoekt-index || ! -x docker/bin/zoekt-webserver ]]; then
+            bash docker/prepare-zoekt.sh
+          fi
+
+      - name: Build and push app (api/admin/worker/scheduler)
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/rootseeker:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/rootseeker:${{ steps.version.outputs.VERSION }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ env.HUB_USER }}/rootseeker-v2:latest
+            ${{ env.HUB_USER }}/rootseeker-v2:${{ steps.meta.outputs.VERSION }}
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,mode=max,scope=app
+
+      - name: Build and push zoekt
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker
+          file: docker/Dockerfile.zoekt
+          push: true
+          tags: |
+            ${{ env.HUB_USER }}/rootseeker-v2-zoekt:latest
+            ${{ env.HUB_USER }}/rootseeker-v2-zoekt:${{ steps.meta.outputs.VERSION }}
+          cache-from: type=gha,scope=zoekt
+          cache-to: type=gha,mode=max,scope=zoekt
+
+      - name: Build and push gitnexus
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.gitnexus
+          push: true
+          tags: |
+            ${{ env.HUB_USER }}/rootseeker-v2-gitnexus:latest
+            ${{ env.HUB_USER }}/rootseeker-v2-gitnexus:${{ steps.meta.outputs.VERSION }}
+          cache-from: type=gha,scope=gitnexus
+          cache-to: type=gha,mode=max,scope=gitnexus
