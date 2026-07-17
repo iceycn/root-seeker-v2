@@ -1,5 +1,6 @@
 name: Publish
 
+# Images: wuhun0301/rootseeker-v2{,-zoekt,-gitnexus}
 on:
   push:
     branches: [main, master]
