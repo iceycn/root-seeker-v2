@@ -74,9 +74,11 @@ def test_git_pull_uses_local_branch_when_configured_branch_missing(tmp_path: Pat
             return "fatal: couldn't find remote ref main"
         return None
 
-    with patch.object(sync, "_run_git_fetch_reset", side_effect=fake_fetch_reset), patch.object(
-        sync, "_get_current_branch", return_value="master"
-    ), patch.object(sync, "_get_commit_hash", return_value="deadbeef"):
+    with patch.object(sync, "_set_origin_url"), patch.object(
+        sync, "_run_git_fetch_reset", side_effect=fake_fetch_reset
+    ), patch.object(sync, "_get_current_branch", return_value="master"), patch.object(
+        sync, "_get_commit_hash", return_value="deadbeef"
+    ):
         commit_hash, branch = sync._git_pull(repo_path, "main", url="https://example.invalid/repo.git")
 
     assert commit_hash == "deadbeef"

@@ -51,6 +51,11 @@ def test_repo_sync_hooks_gitnexus_after_index(tmp_path: Path, monkeypatch) -> No
     service.gitnexus_indexer.index_repository.return_value = fake_status
 
     monkeypatch.setattr(service, "_get_commit_hash", lambda path: "abc123")
+    monkeypatch.setattr(
+        service,
+        "_is_usable_git_repo",
+        lambda path: Path(path).resolve() == repo_dir.resolve(),
+    )
     service.register(
         RepositoryRef(name="svc", url=None, local_path=str(repo_dir), default_branch="main")
     )

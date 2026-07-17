@@ -50,7 +50,9 @@ def test_repo_sync_pull_refreshes_origin_with_authenticated_url(tmp_path) -> Non
         )
     )
 
-    with patch.object(sync, "_set_origin_url") as set_origin_mock, patch.object(
+    with patch.object(sync, "_is_usable_git_repo", return_value=True), patch.object(
+        sync, "_set_origin_url"
+    ) as set_origin_mock, patch.object(
         sync, "_run_git_fetch_reset", return_value=None
     ), patch.object(sync, "_get_current_branch", return_value="main"), patch.object(
         sync, "_get_commit_hash", return_value="def456"
