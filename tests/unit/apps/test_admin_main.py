@@ -23,7 +23,7 @@ def test_admin_health_status_and_page(tmp_path: Path) -> None:
     page = client.get("/admin")
     assert page.status_code == 200
     # Prefer built SPA when dist exists; otherwise accept embedded fallback console.
-    assert ('<div id="root">' in page.text) or ("RootSeeker Admin" in page.text)
+    assert ('<div id="root">' in page.text) or ("RootSeeker V2 Admin" in page.text)
     if '<div id="root">' in page.text:
         assert "/assets/" in page.text
 
