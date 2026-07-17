@@ -106,6 +106,8 @@ cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能
 
 ```bash
 ./start.sh            # 推荐：缺 Zoekt 二进制时会自动下载
+# 或使用 Docker Hub 预构建镜像（账号 wuhun0301）：
+# DOCKERHUB_USER=wuhun0301 ./start.sh --pull
 # 或
 make docker-up
 docker compose up -d --build

@@ -1,0 +1,43 @@
+# 使用 Docker Hub 预构建镜像启动（无需本地 --build）
+# 用法:
+#   set DOCKERHUB_USER=你的用户名
+#   docker compose -f docker-compose.yml -f docker-compose.pull.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d
+# 或:
+#   ./start.sh --pull
+#
+# 镜像:
+#   ${DOCKERHUB_USER}/rootseeker-v2
+#   ${DOCKERHUB_USER}/rootseeker-v2-zoekt
+#   ${DOCKERHUB_USER}/rootseeker-v2-gitnexus
+
+x-app-image: &app-image
+  image: docker.io/${DOCKERHUB_USER:-wuhun0301}/rootseeker-v2:${IMAGE_TAG:-latest}
+  pull_policy: always
+
+services:
+  api:
+    <<: *app-image
+    build: !reset null
+
+  admin:
+    <<: *app-image
+    build: !reset null
+
+  worker:
+    <<: *app-image
+    build: !reset null
+
+  scheduler:
+    <<: *app-image
+    build: !reset null
+
+  zoekt:
+    image: docker.io/${DOCKERHUB_USER:-wuhun0301}/rootseeker-v2-zoekt:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+
+  gitnexus:
+    image: docker.io/${DOCKERHUB_USER:-wuhun0301}/rootseeker-v2-gitnexus:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null

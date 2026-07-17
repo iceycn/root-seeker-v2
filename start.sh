@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # RootSeeker V2 - Quick Start Script
 # Usage:
-#   ./start.sh           # Docker Compose (default)
+#   ./start.sh           # Docker Compose build+up (default)
+#   ./start.sh --pull    # 使用 Docker Hub 预构建镜像（需 DOCKERHUB_USER）
 #   ./start.sh k8s       # Kubernetes (kubectl)
 #   ./start.sh stop      # Stop all services
 #   ./start.sh status    # Check service status
@@ -10,6 +11,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+USE_PULL=0
+ARGS=()
+for arg in "$@"; do
+    case "$arg" in
+        --pull) USE_PULL=1 ;;
+        *) ARGS+=("$arg") ;;
+    esac
+done
+set -- "${ARGS[@]:-}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -49,9 +60,20 @@ docker_up() {
         warn "Review .env and configure LLM keys if needed."
     fi
 
-    ensure_zoekt_bins
-    info "Starting RootSeeker V2 services..."
-    docker compose up -d --build
+    if [ "$USE_PULL" = "1" ]; then
+        if [ -z "${DOCKERHUB_USER:-}" ]; then
+            error "使用 --pull 时请设置 DOCKERHUB_USER（Docker Hub 用户名）"
+            exit 1
+        fi
+        info "Pulling images from Docker Hub (user=${DOCKERHUB_USER})..."
+        docker compose -f docker-compose.yml -f docker-compose.pull.yml pull
+        info "Starting RootSeeker V2 services (prebuilt images)..."
+        docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d
+    else
+        ensure_zoekt_bins
+        info "Starting RootSeeker V2 services..."
+        docker compose up -d --build
+    fi
 
     echo ""
     ok "RootSeeker V2 is starting!"

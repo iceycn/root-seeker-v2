@@ -51,4 +51,27 @@ bash docker/prepare-zoekt.sh
 | Qdrant | http://localhost:6333 |
 | GitNexus | http://localhost:7474 |
 
-公开仓库：https://github.com/iceycn/root-seeker-v2
+公开源码仓库：https://github.com/iceycn/root-seeker-v2
+
+## 推送到 Docker Hub
+
+```powershell
+docker login
+.\scripts\push-dockerhub.ps1
+# 默认推送到 wuhun0301；可覆盖: -User othername
+```
+
+已发布镜像（`wuhun0301`）：
+
+- [wuhun0301/rootseeker-v2](https://hub.docker.com/r/wuhun0301/rootseeker-v2)（api / admin / worker / scheduler 共用）
+- [wuhun0301/rootseeker-v2-zoekt](https://hub.docker.com/r/wuhun0301/rootseeker-v2-zoekt)
+- [wuhun0301/rootseeker-v2-gitnexus](https://hub.docker.com/r/wuhun0301/rootseeker-v2-gitnexus)
+
+## 从 Docker Hub 拉取启动
+
+```bash
+export DOCKERHUB_USER=wuhun0301
+./start.sh --pull
+# 或
+docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d
+```
