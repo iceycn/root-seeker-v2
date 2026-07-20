@@ -14,7 +14,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from apps.admin.config_store import ALLOWED_CRON_HANDLERS, AdminConfigStore
+from apps.admin.config_store import ALLOWED_CRON_HANDLERS, AdminConfigStore, build_admin_config_store
 from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
 from apps.scheduler.main import run_job_now
 from rootseeker.analysis.call_chain import (
@@ -34,7 +34,7 @@ from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.cron import CronJobState, CronJobStatus
-from rootseeker.cron.state_store import FileCronStateStore
+from rootseeker.cron.state_store import CronStateStore, build_cron_state_store
 from rootseeker.flow_runtime import build_execution_trace
 from rootseeker.infra_core import RootSeekerSettings
 from rootseeker.infra_core.http_client import get_with_retry, outbound_http_client
@@ -1489,8 +1489,7 @@ def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
 def create_app(repo_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="RootSeeker Admin", version="0.1.0")
     config_root = Path(repo_root or Path.cwd())
-    config_path = config_root / "data" / "admin" / "config.json"
-    store = AdminConfigStore(config_path)
+    store = build_admin_config_store(config_root)
     _migrate_repo_remotes_git_username(store)
     runtime, repo_sync_service = _create_admin_runtime(config_root, store)
     history_store = build_error_history_store(config_root)
@@ -1535,6 +1534,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             "index": _invoke_admin_tool(runtime, "index.get_status", {}),
             "catalog": {"total": len(runtime.service_catalog.list_entries())},
             "config_path": str(store.path),
+            "config_backend": store.backend,
         }
 
     @app.get("/api/settings")
@@ -1726,12 +1726,8 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "name": name, "error": str(exc)}
 
-    def _cron_state_store() -> FileCronStateStore:
-        settings = RootSeekerSettings()
-        path = Path(settings.cron_state_path)
-        if not path.is_absolute():
-            path = config_root / path
-        return FileCronStateStore(path)
+    def _cron_state_store() -> CronStateStore:
+        return build_cron_state_store(config_root)
 
     def _cron_job_with_state(item: dict[str, Any]) -> dict[str, Any]:
         state = _cron_state_store().get_state(str(item.get("job_id") or ""))
@@ -1835,13 +1831,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
         # Fast-fail if another run just started; otherwise kick off in background so the
         # HTTP request does not block for long repo sync / gitnexus analyze.
-        from rootseeker.cron.state_store import FileCronStateStore as _Store
-
-        settings = RootSeekerSettings()
-        state_path = Path(settings.cron_state_path)
-        if not state_path.is_absolute():
-            state_path = config_root / state_path
-        preview = _Store(state_path).get_state(job_id)
+        preview = build_cron_state_store(config_root).get_state(job_id)
         if (
             preview is not None
             and preview.status.value == "running"
@@ -1862,7 +1852,6 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             run_job_now(
                 job_id=job_id,
                 repo_root=config_root,
-                config_path=config_path,
             )
 
         background_tasks.add_task(_run)

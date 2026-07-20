@@ -1,8 +1,24 @@
+param(
+    [switch]$Mysql,
+    [string]$MysqlHost = "127.0.0.1",
+    [int]$MysqlPort = 3306
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot\..
 
-$env:ROOTSEEKER_STORAGE_BACKEND = "sqlite"
-$env:ROOTSEEKER_SQLITE_DB_PATH = "data/rootseeker.db"
+# Default non-Docker: sqlite. Pass -Mysql to use MySQL (must be reachable from host).
+if ($Mysql) {
+    $env:ROOTSEEKER_STORAGE_BACKEND = "mysql"
+    $env:ROOTSEEKER_MYSQL_HOST = $MysqlHost
+    $env:ROOTSEEKER_MYSQL_PORT = "$MysqlPort"
+    Write-Host "Storage backend: mysql ($MysqlHost:$MysqlPort)"
+} else {
+    $env:ROOTSEEKER_STORAGE_BACKEND = "sqlite"
+    $env:ROOTSEEKER_SQLITE_DB_PATH = "data/rootseeker.db"
+    Write-Host "Storage backend: sqlite (data/rootseeker.db)"
+}
+
 $env:ROOTSEEKER_ZOEKT_ENDPOINT = "http://127.0.0.1:6070"
 $env:ROOTSEEKER_ZOEKT_INDEX_ENDPOINT = "http://127.0.0.1:6071"
 $env:ROOTSEEKER_QDRANT_ENDPOINT = "http://127.0.0.1:6333"
@@ -64,3 +80,4 @@ Write-Host "Zoekt path map: $env:ROOTSEEKER_ZOEKT_PATH_MAP"
 Write-Host "GitNexus endpoint: $env:ROOTSEEKER_GITNEXUS_ENDPOINT"
 Write-Host "GitNexus path map: $env:ROOTSEEKER_GITNEXUS_PATH_MAP"
 Write-Host "Full init deploy: docker compose up -d --build"
+Write-Host "MySQL local hybrid: .\scripts\start-local.ps1 -Mysql"

@@ -6,6 +6,8 @@ from pathlib import Path
 from rootseeker.bootstrap import DevRuntime
 from rootseeker.contracts.task import TaskKind, TaskRecord, TaskStatus
 from rootseeker.infra_core import RootSeekerSettings
+from rootseeker.storage.mysql_conn import mysql_config_from_settings
+from rootseeker.storage.mysql_task import MysqlTaskStore
 from rootseeker.storage.sqlite_task import SqliteTaskStore
 from rootseeker.task_runtime.task import create_task_record
 from rootseeker.task_runtime.task_executor import TaskExecutor
@@ -18,7 +20,7 @@ __all__ = ["TaskRuntime"]
 @dataclass
 class TaskRuntime:
     runtime: DevRuntime
-    store: TaskStore | SqliteTaskStore
+    store: TaskStore | SqliteTaskStore | MysqlTaskStore
     queue: TaskQueue
     executor: TaskExecutor
 
@@ -26,7 +28,7 @@ class TaskRuntime:
         self,
         runtime: DevRuntime,
         *,
-        store: TaskStore | SqliteTaskStore | None = None,
+        store: TaskStore | SqliteTaskStore | MysqlTaskStore | None = None,
         queue: TaskQueue | None = None,
     ) -> None:
         self.runtime = runtime
@@ -48,8 +50,10 @@ class TaskRuntime:
         return self.store.get(task_id)
 
 
-def _build_default_task_store(runtime: DevRuntime) -> TaskStore | SqliteTaskStore:
+def _build_default_task_store(runtime: DevRuntime) -> TaskStore | SqliteTaskStore | MysqlTaskStore:
     settings = RootSeekerSettings()
+    if settings.storage_backend == "mysql":
+        return MysqlTaskStore(mysql_config_from_settings(settings))
     if settings.storage_backend == "sqlite":
         db_path = Path(settings.sqlite_db_path)
         if not db_path.is_absolute():
@@ -59,7 +63,7 @@ def _build_default_task_store(runtime: DevRuntime) -> TaskStore | SqliteTaskStor
     return TaskStore()
 
 
-def _next_pending_task_id(store: TaskStore | SqliteTaskStore) -> str | None:
+def _next_pending_task_id(store: TaskStore | SqliteTaskStore | MysqlTaskStore) -> str | None:
     if hasattr(store, "list_by_status"):
         pending = store.list_by_status(TaskStatus.PENDING)
     else:

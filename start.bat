@@ -58,8 +58,9 @@ if not exist .env (
     echo [WARN] Review .env and configure LLM keys if needed.
 )
 call :ensure_zoekt_bins
-echo [INFO] Starting RootSeeker V2 services...
-docker compose up -d --build
+echo [INFO] Syncing compose storage profiles...
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$backend='mysql'; if (Test-Path '.env') { $m = Select-String -Path '.env' -Pattern '^ROOTSEEKER_STORAGE_BACKEND=(.*)$' | Select-Object -Last 1; if ($m) { $backend = $m.Matches[0].Groups[1].Value.Trim().Trim('\"').Trim('''') } }; if ($backend -eq 'sqlite' -or $backend -eq 'memory') { $env:COMPOSE_PROFILES=''; Write-Host '[INFO] storage=' $backend '-> mysql profile OFF' } else { $env:COMPOSE_PROFILES='mysql'; Write-Host '[INFO] storage=' $backend '-> mysql profile ON' }; docker compose up -d --build"
 echo.
 echo [OK] RootSeeker V2 is starting!
 echo.
@@ -69,6 +70,7 @@ echo     Admin:      http://localhost:8010
 echo     Zoekt:      http://localhost:6070
 echo     Qdrant:     http://localhost:6333
 echo     GitNexus:   http://localhost:7474
+echo     MySQL:      internal network only when STORAGE_BACKEND=mysql
 echo.
 echo   Health check:
 echo     curl http://localhost:8000/healthz

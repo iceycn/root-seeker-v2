@@ -50,7 +50,7 @@ docker-build:
 
 docker-up:
 	@test -f .env || cp .env.docker .env
-	docker compose up -d --build
+	@bash -c 'source scripts/sync-compose-storage.sh && sync_storage_compose_profiles && docker compose up -d --build'
 	@echo ""
 	@echo "RootSeeker V2 is starting!"
 	@echo "  API:      http://localhost:8000"
@@ -58,6 +58,7 @@ docker-up:
 	@echo "  Zoekt:    http://localhost:6070"
 	@echo "  Qdrant:   http://localhost:6333"
 	@echo "  GitNexus: http://localhost:7474"
+	@echo "  MySQL:    internal compose network only (when backend=mysql)"
 	@echo "  Health:   curl http://localhost:8000/healthz"
 	@echo "            curl http://localhost:7474/healthz"
 

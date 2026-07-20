@@ -60,6 +60,10 @@ docker_up() {
         warn "Review .env and configure LLM keys if needed."
     fi
 
+    # shellcheck disable=SC1091
+    source "$SCRIPT_DIR/scripts/sync-compose-storage.sh"
+    sync_storage_compose_profiles
+
     if [ "$USE_PULL" = "1" ]; then
         if [ -z "${DOCKERHUB_USER:-}" ]; then
             error "使用 --pull 时请设置 DOCKERHUB_USER（Docker Hub 用户名）"
@@ -84,6 +88,9 @@ docker_up() {
     echo "    Zoekt:      http://localhost:${ZOEKT_PORT:-6070}"
     echo "    Qdrant:     http://localhost:${QDRANT_PORT:-6333}"
     echo "    GitNexus:   http://localhost:${GITNEXUS_PORT:-7474}"
+    if [ "${COMPOSE_PROFILES:-}" = "mysql" ]; then
+        echo "    MySQL:      (internal only — compose network, no host port)"
+    fi
     echo ""
     echo "  Health check:"
     echo "    curl http://localhost:${API_PORT:-8000}/healthz"

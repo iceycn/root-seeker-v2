@@ -1,20 +1,73 @@
 # RootSeeker V2 Docker Compose
-# Default stack (init deploy): api, admin, worker, scheduler, zoekt, qdrant, gitnexus
+# Default stack (init deploy): api, admin, worker, scheduler, mysql, zoekt, qdrant, gitnexus
 #   docker compose up -d --build
 #   ./start.sh   |   start.bat   |   make docker-up
 #
-# With proxy (China network):
-#   set HTTP_PROXY=http://host.docker.internal:10808
-#   set HTTPS_PROXY=http://host.docker.internal:10808
-#   set NO_PROXY=localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal
-#   docker compose up -d --build
+# Storage: Docker defaults to mysql (profile "mysql").
+#   SQLite mode: ROOTSEEKER_STORAGE_BACKEND=sqlite (mysql container will not start)
+#   See docs/storage-mysql.md and docs/storage-sqlite.md
 #
 # Optional profiles:
+#   --profile mysql     - MySQL (enabled by default via COMPOSE_PROFILES in .env.docker)
 #   --profile tracing   - add Jaeger for distributed tracing
 #
 # Hybrid (host uvicorn + docker indexers only):
 #   docker compose -f docker-compose.yml -f docker-compose.hybrid.yml up -d zoekt qdrant gitnexus
+x-app-storage-env: &app-storage-env
+  ROOTSEEKER_STORAGE_BACKEND: ${ROOTSEEKER_STORAGE_BACKEND:-mysql}
+  ROOTSEEKER_SQLITE_DB_PATH: ${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
+  ROOTSEEKER_MYSQL_HOST: ${ROOTSEEKER_MYSQL_HOST:-mysql}
+  ROOTSEEKER_MYSQL_PORT: ${ROOTSEEKER_MYSQL_PORT:-3306}
+  ROOTSEEKER_MYSQL_USER: ${ROOTSEEKER_MYSQL_USER:-rootseeker}
+  ROOTSEEKER_MYSQL_PASSWORD: ${ROOTSEEKER_MYSQL_PASSWORD:-rootseeker}
+  ROOTSEEKER_MYSQL_DATABASE: ${ROOTSEEKER_MYSQL_DATABASE:-rootseeker}
+  ROOTSEEKER_ADMIN_STORE: ${ROOTSEEKER_ADMIN_STORE:-auto}
+  ROOTSEEKER_CRON_STATE_STORE: ${ROOTSEEKER_CRON_STATE_STORE:-auto}
+  ROOTSEEKER_ERROR_HISTORY_STORE: ${ROOTSEEKER_ERROR_HISTORY_STORE:-auto}
+
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: rootseeker-mysql
+    profiles: ["mysql"]
+    environment:
+      # Keep MYSQL_* in sync with ROOTSEEKER_MYSQL_* (same defaults / same env vars).
+      MYSQL_DATABASE: ${ROOTSEEKER_MYSQL_DATABASE:-rootseeker}
+      MYSQL_USER: ${ROOTSEEKER_MYSQL_USER:-rootseeker}
+      MYSQL_PASSWORD: ${ROOTSEEKER_MYSQL_PASSWORD:-rootseeker}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootseeker_root}
+    # No host port publish — MySQL is only reachable on the compose network.
+    volumes:
+      # Default: Docker named volume (recommended). To bind-mount instead:
+      #   - ./data/mysql:/var/lib/mysql
+      # See docs/storage-mysql.md
+      - mysql-data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    command:
+      [
+        "mysqld",
+        "--character-set-server=utf8mb4",
+        "--collation-server=utf8mb4_unicode_ci",
+      ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-p${MYSQL_ROOT_PASSWORD:-rootseeker_root}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - rootseeker-net
+
   api:
     build:
       context: .
@@ -23,32 +76,31 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
-      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
-      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
-      - ROOTSEEKER_INTERNAL_ADAPTER_KIND=${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
-      - HTTP_PROXY=${HTTP_PROXY:-}
-      - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
-      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
-      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
-      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
-      - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
-      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
-      - ROOTSEEKER_REPO_ENABLE_ZOEKT=true
-      - ROOTSEEKER_REPO_ENABLE_QDRANT=true
-      - ROOTSEEKER_REPO_ENABLE_GITNEXUS=true
-      - ROOTSEEKER_GITNEXUS_ENDPOINT=http://gitnexus:7474
-      - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
-      - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
-      - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
-      - ROOTSEEKER_LLM_BASE_URL=${ROOTSEEKER_LLM_BASE_URL:-}
-      - ROOTSEEKER_LLM_API_KEY=${ROOTSEEKER_LLM_API_KEY:-}
-      - ROOTSEEKER_LLM_MODEL=${ROOTSEEKER_LLM_MODEL:-}
-      - ROOTSEEKER_CODEUP_GIT_USERNAME=${ROOTSEEKER_CODEUP_GIT_USERNAME:-}
+      <<: *app-storage-env
+      ROOTSEEKER_INTERNAL_ADAPTER_KIND: ${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ROOTSEEKER_HTTP_PROXY: ${ROOTSEEKER_HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,api,admin,mysql,zoekt,qdrant,gitnexus,host.docker.internal}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,api,admin,mysql,zoekt,qdrant,gitnexus,host.docker.internal}
+      ROOTSEEKER_ZOEKT_ENDPOINT: http://zoekt:6070
+      ROOTSEEKER_ZOEKT_INDEX_ENDPOINT: http://zoekt:6071
+      ROOTSEEKER_ZOEKT_PATH_MAP: /data/repos:/repos
+      ROOTSEEKER_ZOEKT_INDEX_DIR: /data/zoekt/index
+      ROOTSEEKER_QDRANT_ENDPOINT: http://qdrant:6333
+      ROOTSEEKER_QDRANT_COLLECTION_NAME: ${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
+      ROOTSEEKER_REPO_BASE_PATH: /data/repos
+      ROOTSEEKER_REPO_ENABLE_ZOEKT: "true"
+      ROOTSEEKER_REPO_ENABLE_QDRANT: "true"
+      ROOTSEEKER_REPO_ENABLE_GITNEXUS: "true"
+      ROOTSEEKER_GITNEXUS_ENDPOINT: http://gitnexus:7474
+      ROOTSEEKER_EMBEDDING_PROVIDER: ${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
+      ROOTSEEKER_EMBEDDING_DIMENSION: ${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
+      ROOTSEEKER_LLM_ENABLED: ${ROOTSEEKER_LLM_ENABLED:-true}
+      ROOTSEEKER_LLM_BASE_URL: ${ROOTSEEKER_LLM_BASE_URL:-}
+      ROOTSEEKER_LLM_API_KEY: ${ROOTSEEKER_LLM_API_KEY:-}
+      ROOTSEEKER_LLM_MODEL: ${ROOTSEEKER_LLM_MODEL:-}
+      ROOTSEEKER_CODEUP_GIT_USERNAME: ${ROOTSEEKER_CODEUP_GIT_USERNAME:-}
     volumes:
       - rootseeker-data:/app/data
       - repo-data:/data/repos
@@ -68,6 +120,9 @@ services:
       start_period: 30s
     restart: unless-stopped
     depends_on:
+      mysql:
+        condition: service_healthy
+        required: false
       zoekt:
         condition: service_started
       qdrant:
@@ -86,32 +141,31 @@ services:
     ports:
       - "${ADMIN_PORT:-8010}:8010"
     environment:
-      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
-      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
-      - HTTP_PROXY=${HTTP_PROXY:-}
-      - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
-      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
-      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
-      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
-      - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
-      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
-      - ROOTSEEKER_REPO_ENABLE_GITNEXUS=true
-      - ROOTSEEKER_GITNEXUS_ENDPOINT=http://gitnexus:7474
-      - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
-      - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
-      - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
-      - ROOTSEEKER_LLM_BASE_URL=${ROOTSEEKER_LLM_BASE_URL:-}
-      - ROOTSEEKER_LLM_API_KEY=${ROOTSEEKER_LLM_API_KEY:-}
-      - ROOTSEEKER_LLM_MODEL=${ROOTSEEKER_LLM_MODEL:-}
-      - ROOTSEEKER_LLM_TIMEOUT_SECONDS=${ROOTSEEKER_LLM_TIMEOUT_SECONDS:-180}
-      - ADMIN_HOST=0.0.0.0
-      - ADMIN_PORT=8010
-      - ROOTSEEKER_CODEUP_GIT_USERNAME=${ROOTSEEKER_CODEUP_GIT_USERNAME:-}
+      <<: *app-storage-env
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ROOTSEEKER_HTTP_PROXY: ${ROOTSEEKER_HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,api,admin,mysql,zoekt,qdrant,gitnexus,host.docker.internal}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,api,admin,mysql,zoekt,qdrant,gitnexus,host.docker.internal}
+      ROOTSEEKER_ZOEKT_ENDPOINT: http://zoekt:6070
+      ROOTSEEKER_ZOEKT_INDEX_ENDPOINT: http://zoekt:6071
+      ROOTSEEKER_ZOEKT_PATH_MAP: /data/repos:/repos
+      ROOTSEEKER_ZOEKT_INDEX_DIR: /data/zoekt/index
+      ROOTSEEKER_QDRANT_ENDPOINT: http://qdrant:6333
+      ROOTSEEKER_QDRANT_COLLECTION_NAME: ${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
+      ROOTSEEKER_REPO_BASE_PATH: /data/repos
+      ROOTSEEKER_REPO_ENABLE_GITNEXUS: "true"
+      ROOTSEEKER_GITNEXUS_ENDPOINT: http://gitnexus:7474
+      ROOTSEEKER_EMBEDDING_PROVIDER: ${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
+      ROOTSEEKER_EMBEDDING_DIMENSION: ${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
+      ROOTSEEKER_LLM_ENABLED: ${ROOTSEEKER_LLM_ENABLED:-true}
+      ROOTSEEKER_LLM_BASE_URL: ${ROOTSEEKER_LLM_BASE_URL:-}
+      ROOTSEEKER_LLM_API_KEY: ${ROOTSEEKER_LLM_API_KEY:-}
+      ROOTSEEKER_LLM_MODEL: ${ROOTSEEKER_LLM_MODEL:-}
+      ROOTSEEKER_LLM_TIMEOUT_SECONDS: ${ROOTSEEKER_LLM_TIMEOUT_SECONDS:-180}
+      ADMIN_HOST: 0.0.0.0
+      ADMIN_PORT: 8010
+      ROOTSEEKER_CODEUP_GIT_USERNAME: ${ROOTSEEKER_CODEUP_GIT_USERNAME:-}
     volumes:
       - rootseeker-data:/app/data
       - repo-data:/data/repos
@@ -131,6 +185,9 @@ services:
       start_period: 30s
     restart: unless-stopped
     depends_on:
+      mysql:
+        condition: service_healthy
+        required: false
       api:
         condition: service_healthy
       gitnexus:
@@ -155,29 +212,28 @@ services:
         "0",
       ]
     environment:
-      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
-      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
-      - ROOTSEEKER_INTERNAL_ADAPTER_KIND=${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
-      - HTTP_PROXY=${HTTP_PROXY:-}
-      - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - ROOTSEEKER_HTTP_PROXY=${ROOTSEEKER_HTTP_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
-      - no_proxy=${NO_PROXY:-localhost,127.0.0.1,api,admin,zoekt,qdrant,gitnexus,host.docker.internal}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
-      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
-      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
-      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
-      - ROOTSEEKER_QDRANT_COLLECTION_NAME=${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
-      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
-      - ROOTSEEKER_REPO_ENABLE_GITNEXUS=true
-      - ROOTSEEKER_GITNEXUS_ENDPOINT=http://gitnexus:7474
-      - ROOTSEEKER_EMBEDDING_PROVIDER=${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
-      - ROOTSEEKER_EMBEDDING_DIMENSION=${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
-      - ROOTSEEKER_LLM_ENABLED=${ROOTSEEKER_LLM_ENABLED:-true}
-      - ROOTSEEKER_LLM_BASE_URL=${ROOTSEEKER_LLM_BASE_URL:-}
-      - ROOTSEEKER_LLM_API_KEY=${ROOTSEEKER_LLM_API_KEY:-}
-      - ROOTSEEKER_LLM_MODEL=${ROOTSEEKER_LLM_MODEL:-}
+      <<: *app-storage-env
+      ROOTSEEKER_INTERNAL_ADAPTER_KIND: ${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      ROOTSEEKER_HTTP_PROXY: ${ROOTSEEKER_HTTP_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,api,admin,mysql,zoekt,qdrant,gitnexus,host.docker.internal}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,api,admin,mysql,zoekt,qdrant,gitnexus,host.docker.internal}
+      ROOTSEEKER_ZOEKT_ENDPOINT: http://zoekt:6070
+      ROOTSEEKER_ZOEKT_INDEX_ENDPOINT: http://zoekt:6071
+      ROOTSEEKER_ZOEKT_PATH_MAP: /data/repos:/repos
+      ROOTSEEKER_ZOEKT_INDEX_DIR: /data/zoekt/index
+      ROOTSEEKER_QDRANT_ENDPOINT: http://qdrant:6333
+      ROOTSEEKER_QDRANT_COLLECTION_NAME: ${ROOTSEEKER_QDRANT_COLLECTION_NAME:-code_chunks}
+      ROOTSEEKER_REPO_BASE_PATH: /data/repos
+      ROOTSEEKER_REPO_ENABLE_GITNEXUS: "true"
+      ROOTSEEKER_GITNEXUS_ENDPOINT: http://gitnexus:7474
+      ROOTSEEKER_EMBEDDING_PROVIDER: ${ROOTSEEKER_EMBEDDING_PROVIDER:-hash}
+      ROOTSEEKER_EMBEDDING_DIMENSION: ${ROOTSEEKER_EMBEDDING_DIMENSION:-384}
+      ROOTSEEKER_LLM_ENABLED: ${ROOTSEEKER_LLM_ENABLED:-true}
+      ROOTSEEKER_LLM_BASE_URL: ${ROOTSEEKER_LLM_BASE_URL:-}
+      ROOTSEEKER_LLM_API_KEY: ${ROOTSEEKER_LLM_API_KEY:-}
+      ROOTSEEKER_LLM_MODEL: ${ROOTSEEKER_LLM_MODEL:-}
     volumes:
       - rootseeker-data:/app/data
       - repo-data:/data/repos
@@ -185,6 +241,9 @@ services:
       - ./skills:/app/skills:ro
     restart: unless-stopped
     depends_on:
+      mysql:
+        condition: service_healthy
+        required: false
       api:
         condition: service_healthy
       gitnexus:
@@ -199,20 +258,22 @@ services:
     container_name: rootseeker-scheduler
     command: ["rootseeker-scheduler", "--loop", "--interval-seconds", "60", "--max-runs", "0"]
     environment:
-      - ROOTSEEKER_STORAGE_BACKEND=${ROOTSEEKER_STORAGE_BACKEND:-sqlite}
-      - ROOTSEEKER_SQLITE_DB_PATH=${ROOTSEEKER_SQLITE_DB_PATH:-/app/data/rootseeker.db}
-      - ROOTSEEKER_ZOEKT_ENDPOINT=http://zoekt:6070
-      - ROOTSEEKER_ZOEKT_INDEX_ENDPOINT=http://zoekt:6071
-      - ROOTSEEKER_ZOEKT_PATH_MAP=/data/repos:/repos
-      - ROOTSEEKER_ZOEKT_INDEX_DIR=/data/zoekt/index
-      - ROOTSEEKER_QDRANT_ENDPOINT=http://qdrant:6333
-      - ROOTSEEKER_REPO_BASE_PATH=/data/repos
+      <<: *app-storage-env
+      ROOTSEEKER_ZOEKT_ENDPOINT: http://zoekt:6070
+      ROOTSEEKER_ZOEKT_INDEX_ENDPOINT: http://zoekt:6071
+      ROOTSEEKER_ZOEKT_PATH_MAP: /data/repos:/repos
+      ROOTSEEKER_ZOEKT_INDEX_DIR: /data/zoekt/index
+      ROOTSEEKER_QDRANT_ENDPOINT: http://qdrant:6333
+      ROOTSEEKER_REPO_BASE_PATH: /data/repos
     volumes:
       - rootseeker-data:/app/data
       - repo-data:/data/repos
       - zoekt-index:/data/zoekt/index
     restart: unless-stopped
     depends_on:
+      mysql:
+        condition: service_healthy
+        required: false
       api:
         condition: service_healthy
     networks:
@@ -309,6 +370,8 @@ services:
       - rootseeker-net
 
 volumes:
+  mysql-data:
+    driver: local
   rootseeker-data:
     driver: local
   repo-data:

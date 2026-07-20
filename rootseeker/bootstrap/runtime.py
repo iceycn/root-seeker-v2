@@ -22,6 +22,9 @@ from rootseeker.policies import ApprovalStore, WebhookApprovalEventSink
 from rootseeker.service_catalog import MemoryServiceCatalog
 from rootseeker.skill_system import SkillRegistry, build_registry_from_builtin_skills
 from rootseeker.storage.memory import InMemoryCaseStore, InMemoryEvidenceStore, InMemoryReportStore
+from rootseeker.storage.mysql import MysqlCaseStore, MysqlEvidenceStore, MysqlReportStore
+from rootseeker.storage.mysql_checkpoint import MysqlCheckpointStore
+from rootseeker.storage.mysql_conn import mysql_config_from_settings
 from rootseeker.storage.sqlite import SqliteCaseStore, SqliteEvidenceStore, SqliteReportStore
 from rootseeker.storage.sqlite_checkpoint import SqliteCheckpointStore
 
@@ -41,10 +44,10 @@ class DevRuntime:
     service_catalog: MemoryServiceCatalog
     policy: PolicyGuard
     gateway: McpGateway
-    case_store: InMemoryCaseStore | SqliteCaseStore
-    evidence_store: InMemoryEvidenceStore | SqliteEvidenceStore
-    report_store: InMemoryReportStore | SqliteReportStore
-    flow_checkpoint_store: FlowCheckpointStore | SqliteCheckpointStore
+    case_store: InMemoryCaseStore | SqliteCaseStore | MysqlCaseStore
+    evidence_store: InMemoryEvidenceStore | SqliteEvidenceStore | MysqlEvidenceStore
+    report_store: InMemoryReportStore | SqliteReportStore | MysqlReportStore
+    flow_checkpoint_store: FlowCheckpointStore | SqliteCheckpointStore | MysqlCheckpointStore
     approval_store: ApprovalStore
 
     def run_default_flow_from_case_request(
@@ -132,11 +135,20 @@ def _build_storage(
     repo_root: Path,
     settings: RootSeekerSettings,
 ) -> tuple[
-    InMemoryCaseStore | SqliteCaseStore,
-    InMemoryEvidenceStore | SqliteEvidenceStore,
-    InMemoryReportStore | SqliteReportStore,
-    FlowCheckpointStore | SqliteCheckpointStore,
+    InMemoryCaseStore | SqliteCaseStore | MysqlCaseStore,
+    InMemoryEvidenceStore | SqliteEvidenceStore | MysqlEvidenceStore,
+    InMemoryReportStore | SqliteReportStore | MysqlReportStore,
+    FlowCheckpointStore | SqliteCheckpointStore | MysqlCheckpointStore,
 ]:
+    if settings.storage_backend == "mysql":
+        mysql = mysql_config_from_settings(settings)
+        return (
+            MysqlCaseStore(mysql),
+            MysqlEvidenceStore(mysql),
+            MysqlReportStore(mysql),
+            MysqlCheckpointStore(mysql),
+        )
+
     if settings.storage_backend == "sqlite":
         db_path = Path(settings.sqlite_db_path)
         if not db_path.is_absolute():

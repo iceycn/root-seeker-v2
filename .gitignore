@@ -68,6 +68,8 @@ venv.bak/
 # Project specific
 data/
 repos/
+.tools/
+.setup-state.json
 .qdrant-initialized
 tools/qdrant/
 *.db

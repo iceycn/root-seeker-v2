@@ -1,5 +1,6 @@
 # RootSeeker V2 - PersistentVolumeClaims
-# SQLite data, Git repos, Zoekt index, Qdrant storage, GitNexus home
+# App data (admin/cron JSON fallback), Git repos, Zoekt index, Qdrant, GitNexus
+# MySQL PVC lives in mysql.yaml
 # Default: local-path provisioner (k3s/minikube)
 # For cloud K8s, replace with cloud-native StorageClass
 ---

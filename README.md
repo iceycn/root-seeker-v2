@@ -102,7 +102,29 @@ cd root-seeker-v2
 cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能力
 ```
 
-### 2. 启动
+### 2. 首次安装（推荐交互向导）
+
+向导会自动探测 Docker：有则优先 Compose 全栈；无则引导本机安装（SQLite / 便携 MySQL / 已有 MySQL）。
+
+```powershell
+# Windows
+.\setup.ps1
+```
+
+```bash
+# macOS / Linux
+chmod +x setup.sh
+./setup.sh
+```
+
+无人值守示例：
+
+```bash
+python scripts/setup_wizard.py --yes --path docker --storage mysql
+python scripts/setup_wizard.py --yes --path native --storage sqlite
+```
+
+### 3. 启动（配置完成后）
 
 ```bash
 ./start.sh            # 推荐：缺 Zoekt 二进制时会自动下载
@@ -113,7 +135,7 @@ make docker-up
 docker compose up -d --build
 ```
 
-### 3. 验证
+### 4. 验证
 
 | 地址 | 说明 |
 | --- | --- |
@@ -131,7 +153,9 @@ docker compose logs -f api
 make docker-down
 ```
 
-默认使用 SQLite + hash embedding，**无需外部 AI** 即可运行。需要 LLM 报告增强时，在 `.env` 配置 `ROOTSEEKER_LLM_*`。
+默认使用 **MySQL**（Compose 内 `mysql` 服务）+ hash embedding，**无需外部 AI** 即可运行。需要 LLM 报告增强时，在 `.env` 配置 `ROOTSEEKER_LLM_*`。
+
+> 若本地已有旧 `.env` 且写着 `ROOTSEEKER_STORAGE_BACKEND=sqlite`，会覆盖 Compose 默认的 mysql。可改成 `mysql`，或对照更新 `.env.docker`。存储说明见 [docs/storage-mysql.md](docs/storage-mysql.md) / [docs/storage-sqlite.md](docs/storage-sqlite.md)。
 
 ---
 
@@ -140,8 +164,11 @@ make docker-down
 适合本机改 Python 代码、索引服务仍跑在 Docker：
 
 ```powershell
-# Windows
+# Windows（默认 sqlite）
 .\scripts\start-local.ps1
+
+# 使用可达的 MySQL（Compose 内 mysql 默认不暴露宿主机端口）
+.\scripts\start-local.ps1 -Mysql
 ```
 
 脚本会：
@@ -284,7 +311,7 @@ export ROOTSEEKER_EMBEDDING_DIMENSION=1536
 | 分组 | 变量 |
 | --- | --- |
 | 适配器 | `ROOTSEEKER_INTERNAL_ADAPTER_KIND`（默认 `composite`） |
-| 存储 | `ROOTSEEKER_STORAGE_BACKEND=sqlite` · `ROOTSEEKER_SQLITE_DB_PATH` |
+| 存储 | `ROOTSEEKER_STORAGE_BACKEND=mysql\|sqlite\|memory` · `ROOTSEEKER_MYSQL_*` · `ROOTSEEKER_SQLITE_DB_PATH` |
 | Zoekt | `ROOTSEEKER_ZOEKT_ENDPOINT` · `ROOTSEEKER_ZOEKT_INDEX_ENDPOINT` · `ROOTSEEKER_ZOEKT_PATH_MAP` |
 | Qdrant | `ROOTSEEKER_QDRANT_ENDPOINT` · `ROOTSEEKER_QDRANT_COLLECTION_NAME` |
 | GitNexus | `ROOTSEEKER_GITNEXUS_ENDPOINT` · `ROOTSEEKER_GITNEXUS_PATH_MAP` |

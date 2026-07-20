@@ -19,10 +19,31 @@ class RootSeekerSettings(BaseSettings):
     internal_http_base_url: str | None = None
     internal_http_timeout_seconds: float = 5.0
 
-    # Storage backend. SQLite is opt-in so development smoke tests keep isolated memory stores.
-    storage_backend: Literal["memory", "sqlite"] = "memory"
+    # Storage backend.
+    # - Code/tests default: memory (isolated).
+    # - Non-Docker local scripts (.env.example / start-local): sqlite.
+    # - Docker Compose (.env.docker): mysql.
+    storage_backend: Literal["memory", "sqlite", "mysql"] = "memory"
     sqlite_db_path: str = "data/rootseeker.db"
     cron_state_path: str = "data/cron/scheduler-state.json"
+
+    # MySQL connection (used when storage_backend=mysql, or sub-stores override to mysql).
+    mysql_host: str = "127.0.0.1"
+    mysql_port: int = 3306
+    mysql_user: str = "rootseeker"
+    mysql_password: str = "rootseeker"
+    mysql_database: str = "rootseeker"
+    mysql_charset: str = "utf8mb4"
+    mysql_connect_timeout: int = 10
+    mysql_pool_size: int = 8
+
+    # Sub-store backends. "auto" follows storage_backend (mysql→mysql, else file/sqlite default).
+    admin_store: Literal["auto", "file", "mysql"] = "auto"
+    cron_state_store: Literal["auto", "file", "mysql"] = "auto"
+    error_history_store: Literal["auto", "file", "sqlite", "mysql"] = "auto"
+    admin_config_path: str = "data/admin/config.json"
+    error_history_file: str = "data/admin/error_history.json"
+    error_history_sqlite_path: str = "data/admin/error_history.db"
 
     # LLM report enhancement — OpenAI-compatible chat completions endpoint.
     llm_enabled: bool = True

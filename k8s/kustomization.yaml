@@ -13,6 +13,7 @@ resources:
   - configmap.yaml
   - secrets.yaml
   - pvc.yaml
+  - mysql.yaml
   - zoekt.yaml
   - qdrant.yaml
   - gitnexus.yaml
@@ -21,6 +22,14 @@ resources:
   - worker.yaml
   - scheduler.yaml
   - ingress.yaml
+
+configMapGenerator:
+  - name: mysql-init
+    files:
+      - 01_schema.sql=../mysql/init/01_schema.sql
+      - 02_seed.sql=../mysql/init/02_seed.sql
+    options:
+      disableNameSuffixHash: true
 
 commonLabels:
   app.kubernetes.io/part-of: rootseeker

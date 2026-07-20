@@ -11,6 +11,7 @@ from apps.admin.config_store import (
     BUILTIN_CRON_JOBS,
     DEFAULT_FLOW_REPLAY_JOB_ID,
     AdminConfigStore,
+    build_admin_config_store,
 )
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.code_index.git_auth import GitCredentials
@@ -28,7 +29,7 @@ from rootseeker.cron import (
     JobRunStatus,
     RetryPolicy,
 )
-from rootseeker.cron.state_store import FileCronStateStore
+from rootseeker.cron.state_store import CronStateStore, build_cron_state_store
 from rootseeker.infra_core import RootSeekerSettings
 from rootseeker.task_runtime import TaskRuntime
 
@@ -129,8 +130,7 @@ def run_job_now(
 ) -> JobRunResult:
     """Execute a single configured cron job immediately (used by Admin run API)."""
     root = repo_root or Path.cwd()
-    store_path = _resolve_admin_config_path(root, config_path)
-    admin_store = AdminConfigStore(store_path)
+    admin_store = build_admin_config_store(root, path=config_path)
     job_cfg = admin_store.get_cron_job(job_id)
     if job_cfg is None:
         return JobRunResult(
@@ -147,7 +147,7 @@ def run_job_now(
     )
     # Manual run must execute even if the job is currently disabled in config.
     job = job.model_copy(update={"enabled": True})
-    cron_store = FileCronStateStore(_resolve_state_path(root, state_path))
+    cron_store = build_cron_state_store(root, state_path=state_path)
     now = utc_now()
 
     state = cron_store.get_state(job_id) or CronJobState(job_id=job_id)
@@ -206,7 +206,7 @@ def _run_scheduler_tick(
     config_path: Path | None = None,
 ) -> list[JobRunResult]:
     now = utc_now()
-    admin_store = AdminConfigStore(_resolve_admin_config_path(repo_root, config_path))
+    admin_store = build_admin_config_store(repo_root, path=config_path)
     jobs = _load_jobs_from_config(
         admin_store,
         suite_name=suite_name,
@@ -216,7 +216,7 @@ def _run_scheduler_tick(
         retries=max(1, retries),
         retry_delay_seconds=retry_delay_seconds,
     )
-    store = FileCronStateStore(_resolve_state_path(repo_root, state_path))
+    store = build_cron_state_store(repo_root, state_path=state_path)
     if run_immediately:
         for job in jobs:
             if job.enabled:
@@ -369,7 +369,7 @@ def _build_repo_sync_service(repo_root: Path, admin_store: AdminConfigStore) -> 
 
 
 def _build_executor(repo_root: Path, *, admin_store: AdminConfigStore | None = None):
-    store = admin_store or AdminConfigStore(_resolve_admin_config_path(repo_root, None))
+    store = admin_store or build_admin_config_store(repo_root)
 
     def execute(job: CronJobSpec) -> JobRunResult:
         handler = str(job.handler or "").strip()
@@ -461,7 +461,7 @@ def _build_executor(repo_root: Path, *, admin_store: AdminConfigStore | None = N
     return execute
 
 
-def _mark_job_due(store: FileCronStateStore, job: CronJobSpec, now: datetime) -> None:
+def _mark_job_due(store: CronStateStore, job: CronJobSpec, now: datetime) -> None:
     state = store.get_state(job.job_id) or CronJobState(job_id=job.job_id)
     if state.status != CronJobStatus.RUNNING:
         state.status = CronJobStatus.IDLE

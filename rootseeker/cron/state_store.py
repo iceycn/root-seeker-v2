@@ -5,8 +5,17 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from rootseeker.cron.jobs import CronJobState, JobRunResult
+from rootseeker.infra_core.settings import RootSeekerSettings
+from rootseeker.storage.backend_resolve import resolve_cron_state_store
+from rootseeker.storage.mysql_conn import mysql_config_from_settings
 
-__all__ = ["CronStateStore", "FileCronStateStore", "InMemoryCronStateStore"]
+__all__ = [
+    "CronStateStore",
+    "FileCronStateStore",
+    "InMemoryCronStateStore",
+    "MysqlCronStateStore",
+    "build_cron_state_store",
+]
 
 
 class CronStateStore(ABC):
@@ -76,3 +85,29 @@ class FileCronStateStore(InMemoryCronStateStore):
             "runs": [run.model_dump(mode="json") for run in self._runs],
         }
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def build_cron_state_store(
+    repo_root: Path,
+    *,
+    settings: RootSeekerSettings | None = None,
+    state_path: Path | None = None,
+) -> CronStateStore:
+    """Build file or MySQL cron state store from settings."""
+    from rootseeker.cron.mysql_state_store import MysqlCronStateStore
+
+    cfg = settings or RootSeekerSettings()
+    if resolve_cron_state_store(cfg) == "mysql":
+        return MysqlCronStateStore(mysql_config_from_settings(cfg))
+    path = state_path or Path(cfg.cron_state_path)
+    if not path.is_absolute():
+        path = repo_root / path
+    return FileCronStateStore(path)
+
+
+def __getattr__(name: str):
+    if name == "MysqlCronStateStore":
+        from rootseeker.cron.mysql_state_store import MysqlCronStateStore
+
+        return MysqlCronStateStore
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

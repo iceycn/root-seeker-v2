@@ -48,11 +48,13 @@ repository behavior aligned.
   - redaction + structured logging + diagnostic collector
   - enhanced runtime health snapshots and Prometheus text metrics endpoints
   - Prometheus runtime activity metrics for audit actions, agent/MCP tool events and approval status
-- **SQLite persistent storage**:
-  - `SqliteCaseStore`, `SqliteEvidenceStore`, `SqliteReportStore`
-  - `SqliteTaskStore`, `SqliteCheckpointStore`, `SqliteReplayStore`
-  - Full CRUD operations with proper serialization
-  - Default dev/runtime wiring still uses in-memory stores unless explicitly injected by integration code
+- **SQLite / MySQL persistent storage**:
+  - `Sqlite*` and `Mysql*` stores for case/evidence/report/task/checkpoint
+  - Switch via `ROOTSEEKER_STORAGE_BACKEND=memory|sqlite|mysql` (Docker defaults to mysql)
+  - Admin / Cron / error_history dual backends (`auto` follows storage backend)
+  - See `docs/storage-mysql.md` and `docs/storage-sqlite.md`
+  - Default code path still uses in-memory unless env opts into sqlite/mysql
+  - Replay persistence remains in-memory (SqliteReplayStore exists for tests; MysqlReplayStore not wired)
 - **Production-grade external adapters**:
   - `SlsLogAdapter`: Alibaba Cloud SLS log queries with API signature
   - `JaegerTraceAdapter`: Jaeger trace chain retrieval

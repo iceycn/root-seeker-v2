@@ -9,6 +9,9 @@ from typing import Any
 from rootseeker.contracts.repository import RepositoryRef
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
 from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
+from rootseeker.infra_core.settings import RootSeekerSettings
+from rootseeker.storage.backend_resolve import resolve_admin_store
+from rootseeker.storage.mysql_conn import MysqlConnectConfig, mysql_config_from_settings, mysql_connection
 
 __all__ = [
     "ALLOWED_CRON_HANDLERS",
@@ -16,6 +19,7 @@ __all__ = [
     "BUILTIN_CRON_JOBS",
     "DEFAULT_FLOW_REPLAY_JOB_ID",
     "REPO_SYNC_CHANGED_JOB_ID",
+    "build_admin_config_store",
 ]
 
 REPO_SYNC_CHANGED_JOB_ID = "cron.repo-sync-changed"
@@ -138,57 +142,108 @@ def _seed_builtin_cron_jobs(jobs: list[dict[str, Any]]) -> tuple[list[dict[str, 
     return ordered, changed
 
 
+def _empty_admin_data() -> dict[str, Any]:
+    return {
+        "repos": [],
+        "catalog": [],
+        "skills": [],
+        "settings": {},
+        "env_vars": [],
+        "ai_providers": [],
+        "callbacks": [],
+        "error_chat": [],
+        "repo_remotes": [],
+        "cron_jobs": [],
+    }
+
+
+def build_admin_config_store(
+    repo_root: Path,
+    *,
+    settings: RootSeekerSettings | None = None,
+    path: Path | str | None = None,
+) -> AdminConfigStore:
+    """Build AdminConfigStore for file or MySQL based on settings."""
+    cfg = settings or RootSeekerSettings()
+    if resolve_admin_store(cfg) == "mysql":
+        return AdminConfigStore(
+            path or (repo_root / cfg.admin_config_path),
+            mysql=mysql_config_from_settings(cfg),
+        )
+    config_path = Path(path) if path is not None else Path(cfg.admin_config_path)
+    if not config_path.is_absolute():
+        config_path = repo_root / config_path
+    return AdminConfigStore(config_path)
+
+
 class AdminConfigStore:
-    """Small JSON-backed admin configuration store.
+    """Admin configuration store (JSON file or MySQL document).
 
     It intentionally stays simple: admin changes are persisted as structured JSON and replayed into
     the in-memory runtime during admin app startup.
     """
 
-    def __init__(self, path: Path | str = "data/admin/config.json") -> None:
+    def __init__(
+        self,
+        path: Path | str = "data/admin/config.json",
+        *,
+        mysql: MysqlConnectConfig | None = None,
+    ) -> None:
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._mysql = mysql
+        self.backend = "mysql" if mysql is not None else "file"
+        if self._mysql is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            self._init_mysql()
+
+    def _init_mysql(self) -> None:
+        assert self._mysql is not None
+        with mysql_connection(self._mysql) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS admin_config (
+                        doc_id VARCHAR(64) PRIMARY KEY,
+                        payload JSON NOT NULL,
+                        updated_at VARCHAR(64) NOT NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                    """
+                )
+
+    def _load_raw(self) -> dict[str, Any] | None:
+        if self._mysql is not None:
+            with mysql_connection(self._mysql) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT payload FROM admin_config WHERE doc_id = %s",
+                        ("default",),
+                    )
+                    row = cur.fetchone()
+            if row is None:
+                return None
+            payload = row[0]
+            if isinstance(payload, (bytes, bytearray)):
+                payload = payload.decode("utf-8")
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            return payload if isinstance(payload, dict) else None
+
+        if not self.path.exists():
+            return None
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
 
     def load(self) -> dict[str, Any]:
-        if not self.path.exists():
-            data = {
-                "repos": [],
-                "catalog": [],
-                "skills": [],
-                "settings": {},
-                "ai_providers": [],
-                "callbacks": [],
-                "error_chat": [],
-                "repo_remotes": [],
-                "cron_jobs": [],
-            }
+        data = self._load_raw()
+        if data is None:
+            data = _empty_admin_data()
             cron_jobs, _ = _seed_builtin_cron_jobs([])
             data["cron_jobs"] = cron_jobs
             self.save(data)
             return data
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            data = {
-                "repos": [],
-                "catalog": [],
-                "skills": [],
-                "settings": {},
-                "ai_providers": [],
-                "callbacks": [],
-                "error_chat": [],
-                "repo_remotes": [],
-                "cron_jobs": [],
-            }
-        data.setdefault("repos", [])
-        data.setdefault("catalog", [])
-        data.setdefault("skills", [])
-        data.setdefault("settings", {})
-        data.setdefault("env_vars", [])
-        data.setdefault("ai_providers", [])
-        data.setdefault("callbacks", [])
-        data.setdefault("error_chat", [])
-        data.setdefault("repo_remotes", [])
-        data.setdefault("cron_jobs", [])
+        for key, default in _empty_admin_data().items():
+            data.setdefault(key, default if not isinstance(default, dict) else dict(default))
         cron_jobs, changed = _seed_builtin_cron_jobs(
             [item for item in data.get("cron_jobs", []) if isinstance(item, dict)]
         )
@@ -198,6 +253,19 @@ class AdminConfigStore:
         return data
 
     def save(self, data: dict[str, Any]) -> None:
+        if self._mysql is not None:
+            payload = json.dumps(data, ensure_ascii=False)
+            updated_at = datetime.now(UTC).isoformat()
+            with mysql_connection(self._mysql) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        REPLACE INTO admin_config (doc_id, payload, updated_at)
+                        VALUES (%s, %s, %s)
+                        """,
+                        ("default", payload, updated_at),
+                    )
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
