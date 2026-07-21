@@ -4,6 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
+# Ensure repo root is importable when launched as `python scripts/setup_wizard.py`.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RootSeeker 首次安装向导")
@@ -21,7 +26,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return _REPO_ROOT
 
 
 def main(argv: list[str] | None = None) -> int:

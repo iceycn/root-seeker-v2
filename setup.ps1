@@ -7,7 +7,9 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $python = $null
+$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 foreach ($candidate in @(
+        $venvPython,
         "python",
         "python3",
         "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",

@@ -104,25 +104,62 @@ cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能
 
 ### 2. 首次安装（推荐交互向导）
 
-向导会自动探测 Docker：有则优先 Compose 全栈；无则引导本机安装（SQLite / 便携 MySQL / 已有 MySQL）。
+向导会自动探测 Docker：有则优先 Compose 全栈；无则引导本机安装（SQLite / 便携 MySQL / 已有 MySQL）。  
+进度保存在 `.setup-state.json`（可续跑）；环境变量只通过向导合并写入 `.env`（已有密钥默认保留）。
+
+| 入口 | 说明 |
+| --- | --- |
+| `setup.ps1` / `setup.sh` | 薄包装：优先使用 `.venv` 中的 Python，再回退系统 Python |
+| `scripts/setup_wizard.py` | 真正的安装编排（探测、路径选择、写 env、启服务、健康检查） |
 
 ```powershell
 # Windows
 .\setup.ps1
+.\setup.ps1 --status          # 查看安装进度
+.\setup.ps1 --resume          # 从断点继续
 ```
 
 ```bash
 # macOS / Linux
 chmod +x setup.sh
 ./setup.sh
+./setup.sh --status
+./setup.sh --resume
 ```
+
+常用参数（也可直接传给向导）：
+
+| 参数 | 含义 |
+| --- | --- |
+| `--yes` | 非交互；必须同时提供 `--path` |
+| `--path docker\|native` | Docker 全栈 / 本机完整安装 |
+| `--storage mysql\|sqlite\|existing-mysql` | 存储方式（Docker 下 `existing-mysql` 按 mysql 处理） |
+| `--build-only` | 仅 Docker 路径：只 `compose build`，不启动 |
+| `--resume` | 读取 `.setup-state.json` 跳过已完成步骤 |
+| `--status` | 打印各步骤完成状态后退出 |
 
 无人值守示例：
 
 ```bash
+# Docker + MySQL（默认 Compose profile=mysql）
 python scripts/setup_wizard.py --yes --path docker --storage mysql
+
+# Docker + SQLite（不启动 mysql 容器）
+python scripts/setup_wizard.py --yes --path docker --storage sqlite --build-only
+
+# 本机 + SQLite
 python scripts/setup_wizard.py --yes --path native --storage sqlite
+
+# 本机 + 便携 MySQL（下载到 .tools/，默认端口 3307）
+python scripts/setup_wizard.py --yes --path native --storage mysql
 ```
+
+说明：
+
+- **本机便携 MySQL** 监听 `127.0.0.1:3307`（避免与系统 3306 冲突），数据在 `.tools/mysql-data/`。
+- **已有 MySQL**（`--storage existing-mysql`）在交互模式下会询问主机/端口/账号；`--yes` 时使用默认 `127.0.0.1:3306` / `rootseeker`，需本机已有对应实例。
+- 本机路径会尽量准备 Zoekt / 探测 Node（GitNexus）；Qdrant 本机自动安装可能跳过，可用 Docker 补齐。
+- 设计说明见 [docs/superpowers/specs/2026-07-20-interactive-setup-wizard-design.md](docs/superpowers/specs/2026-07-20-interactive-setup-wizard-design.md)。
 
 ### 3. 启动（配置完成后）
 
