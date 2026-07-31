@@ -8,6 +8,13 @@ Docker 编排默认使用 MySQL。本地代码默认仍是 `memory`（便于单�
 # Docker（默认已是 mysql）
 docker compose up -d --build
 
+# 网络不稳 / 本地 build 失败时：用预构建应用镜像 + mysql profile
+# （也可: .\setup.ps1 --yes --path docker --storage mysql --pull）
+COMPOSE_PROFILES=mysql docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d
+
+# 若 Hub 拉不到 mysql:8.0，可换镜像源，例如：
+# MYSQL_IMAGE=docker.1ms.run/library/mysql:8.0
+
 # 本地进程连接 Docker MySQL 或自建库
 export ROOTSEEKER_STORAGE_BACKEND=mysql
 export ROOTSEEKER_MYSQL_HOST=127.0.0.1

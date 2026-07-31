@@ -27,7 +27,7 @@ x-app-storage-env: &app-storage-env
 
 services:
   mysql:
-    image: mysql:8.0
+    image: ${MYSQL_IMAGE:-mysql:8.0}
     container_name: rootseeker-mysql
     profiles: ["mysql"]
     environment:

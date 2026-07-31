@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 from scripts.setup.env_writer import merge_env_file
+from scripts.setup.mirrors import rewrite_mysql_archive_url
 
 # Pinned community server archives (update checksums when bumping).
 MYSQL_VERSION = "8.0.40"
@@ -54,7 +55,8 @@ def resolve_mysql_download(os_name: str, arch: str) -> tuple[str, str | None]:
     item = _DOWNLOADS.get((key_os, key_arch))
     if item is None:
         raise ValueError(f"不支持的平台: {os_name}/{arch}")
-    return item
+    url, checksum = item
+    return rewrite_mysql_archive_url(url), checksum
 
 
 def _sha256_file(path: Path) -> str:

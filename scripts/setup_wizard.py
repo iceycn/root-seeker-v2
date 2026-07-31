@@ -22,6 +22,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument(
+        "--pull",
+        action="store_true",
+        help="Docker 路径优先使用预构建镜像（docker-compose.pull.yml），跳过本地 build",
+    )
     return parser.parse_args(argv)
 
 
@@ -71,6 +76,9 @@ def _run_wizard(root: Path, state, state_path: Path, args) -> int:
     from scripts.setup.native_path import run_native_path
 
     ui.info("欢迎使用 RootSeeker V2 安装向导")
+    from scripts.setup.mirrors import setup_region
+
+    ui.info(f"安装区域: {setup_region()}")
     env = detect_environment(root)
     if not args.resume or not state.is_done("detect"):
         ui.info(f"操作系统: {env.os_name}")
@@ -114,6 +122,7 @@ def _run_wizard(root: Path, state, state_path: Path, args) -> int:
             storage=storage if storage in {"mysql", "sqlite"} else "mysql",
             state=state,
             noninteractive=bool(args.yes),
+            use_pull=bool(args.pull),
         )
         state.save(state_path)
         return code

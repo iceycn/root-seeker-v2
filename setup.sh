@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# RootSeeker V2 首次安装向导（macOS / Linux）
+# RootSeeker V2 首次安装向导（macOS / Linux）— 标准/国际源
+# 国内用户请用: ./setup-cn.sh
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# 标准入口不强制区域；若调用方未设置则默认 global
+export ROOTSEEKER_SETUP_REGION="${ROOTSEEKER_SETUP_REGION:-global}"
 
 if [[ -x "$SCRIPT_DIR/.venv/bin/python" ]]; then
   PY="$SCRIPT_DIR/.venv/bin/python"

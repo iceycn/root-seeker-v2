@@ -109,23 +109,44 @@ cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能
 
 | 入口 | 说明 |
 | --- | --- |
-| `setup.ps1` / `setup.sh` | 薄包装：优先使用 `.venv` 中的 Python，再回退系统 Python |
+| `setup.ps1` / `setup.sh` | **标准/国际源**：Docker Hub、MySQL 官网 |
+| `setup-cn.ps1` / `setup-cn.sh` | **国内加速**：DaoCloud / 清华镜像等（设置 `ROOTSEEKER_SETUP_REGION=cn`） |
+| `uninstall.ps1` / `uninstall.sh` | **卸载全清**：停 Docker/本机进程，删除 volumes、`.env`、`.venv`、`.tools`、`data/*`、进度文件 |
 | `scripts/setup_wizard.py` | 真正的安装编排（探测、路径选择、写 env、启服务、健康检查） |
 
 ```powershell
-# Windows
+# Windows（国际）
 .\setup.ps1
-.\setup.ps1 --status          # 查看安装进度
-.\setup.ps1 --resume          # 从断点继续
+.\setup.ps1 --status
+
+# Windows（国内加速）
+.\setup-cn.ps1
+.\setup-cn.ps1 --yes --path docker --storage mysql --pull
 ```
 
 ```bash
-# macOS / Linux
-chmod +x setup.sh
+# macOS / Linux（国际）
+chmod +x setup.sh setup-cn.sh
 ./setup.sh
 ./setup.sh --status
-./setup.sh --resume
+
+# macOS / Linux（国内加速）
+./setup-cn.sh
+./setup-cn.sh --yes --path docker --storage mysql --pull
 ```
+
+卸载（直接全清，无交互确认）：
+
+```powershell
+.\uninstall.ps1
+```
+
+```bash
+chmod +x uninstall.sh
+./uninstall.sh
+```
+
+会停止 Docker 栈（`down -v`）与本机/便携 MySQL 进程，并删除 `.env`、`.venv`、`.tools`、`data/*`、`.setup-state.json`。源代码与已缓存的 Docker 镜像会保留。
 
 常用参数（也可直接传给向导）：
 
@@ -134,7 +155,8 @@ chmod +x setup.sh
 | `--yes` | 非交互；必须同时提供 `--path` |
 | `--path docker\|native` | Docker 全栈 / 本机完整安装 |
 | `--storage mysql\|sqlite\|existing-mysql` | 存储方式（Docker 下 `existing-mysql` 按 mysql 处理） |
-| `--build-only` | 仅 Docker 路径：只 `compose build`，不启动 |
+| `--build-only` | 仅 Docker 路径：只 `compose build` / 拉取，不启动 |
+| `--pull` | Docker 路径优先用预构建镜像（`docker-compose.pull.yml`），跳过本地 build；本地 build 失败时也会自动回退 |
 | `--resume` | 读取 `.setup-state.json` 跳过已完成步骤 |
 | `--status` | 打印各步骤完成状态后退出 |
 
@@ -143,6 +165,14 @@ chmod +x setup.sh
 ```bash
 # Docker + MySQL（默认 Compose profile=mysql）
 python scripts/setup_wizard.py --yes --path docker --storage mysql
+
+# 国内加速（等价于 setup-cn.*）：先设区域再跑向导
+# Windows:  .\setup-cn.ps1 --yes --path docker --storage mysql --pull
+# Linux:    ./setup-cn.sh  --yes --path docker --storage mysql --pull
+ROOTSEEKER_SETUP_REGION=cn python scripts/setup_wizard.py --yes --path docker --storage mysql --pull
+
+# Docker + MySQL（推荐网络不稳时：直接用 Hub 预构建镜像，仍会启动 mysql profile）
+python scripts/setup_wizard.py --yes --path docker --storage mysql --pull
 
 # Docker + SQLite（不启动 mysql 容器）
 python scripts/setup_wizard.py --yes --path docker --storage sqlite --build-only

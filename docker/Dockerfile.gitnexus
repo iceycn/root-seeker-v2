@@ -10,11 +10,12 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 
 WORKDIR /app
 
-# Prefer China apt mirror when Hub/Debian are unreachable without a working proxy.
-RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
-    sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list || true
-
-RUN apt-get update && \
+# Official Debian first; fall back to Aliyun mirror when Hub/Debian are slow in CN.
+RUN apt-get update || ( \
+      sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+      sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list || true; \
+      apt-get update \
+    ) && \
     apt-get install -y --no-install-recommends git ca-certificates python3 make g++ && \
     rm -rf /var/lib/apt/lists/*
 
