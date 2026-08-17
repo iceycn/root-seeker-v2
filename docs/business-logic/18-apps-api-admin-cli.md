@@ -142,7 +142,7 @@ Admin 分三层：**SPA 页面路由**（返回 `admin-web/dist/index.html` 或 
 
 | 方法 | 路径 | Handler | 说明 |
 | --- | --- | --- | --- |
-| GET | `/`, `/admin`, `/models`, `/advanced-settings`, `/skills`, `/repos`, `/catalog`, `/plugins`, `/callbacks`, `/semantic-search`, `/error-chat`, `/overview`, `/schedules` | `admin_page` | 同一 SPA 入口 |
+| GET | `/`, `/admin`, `/models`, `/advanced-settings`, `/skills`, `/repos`, `/catalog`, `/plugins`, `/notification-channels`, `/semantic-search`, `/error-chat`, `/overview`, `/schedules` | `admin_page` | 同一 SPA 入口 |
 | GET | `/assets/{path:path}` | `admin_assets` | 前端静态资源 |
 | GET | `/healthz` | `healthz` | `{"status":"ok"}` |
 
@@ -157,14 +157,28 @@ Admin 分三层：**SPA 页面路由**（返回 `admin-web/dist/index.html` 或 
 | POST | `/api/env-vars` | `upsert_env_var` | `AdminConfigStore.upsert_env_var` |
 | DELETE | `/api/env-vars/{key}` | `delete_env_var` | `AdminConfigStore.delete_env_var` |
 
-#### 3.3.3 AI Provider / Callback
+#### 3.3.3 AI Provider
 
 | 方法 | 路径 | Handler | 下游 |
 | --- | --- | --- | --- |
 | GET/POST/DELETE | `/api/ai-providers` 及 `/{name}`、`/default`、`/models/{model}/switch`、`/test` | 各同名 handler | `AdminConfigStore` AI provider CRUD + `test_openai_compatible_connection` |
-| GET/POST/DELETE | `/api/callbacks` 及 `/{name}/test` | 各同名 handler | `AdminConfigStore` callback CRUD + httpx 探测 |
 
-#### 3.3.4 Skill / Plugin / Tool / Catalog
+#### 3.3.4 通知渠道（Notification Channels）
+
+| 方法 | 路径 | Handler | 下游 |
+| --- | --- | --- | --- |
+| GET | `/api/notification-channels` | `list_notification_channels` | `NotificationChannelStore.list_channels`（secret 掩码） |
+| POST | `/api/notification-channels` | `create_notification_channel` | `upsert_channel` |
+| PUT | `/api/notification-channels/{channel_id}` | `update_notification_channel` | `upsert_channel` |
+| PATCH | `/api/notification-channels/{channel_id}` | `patch_notification_channel` | 部分更新（如 `enabled`） |
+| DELETE | `/api/notification-channels/{channel_id}` | `delete_notification_channel` | `delete_channel` |
+| POST | `/api/notification-channels/{channel_id}/test` | `test_notification_channel` | `ChannelAdapter.send` 测试消息 |
+| GET | `/api/notification-channel-settings` | `get_notification_channel_settings` | `broadcast_enabled` 等 |
+| PUT | `/api/notification-channel-settings` | `update_notification_channel_settings` | 更新全局广播开关 |
+
+Store 工厂：`build_notification_channel_store(config_root)`；持久化规则见 [16-storage.md](./16-storage.md) §3.4.1。Flow 报告生成后 `notify.send` 经 [10-channel-routing.md](./10-channel-routing.md) 向**所有已启用渠道**广播。
+
+#### 3.3.5 Skill / Plugin / Tool / Catalog
 
 | 方法 | 路径 | Handler | 下游 |
 | --- | --- | --- | --- |
@@ -307,6 +321,7 @@ CLI 参数（细节见 [13-cron-scheduler.md](./13-cron-scheduler.md)）：
 | `WebhookResponse` | `apps/api/main.py` | `handle_webhook` | Webhook 调用方 |
 | `AdminErrorChatSubmitRequest` | `apps/admin/main.py` | Admin UI POST body | `submit_error_chat` |
 | `AdminCronJobCreateRequest` / `UpdateRequest` | `apps/admin/main.py` | Admin cron CRUD | `AdminConfigStore.upsert_cron_job` |
+| `AdminNotificationChannelRequest` 等 | `apps/admin/main.py` | Admin 通知渠道 CRUD | `NotificationChannelStore` |
 | `AdminDiscoverReposFromRemoteRequest` | `apps/admin/main.py` | Admin repo discover | `_discover_repos_from_remote` |
 | `ToolCallRequest` | `rootseeker/contracts/tool.py` | `_invoke_*_repo_tool` / `_invoke_admin_tool` | `McpGateway.invoke` → [07-mcp-plane.md](./07-mcp-plane.md) |
 | `GatewayRequestFrame` | `rootseeker/gateway/` | WS 客户端 JSON | `GatewayServer.handle_request` → [11-gateway-control-plane.md](./11-gateway-control-plane.md) |
@@ -316,7 +331,7 @@ CLI 参数（细节见 [13-cron-scheduler.md](./13-cron-scheduler.md)）：
 | Admin 配置文档 | `apps/admin/config_store.py` | Admin API 写入 | 启动时 `_load_admin_config` 回放 |
 | Error chat item | `apps/admin/error_history.py` | `history_store.append` | Admin UI 列表展示 |
 
-**AdminConfigStore 文档字段**（`_empty_admin_data`）：`repos`、`catalog`、`skills`、`settings`、`env_vars`、`ai_providers`、`callbacks`、`error_chat`（预留）、`repo_remotes`、`cron_jobs`。
+**AdminConfigStore 文档字段**（`_empty_admin_data`）：`repos`、`catalog`、`skills`、`settings`、`env_vars`、`ai_providers`、`error_chat`（预留）、`repo_remotes`、`cron_jobs`。
 
 ---
 
@@ -328,6 +343,7 @@ CLI 参数（细节见 [13-cron-scheduler.md](./13-cron-scheduler.md)）：
 | API 仓库 REST | 经 MCP 写 repo 状态、触发 Zoekt/Qdrant/GitNexus（[14-code-index.md](./14-code-index.md)） |
 | API Gateway WS | 内存连接表；Gateway 方法可读 Case Store（[11-gateway-control-plane.md](./11-gateway-control-plane.md)） |
 | Admin 配置 API | 写 `AdminConfigStore`（file 或 MySQL，[16-storage.md](./16-storage.md)） |
+| Admin 通知渠道 API | 写 `NotificationChannelStore`（跟随 `storage_backend`，[16-storage.md](./16-storage.md) §3.4.1） |
 | Admin error-chat | 写 case/evidence/report/checkpoint + `ErrorChatHistoryStore`；可选 LLM HTTP |
 | Admin repo sync | MCP repo 工具 + `AdminConfigStore.upsert_repo` 双写 |
 | Admin cron CRUD | 写 `cron_jobs`；手动 run 写 `CronStateStore` runs |
@@ -379,7 +395,7 @@ CLI 参数（细节见 [13-cron-scheduler.md](./13-cron-scheduler.md)）：
 - [01-bootstrap-wiring.md](./01-bootstrap-wiring.md) — 各进程 `create_dev_runtime` 装配
 - [03-default-triage-flow.md](./03-default-triage-flow.md) — 默认排查 Flow（API/Admin/Webhook/CLI demo）
 - [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) — checkpoint / resume
-- [10-channel-routing.md](./10-channel-routing.md) — Webhook 渠道规范化
+- [10-channel-routing.md](./10-channel-routing.md) — Webhook 归一化；通知渠道广播出站
 - [11-gateway-control-plane.md](./11-gateway-control-plane.md) — Gateway WS 协议
 - [12-task-runtime.md](./12-task-runtime.md) — Worker / CLI resume / Scheduler CRON 任务
 - [13-cron-scheduler.md](./13-cron-scheduler.md) — Scheduler 执行细节

@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import time
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import quote_plus
 
 import httpx
 
@@ -16,7 +21,22 @@ __all__ = [
     "WeChatWorkAdapter",
     "SlackChannelAdapter",
     "DiscordChannelAdapter",
+    "build_dingtalk_signed_url",
 ]
+
+
+def build_dingtalk_signed_url(endpoint: str, secret: str, *, timestamp_ms: int | None = None) -> str:
+    """Append DingTalk robot ``timestamp`` and ``sign`` query params for SEC signing."""
+    ts = str(timestamp_ms if timestamp_ms is not None else round(time.time() * 1000))
+    string_to_sign = f"{ts}\n{secret}"
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        string_to_sign.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    sign = quote_plus(base64.b64encode(digest).decode("utf-8"))
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}timestamp={ts}&sign={sign}"
 
 
 @dataclass
@@ -201,10 +221,14 @@ class DingTalkChannelAdapter(ChannelAdapter):
             "msgtype": msg_type,
             msg_type: self._build_content(msg_type, message, target.metadata),
         }
+        endpoint = str(target.endpoint or "")
+        secret = str(target.metadata.get("secret") or "").strip()
+        if secret:
+            endpoint = build_dingtalk_signed_url(endpoint, secret)
 
         try:
             with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.post(target.endpoint, json=payload)
+                response = client.post(endpoint, json=payload)
                 result = response.json()
 
                 ok = result.get("errcode") == 0

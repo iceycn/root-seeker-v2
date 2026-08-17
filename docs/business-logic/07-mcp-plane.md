@@ -224,8 +224,8 @@ sequenceDiagram
 | SLS 未配置 | `sls_adapter.py` → `_not_configured_response` | **不 fail-fast**；返回空 records + `metadata.configured=false` + error 文案 |
 | Jaeger 未配置 | `jaeger_adapter.py` → `_not_configured_trace_chain` | 空 spans + `configured=false` |
 | Zoekt 未配置 | `zoekt_adapter.py` → `_not_configured_*` | 空 hits/content + `configured=false` |
-| Notify URL 未配置 | `notify_dispatch.py` → `dispatch_env_resolved_notify` | **不 fail-fast**；`ok=True`，`metadata.skipped=True`（Gateway 仍 `ok=True`） |
-| Notify 已配置但 HTTP 失败 | `outbound.send_outbound_notification` | 由 outbound 层决定；Gateway 层仍按 adapter 返回 content 包装 |
+| Notify 无启用渠道 / legacy URL 未配置 | `notify_dispatch.py` → `dispatch_broadcast_notify` / `dispatch_env_resolved_notify` | **不 fail-fast**；`ok=True`，`metadata.skipped=True`（Gateway 仍 `ok=True`） |
+| Notify 已配置但 HTTP 失败 | `outbound.send_outbound_notification` / 广播 `results[]` | 由 outbound 层决定；部分失败时 `dispatch_broadcast_notify` 可返回 `ok=False` |
 
 ### 6.1 审批拦截行为（摘要）
 

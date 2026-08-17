@@ -199,6 +199,60 @@ def test_dingtalk_channel_adapter_send() -> None:
         assert result.message == "dingtalk message"
 
 
+def test_build_dingtalk_signed_url_matches_official_algorithm() -> None:
+    import base64
+    import hashlib
+    import hmac
+    from urllib.parse import quote_plus
+
+    from rootseeker.channel_routing.adapters import build_dingtalk_signed_url
+
+    endpoint = "https://oapi.dingtalk.com/robot/send?access_token=test-token"
+    secret = "SEC123"
+    timestamp_ms = 1590000000000
+    string_to_sign = f"{timestamp_ms}\n{secret}"
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        string_to_sign.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    expected_sign = quote_plus(base64.b64encode(digest).decode("utf-8"))
+    signed = build_dingtalk_signed_url(endpoint, secret, timestamp_ms=timestamp_ms)
+    assert f"timestamp={timestamp_ms}" in signed
+    assert f"sign={expected_sign}" in signed
+    assert "access_token=test-token" in signed
+
+
+def test_dingtalk_channel_adapter_uses_secret_signing() -> None:
+    from unittest.mock import MagicMock, patch
+
+    from rootseeker.channel_routing import DingTalkChannelAdapter
+
+    adapter = DingTalkChannelAdapter()
+    target = OutboundTarget(
+        channel="dingtalk",
+        endpoint="https://oapi.dingtalk.com/robot/send?access_token=test",
+        team="test-team",
+        metadata={"secret": "SEC123"},
+    )
+
+    with patch("httpx.Client") as mock_client:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+        mock_context = MagicMock()
+        mock_context.__enter__ = MagicMock(return_value=mock_context)
+        mock_context.__exit__ = MagicMock(return_value=False)
+        mock_context.post.return_value = mock_response
+        mock_client.return_value = mock_context
+
+        result = adapter.send(target, "signed message")
+
+        assert result.ok
+        posted_url = mock_context.post.call_args.args[0]
+        assert "timestamp=" in posted_url
+        assert "sign=" in posted_url
+
+
 def test_wechat_work_adapter_send() -> None:
     """Test WeChat Work adapter with mocked HTTP."""
     from unittest.mock import MagicMock, patch

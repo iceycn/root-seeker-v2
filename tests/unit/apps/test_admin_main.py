@@ -466,17 +466,22 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
     assert switch.status_code == 200
     ai_test = client.post("/api/ai-providers/openai-main/test")
     assert ai_test.status_code == 200
-    client.post(
-        "/api/callbacks",
-        json={
-            "name": "ops-webhook",
-            "channel": "webhook",
-            "url": "https://hooks.example.com/rootseeker",
-            "team": "ops",
-        },
-    )
-    cb_test = client.post("/api/callbacks/ops-webhook/test")
-    assert cb_test.status_code == 200
+    with patch(
+        "apps.admin.main.send_outbound_notification",
+        return_value={"ok": True, "channel": "webhook", "message": "test"},
+    ):
+        create_resp = client.post(
+            "/api/notification-channels",
+            json={
+                "name": "ops-webhook",
+                "channel_type": "webhook",
+                "endpoint_url": "https://hooks.example.com/rootseeker",
+            },
+        )
+        assert create_resp.status_code == 200
+        channel_id = create_resp.json()["channel"]["channel_id"]
+        cb_test = client.post(f"/api/notification-channels/{channel_id}/test")
+        assert cb_test.status_code == 200
     client.put(
         "/api/skills",
         json={
@@ -516,11 +521,10 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
     assert settings["OPENAI_API_KEY"] == "sk-test"
     env_vars = fresh.get("/api/env-vars").json()
     assert env_vars["items"][0]["masked_value"] == "******"
-    assert settings["ROOTSEEKER_NOTIFY_WEBHOOK_URL"] == "https://hooks.example.com/rootseeker"
     providers = fresh.get("/api/ai-providers").json()
     assert providers["total"] >= 6
     assert any(item["name"] == "openai-main" for item in providers["items"])
-    assert fresh.get("/api/callbacks").json()["total"] == 1
+    assert fresh.get("/api/notification-channels").json()["total"] == 1
     assert fresh.get("/api/skills/custom/admin").status_code == 200
     assert fresh.get("/api/skills/custom/quick").status_code == 200
 

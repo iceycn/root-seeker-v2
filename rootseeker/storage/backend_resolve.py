@@ -10,6 +10,7 @@ __all__ = [
     "resolve_admin_store",
     "resolve_cron_state_store",
     "resolve_error_history_store",
+    "resolve_notification_channel_store",
 ]
 
 
@@ -35,3 +36,13 @@ def resolve_error_history_store(
     if settings.error_history_store in ("file", "sqlite", "mysql"):
         return settings.error_history_store  # type: ignore[return-value]
     return "mysql" if settings.storage_backend == "mysql" else "file"
+
+
+def resolve_notification_channel_store(
+    settings: RootSeekerSettings,
+) -> Literal["file", "sqlite", "mysql"]:
+    if settings.storage_backend == "mysql":
+        return "mysql"
+    if settings.storage_backend == "sqlite":
+        return "sqlite"
+    return "file"

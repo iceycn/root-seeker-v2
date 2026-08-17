@@ -150,7 +150,6 @@ def _empty_admin_data() -> dict[str, Any]:
         "settings": {},
         "env_vars": [],
         "ai_providers": [],
-        "callbacks": [],
         "error_chat": [],
         "repo_remotes": [],
         "cron_jobs": [],
@@ -431,24 +430,6 @@ class AdminConfigStore:
         data["settings"] = settings
         self.save(data)
         return settings
-
-    def list_callbacks(self) -> list[dict[str, Any]]:
-        return list(self.load().get("callbacks", []))
-
-    def upsert_callback(self, callback: dict[str, Any]) -> None:
-        name = str(callback.get("name", "")).strip()
-        if not name:
-            raise ValueError("callback name is required")
-        data = self.load()
-        items = [item for item in data.get("callbacks", []) if item.get("name") != name]
-        items.append(dict(callback))
-        data["callbacks"] = items
-        self.save(data)
-
-    def delete_callback(self, name: str) -> None:
-        data = self.load()
-        data["callbacks"] = [item for item in data.get("callbacks", []) if item.get("name") != name]
-        self.save(data)
 
     def list_error_chat(self) -> list[dict[str, Any]]:
         return list(self.load().get("error_chat", []))

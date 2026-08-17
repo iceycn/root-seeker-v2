@@ -2,7 +2,7 @@
 
 ## 1. 业务目标
 
-渠道路由模块负责将外部告警系统与 RootSeeker 内部 Case 创建、默认排查 Flow 及出站通知打通。入站侧，HTTP Webhook 或 MCP 工具传入的原始 JSON 会被归一化为统一的 `NormalizedInboundMessage`，再组装为 `CaseCreateRequest` 触发默认排查。出站侧，`notify.send` MCP 工具通过环境变量解析真实 Webhook URL，经各渠道 HTTPS 适配器发送报告摘要。
+渠道路由模块负责将外部告警系统与 RootSeeker 内部 Case 创建、默认排查 Flow 及出站通知打通。入站侧，HTTP Webhook 或 MCP 工具传入的原始 JSON 会被归一化为统一的 `NormalizedInboundMessage`，再组装为 `CaseCreateRequest` 触发默认排查。出站侧，`notify.send` MCP 工具默认经 **NotificationChannelStore** 读取 Admin 配置的已启用渠道并广播报告摘要；关闭全局广播或未配置渠道时，可回退到环境变量单 URL（legacy）。
 
 成功时：入站 Webhook 返回 `case_id` 与 `flow_run_id`；Flow 末尾的 `notify.send` 向已配置渠道发出通知（或未配置时显式跳过）。失败时：JSON 解析失败降级为空 payload 继续归一化；出站 HTTP 失败返回 `ok=False` 与 `error` 字段；若配置 `ROOTSEEKER_WEBHOOK_SIGNING_SECRET` 或 `ROOTSEEKER_WEBHOOK_ALLOWLIST_IPS`，`POST /webhook/{channel}` 经 `build_channel_security_from_settings` → `ingest_channel_message` 校验，失败返回 HTTP 403。
 
@@ -16,7 +16,10 @@
 | MCP 内部工具 | `mcp_servers/internal/handlers.py` → `_invoke_notify_send` | `notify.send`，经 `InternalToolAdapter.send_notification` 出站 |
 | 库 API | `rootseeker/channel_routing/inbound.py` → `ingest_channel_message` | 归一化入口，可选 `ChannelSecurity` |
 | 库 API | `rootseeker/channel_routing/webhook.py` → `webhook_payload_to_case_create` | payload dict → `CaseCreateRequest` |
-| 库 API | `rootseeker/channel_routing/notify_dispatch.py` → `dispatch_env_resolved_notify` | `notify.send` 出站调度（读环境变量 + 生产适配器） |
+| 库 API | `rootseeker/channel_routing/notify_dispatch.py` → `dispatch_broadcast_notify` | `notify.send` 出站广播（读 NotificationChannelStore + 生产适配器） |
+| 库 API | `rootseeker/channel_routing/notify_dispatch.py` → `dispatch_env_resolved_notify` | legacy 单渠道（读环境变量 URL） |
+| 库 API | `rootseeker/channel_routing/notify_config.py` → `list_enabled_outbound_targets` | Store 记录 → `OutboundTarget` 列表 |
+| Admin API | `apps/admin/main.py` → `/api/notification-channels` | 通知渠道 CRUD / 测试（[18-apps-api-admin-cli.md](./18-apps-api-admin-cli.md)） |
 | Bootstrap | `rootseeker/bootstrap/runtime.py` → `run_default_flow_from_payload` | CLI/回放等路径，payload → `webhook_payload_to_case_create` → 默认 Flow |
 | Agent | `rootseeker/agent_runtime/runtime.py` → `run_payload` / `run_payload_detailed` | Agent 运行入口，同样经 `webhook_payload_to_case_create` |
 
@@ -126,34 +129,47 @@ sequenceDiagram
 5a. **默认 composite 适配器**（`rootseeker/config/internal_adapter.py` → `CompositeProductionAdapter`）
 
 - `mcp_servers/external/composite_adapter.py` → `send_notification`
-  - 出：调用 `dispatch_env_resolved_notify(channel, message)`
+  - 出：调用 `dispatch_broadcast_notify(message, channel=...)`
 
 5b. **HTTP 内部适配器**（`ROOTSEEKER_INTERNAL_ADAPTER_KIND=http`）
 
 - `mcp_servers/internal/adapters.py` → `HttpInternalToolAdapter.send_notification`
   - 出：`POST {base_url}/notify/send`（该路由由外部 internal HTTP 服务实现，**未在 `apps/api` 中找到**）
 
-6. `rootseeker/channel_routing/notify_dispatch.py` → `dispatch_env_resolved_notify`
+6. `rootseeker/channel_routing/notify_dispatch.py` → `dispatch_broadcast_notify`
+   - 入：`message`；可选 legacy `channel`（广播关闭时）
+   - 出：加载 `build_notification_channel_store(repo_root)` + `broadcast_enabled`
+   - 分支：
+     - `broadcast_enabled=false` → `dispatch_env_resolved_notify(channel, message)`（legacy）
+     - 无启用渠道 → `ok=True, metadata.skipped=True`
+     - 否则 → 对每个启用渠道 fan-out
+   - 下一步：`list_enabled_outbound_targets` → `send_outbound_notification`
+
+7. `rootseeker/channel_routing/notify_config.py` → `list_enabled_outbound_targets`
+   - 入：`NotificationChannelStore`
+   - 出：`list[OutboundTarget]`（`channel_type` → `channel`，`endpoint_url` → `endpoint`，`team` 固定 `"default"`）
+
+8. `rootseeker/channel_routing/notify_dispatch.py` → `dispatch_env_resolved_notify`（legacy）
    - 入：`channel`、`message`
    - 出：若 URL 未配置 → `ok=True, metadata.skipped=True`；否则继续发送
    - 下一步：`resolve_notify_outbound_target` → `send_outbound_notification`
 
-7. `rootseeker/channel_routing/notify_env.py` → `resolve_notify_outbound_target`
+9. `rootseeker/channel_routing/notify_env.py` → `resolve_notify_outbound_target`
    - 入：渠道名（如 `webhook`、`feishu`、`wechat_work`）
    - 解析顺序：渠道专属 `ROOTSEEKER_NOTIFY_*` → legacy 变量（如 `FEISHU_WEBHOOK_URL`）→ `ROOTSEEKER_NOTIFY_DEFAULT_URL`
-   - 出：`OutboundTarget(channel, endpoint, team=ROOTSEEKER_NOTIFY_TEAM 或 "default")` 或 `None`
+   - 出：`OutboundTarget` 或 `None`
 
-8. `rootseeker/channel_routing/outbound.py` → `send_outbound_notification`
+10. `rootseeker/channel_routing/outbound.py` → `send_outbound_notification`
    - 入：`OutboundTarget`、`message`；registry 默认 `get_production_channel_registry()`
    - 出：`dict`（`ok`、`channel`、`message`、`error`、`metadata`）
    - 下一步：`ChannelRegistry.send`（定义于 `adapter.py`）
 
-9. `rootseeker/channel_routing/adapter.py` → `ChannelRegistry.send`
+11. `rootseeker/channel_routing/adapter.py` → `ChannelRegistry.send`
    - 入：`target.channel` 查找已注册 `ChannelAdapter`
    - 出：`SendResult`；无适配器时 `ok=False, error="no adapter registered for channel: ..."`
    - 下一步：具体 `*ChannelAdapter.send`
 
-10. `rootseeker/channel_routing/adapters.py` → 各适配器 `send`
+12. `rootseeker/channel_routing/adapters.py` → 各适配器 `send`
     - 经 `httpx.Client.post` 向 `target.endpoint` 发送渠道特定 JSON
     - 成功判定因渠道而异（如 Feishu `code==0`、Slack 响应 `"ok"`、Discord HTTP 200/204）
 
@@ -161,11 +177,13 @@ sequenceDiagram
 flowchart LR
     A[notify.send MCP] --> B[_invoke_notify_send]
     B --> C{adapter kind}
-    C -->|composite| D[dispatch_env_resolved_notify]
+    C -->|composite| D[dispatch_broadcast_notify]
     C -->|http| E[POST /notify/send]
-    D --> F[resolve_notify_outbound_target]
+    D --> S{NotificationChannelStore}
+    S -->|enabled channels| H[send_outbound_notification x N]
+    D -->|broadcast off| F[resolve_notify_outbound_target]
     F -->|None| G[skipped ok=True]
-    F -->|OutboundTarget| H[send_outbound_notification]
+    F -->|OutboundTarget| H
     H --> I[ChannelRegistry.send]
     I --> J[Webhook/Feishu/DingTalk/...]
 ```
@@ -211,8 +229,13 @@ flowchart LR
 
 - `OutboundTarget` — `rootseeker/channel_routing/models.py`
   - `channel`、`endpoint`（HTTPS URL）、`team`、`metadata`
-  - 填充：`resolve_notify_outbound_target`（notify.send 主路径）或 `resolve_outbound_target`（测试/预留）
+  - 填充：`list_enabled_outbound_targets`（广播主路径）、`resolve_notify_outbound_target`（legacy env）、或 `resolve_outbound_target`（测试/预留）
   - 消费：各 `ChannelAdapter.send`
+
+- 通知渠道记录 — `rootseeker/storage/notification_channels.py`（Admin CRUD + 广播读取）
+  - `channel_id`、`name`、`channel_type`、`endpoint_url`、`secret`、`enabled`、`sort_order`、`metadata`
+  - 持久化：跟随 `ROOTSEEKER_STORAGE_BACKEND`（见 [16-storage.md](./16-storage.md) §3.4.1）
+  - 消费：Admin UI / `dispatch_broadcast_notify`
 
 - `SendResult` — `rootseeker/channel_routing/adapter.py`
   - `ok`、`channel`、`message`、`error`、`metadata`
@@ -263,8 +286,8 @@ flowchart LR
 ### 对外 I/O
 
 - **入站**：外部告警系统 → HTTP POST `/webhook/{channel}`
-- **出站 notify.send**：HTTPS POST 至环境变量配置的 Webhook URL（SLS/Jaeger 等与 notify 无关）
-- **无配置降级**：`dispatch_env_resolved_notify` 返回 `metadata.skipped=True`，工具调用仍 `ok=True`
+- **出站 notify.send**：HTTPS POST 至 Admin 配置的各渠道 Webhook URL（广播）；legacy 模式仍可读环境变量
+- **无配置降级**：无启用渠道或 legacy URL 未配置时 `metadata.skipped=True`，工具调用仍 `ok=True`
 
 ## 6. 分支与错误
 
@@ -276,7 +299,9 @@ flowchart LR
 | IP 不在白名单 | `security.py` → `ChannelSecurity.validate` | `ValueError("source ip is not allowed")` |
 | HMAC 签名不匹配 | `security.py` → `ChannelSecurity.validate` | `ValueError("invalid signature")`；签名算法：`HMAC-SHA256(secret, str(sorted(payload.items())))`，头 `x-signature` |
 | API Webhook 未启用安全 | `handle_webhook` | **未传入** `ChannelSecurity`，上述两项校验不生效 |
-| notify URL 未配置 | `notify_dispatch.py` → `dispatch_env_resolved_notify` | `ok=True`，`metadata.skipped=True`，不发起 HTTP |
+| 全局广播开启但无启用渠道 | `notify_dispatch.py` → `dispatch_broadcast_notify` | `ok=True`，`metadata.skipped=True`，不发起 HTTP |
+| 全局广播关闭且 legacy URL 未配置 | `notify_dispatch.py` → `dispatch_env_resolved_notify` | `ok=True`，`metadata.skipped=True`，不发起 HTTP |
+| 广播部分渠道失败 | `dispatch_broadcast_notify` | `ok=False`（或 partial），`results[]` 含各渠道 error；其余渠道仍发送 |
 | 出站渠道无适配器 | `adapter.py` → `ChannelRegistry.send` | `ok=False`，`error="no adapter registered for channel: ..."` |
 | 出站 HTTP 非 2xx / 超时 | 各 `*ChannelAdapter.send` | `ok=False`，`error` 含 HTTP 状态或异常信息 |
 | 默认 Flow 插件缺失 | `default_log_triage_flow/runner.py` → `_validate_default_flow_registration` | `ValueError` |
@@ -288,6 +313,8 @@ flowchart LR
 | `tests/unit/channel_routing/test_channel_routing.py` | `webhook_payload_to_case_create` metadata；`ingest_channel_message` + `resolve_route` + `build_session_key` + 出站；`ChannelSecurity` IP/签名 |
 | `tests/unit/channel_routing/test_channel_adapters.py` | 各出站适配器与 `ChannelRegistry.send`；`send_outbound_notification` 默认 registry |
 | `tests/unit/channel_routing/test_notify_env.py` | `resolve_notify_outbound_target` 环境变量优先级与 skip 条件 |
+| `tests/unit/channel_routing/test_notify_broadcast.py` | `dispatch_broadcast_notify` fan-out / skip / legacy 回退 |
+| `tests/unit/storage/test_notification_channel_store.py` | NotificationChannelStore CRUD（file/sqlite） |
 | `tests/integration/test_api_default_flow.py` | `POST /webhook/webhook\|aliyun\|sls\|prometheus` 端到端返回 `case_id` |
 | `tests/integration/test_default_flow.py` | 默认 Flow 闭环含 `notify.send` 工具调用 |
 | `tests/unit/mcp_plane/test_all_internal_tools.py` | Gateway 调用 `notify.send`（含 feishu 渠道） |
@@ -303,4 +330,5 @@ flowchart LR
 | [01-bootstrap-wiring.md](./01-bootstrap-wiring.md) | `create_dev_runtime`、`CompositeProductionAdapter` 与 Store 装配 |
 | [18-apps-api-admin-cli.md](./18-apps-api-admin-cli.md) | `apps/api/main.py` 全部 HTTP 入口（含 `/webhook/{channel}`） |
 | [02-contracts-state-machines.md](./02-contracts-state-machines.md) | `CaseCreateRequest`、`CaseRecord` 状态与字段契约 |
-| [19-observability-infra.md](./19-observability-infra.md) | 环境变量、网络与运行时配置（含 `ROOTSEEKER_NOTIFY_*`） |
+| [16-storage.md](./16-storage.md) | NotificationChannelStore 子后端（跟随 `storage_backend`） |
+| [19-observability-infra.md](./19-observability-infra.md) | 环境变量、网络与运行时配置（legacy `ROOTSEEKER_NOTIFY_*`） |

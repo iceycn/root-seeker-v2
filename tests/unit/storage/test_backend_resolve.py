@@ -5,6 +5,7 @@ from rootseeker.storage.backend_resolve import (
     resolve_admin_store,
     resolve_cron_state_store,
     resolve_error_history_store,
+    resolve_notification_channel_store,
 )
 
 
@@ -17,6 +18,7 @@ def test_auto_follows_mysql_backend(monkeypatch) -> None:
     assert resolve_admin_store(settings) == "mysql"
     assert resolve_cron_state_store(settings) == "mysql"
     assert resolve_error_history_store(settings) == "mysql"
+    assert resolve_notification_channel_store(settings) == "mysql"
 
 
 def test_auto_follows_sqlite_to_file(monkeypatch) -> None:
@@ -28,6 +30,7 @@ def test_auto_follows_sqlite_to_file(monkeypatch) -> None:
     assert resolve_admin_store(settings) == "file"
     assert resolve_cron_state_store(settings) == "file"
     assert resolve_error_history_store(settings) == "file"
+    assert resolve_notification_channel_store(settings) == "sqlite"
 
 
 def test_explicit_overrides(monkeypatch) -> None:

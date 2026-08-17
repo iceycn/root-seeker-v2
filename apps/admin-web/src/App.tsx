@@ -182,11 +182,15 @@ type CatalogRecord = ApiRecord & {
   language?: string
 }
 
-type CallbackRecord = ApiRecord & {
+type NotificationChannelRecord = ApiRecord & {
+  channel_id: string
   name: string
-  channel?: string
-  url?: string
-  team?: string
+  channel_type?: string
+  endpoint_url?: string
+  enabled?: boolean
+  has_secret?: boolean
+  masked_secret?: string
+  sort_order?: number
 }
 
 type CronJobState = {
@@ -448,7 +452,7 @@ const pathToView: Record<string, string> = {
   '/repos': 'repos',
   '/catalog': 'catalog',
   '/plugins': 'plugins',
-  '/callbacks': 'callbacks',
+  '/notification-channels': 'notificationChannels',
   '/schedules': 'schedules',
   '/semantic-search': 'semantic',
   '/error-chat': 'errorChat',
@@ -462,7 +466,7 @@ const viewToPath: Record<string, string> = {
   repos: '/repos',
   catalog: '/catalog',
   plugins: '/plugins',
-  callbacks: '/callbacks',
+  notificationChannels: '/notification-channels',
   schedules: '/schedules',
   semantic: '/semantic-search',
   errorChat: '/error-chat',
@@ -489,7 +493,8 @@ function App() {
   const [remoteRepos, setRemoteRepos] = useState<RemoteRepoRecord[]>([])
   const [selectedRemoteRepoKeys, setSelectedRemoteRepoKeys] = useState<string[]>([])
   const [catalogItems, setCatalogItems] = useState<CatalogRecord[]>([])
-  const [callbacksData, setCallbacksData] = useState<CallbackRecord[]>([])
+  const [notificationChannels, setNotificationChannels] = useState<NotificationChannelRecord[]>([])
+  const [broadcastEnabled, setBroadcastEnabled] = useState(true)
   const [cronJobs, setCronJobs] = useState<CronJobRecord[]>([])
   const [cronHandlers, setCronHandlers] = useState<string[]>([])
   const [cronModalOpen, setCronModalOpen] = useState(false)
@@ -517,7 +522,9 @@ function App() {
   const selectedRemoteProvider = repoRemotes.find((item) => item.name === selectedRemoteName)?.provider
   const [localRepoForm] = Form.useForm()
   const [catalogForm] = Form.useForm()
-  const [callbackForm] = Form.useForm()
+  const [channelForm] = Form.useForm()
+  const [channelModalOpen, setChannelModalOpen] = useState(false)
+  const [editingChannel, setEditingChannel] = useState<NotificationChannelRecord | null>(null)
   const [cronForm] = Form.useForm()
   const [skillForm] = Form.useForm()
   const [semanticForm] = Form.useForm()
@@ -549,7 +556,7 @@ function App() {
     repos: { title: 'Repo 管理', desc: '注册仓库、同步代码并触发 Zoekt/Qdrant 索引。' },
     catalog: { title: 'Service Catalog', desc: '配置 service_name 到仓库、日志源、负责人等信息的映射。' },
     models: { title: '大语言模型', desc: '系统会根据用户内容智能选择最合适的模型，您也可以切换默认模型。' },
-    callbacks: { title: '消息回调', desc: '配置通知通道、回调地址，并测试回调是否可达。' },
+    notificationChannels: { title: '通知渠道', desc: '配置分析结论出站通知；启用多个渠道后，报告生成时自动广播。' },
     schedules: { title: '定时任务', desc: '管理仓库增量同步等定时任务：启停、改调度、立即执行与运行记录。' },
     advanced: { title: '高级设置', desc: '管理 Skill/MCP 运行时环境变量与 RootSeeker 运行时配置。' },
   }
@@ -597,7 +604,14 @@ function App() {
       }).catch((e) => apiMessage.error(String(e)))
     }
     if (active === 'catalog') api<{ items: CatalogRecord[] }>('/api/catalog').then((d) => setCatalogItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
-    if (active === 'callbacks') api<{ items: CallbackRecord[] }>('/api/callbacks').then((d) => setCallbacksData(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    if (active === 'notificationChannels') {
+      api<{ items: NotificationChannelRecord[] }>('/api/notification-channels')
+        .then((d) => setNotificationChannels(d.items || []))
+        .catch((e) => apiMessage.error(String(e)))
+      api<{ settings: { broadcast_enabled?: boolean } }>('/api/notification-channel-settings')
+        .then((d) => setBroadcastEnabled(d.settings?.broadcast_enabled !== false))
+        .catch((e) => apiMessage.error(String(e)))
+    }
     if (active === 'schedules') {
       api<{ items: CronJobRecord[]; handlers?: string[] }>('/api/cron-jobs')
         .then((d) => {
@@ -887,28 +901,71 @@ function App() {
     await refreshCatalog()
   }
 
-  const refreshCallbacks = async () => {
-    const data = await api<{ items: CallbackRecord[] }>('/api/callbacks')
-    setCallbacksData(data.items || [])
+  const refreshNotificationChannels = async () => {
+    const data = await api<{ items: NotificationChannelRecord[] }>('/api/notification-channels')
+    setNotificationChannels(data.items || [])
+    const settings = await api<{ settings: { broadcast_enabled?: boolean } }>('/api/notification-channel-settings')
+    setBroadcastEnabled(settings.settings?.broadcast_enabled !== false)
   }
 
-  const saveCallback = async () => {
-    const values = await callbackForm.validateFields()
-    await api('/api/callbacks', { method: 'POST', body: JSON.stringify(values) })
-    apiMessage.success('回调已保存')
-    await refreshCallbacks()
+  const openChannelModal = (record?: NotificationChannelRecord) => {
+    setEditingChannel(record || null)
+    channelForm.setFieldsValue(
+      record
+        ? { ...record, secret: '' }
+        : { channel_type: 'webhook', enabled: true },
+    )
+    setChannelModalOpen(true)
   }
 
-  const testCallback = async (name: string) => {
-    const data = await api<{ ok: boolean; status_code?: number; error?: string }>(`/api/callbacks/${encodeURIComponent(name)}/test`, { method: 'POST' })
-    if (data.ok) apiMessage.success(`回调连接正常（HTTP ${data.status_code ?? 'OK'}）`)
-    else apiMessage.error(`回调测试失败：${data.error || data.status_code || 'unknown'}`)
+  const saveNotificationChannel = async () => {
+    const values = await channelForm.validateFields()
+    if (editingChannel?.channel_id) {
+      await api(`/api/notification-channels/${encodeURIComponent(editingChannel.channel_id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(values),
+      })
+      apiMessage.success('通知渠道已更新')
+    } else {
+      await api('/api/notification-channels', { method: 'POST', body: JSON.stringify(values) })
+      apiMessage.success('通知渠道已创建')
+    }
+    setChannelModalOpen(false)
+    setEditingChannel(null)
+    channelForm.resetFields()
+    await refreshNotificationChannels()
   }
 
-  const deleteCallback = async (name: string) => {
-    await api(`/api/callbacks/${encodeURIComponent(name)}`, { method: 'DELETE' })
-    apiMessage.success('回调已删除')
-    await refreshCallbacks()
+  const toggleNotificationChannel = async (record: NotificationChannelRecord, enabled: boolean) => {
+    await api(`/api/notification-channels/${encodeURIComponent(record.channel_id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    })
+    await refreshNotificationChannels()
+  }
+
+  const testNotificationChannel = async (channelId: string) => {
+    const data = await api<{ ok: boolean; error?: string }>(
+      `/api/notification-channels/${encodeURIComponent(channelId)}/test`,
+      { method: 'POST' },
+    )
+    if (data.ok) apiMessage.success('通知渠道测试成功')
+    else apiMessage.error(`通知渠道测试失败：${data.error || 'unknown'}`)
+  }
+
+  const deleteNotificationChannel = async (channelId: string) => {
+    await api(`/api/notification-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE' })
+    apiMessage.success('通知渠道已删除')
+    await refreshNotificationChannels()
+  }
+
+  const updateBroadcastEnabled = async (enabled: boolean) => {
+    await api('/api/notification-channel-settings', {
+      method: 'PUT',
+      body: JSON.stringify({ broadcast_enabled: enabled }),
+    })
+    setBroadcastEnabled(enabled)
+    apiMessage.success(enabled ? '已启用全局广播' : '已关闭全局广播')
   }
 
   const refreshCronJobs = async () => {
@@ -1195,7 +1252,7 @@ function App() {
     { key: 'catalog', icon: <HeartOutlined />, label: 'Service Catalog' },
     { key: 'settings', label: '设置', type: 'group' },
     { key: 'models', icon: <RobotOutlined />, label: '大模型' },
-    { key: 'callbacks', icon: <MessageOutlined />, label: '消息回调' },
+    { key: 'notificationChannels', icon: <MessageOutlined />, label: '通知渠道' },
     { key: 'schedules', icon: <ClockCircleOutlined />, label: '定时任务' },
     { key: 'advanced', icon: <SettingOutlined />, label: '高级设置' },
   ]
@@ -1876,19 +1933,94 @@ function App() {
         </Space>
       )
     }
-    if (active === 'callbacks') {
+    if (active === 'notificationChannels') {
+      const enabledCount = notificationChannels.filter((item) => item.enabled !== false).length
       return (
         <Space direction="vertical" size={16} style={{ width: '100%' }}>
-          <Card title="新增/编辑回调" bordered={false}>
-            <Form form={callbackForm} layout="inline">
-              <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="名称" /></Form.Item>
-              <Form.Item name="channel" initialValue="webhook"><Select style={{ width: 150 }} options={['webhook','feishu','dingtalk','wechat_work','slack','discord'].map(v => ({ value: v, label: v }))} /></Form.Item>
-              <Form.Item name="url" rules={[{ required: true }]}><Input placeholder="回调 URL" style={{ width: 360 }} /></Form.Item>
-              <Form.Item name="team" initialValue="default"><Input placeholder="team" /></Form.Item>
-              <Form.Item><Button type="primary" onClick={saveCallback}>保存</Button></Form.Item>
-            </Form>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography.Text type="secondary">
+              已启用 {enabledCount} / 共 {notificationChannels.length}
+            </Typography.Text>
+            <Space>
+              <span>全局广播</span>
+              <Switch checked={broadcastEnabled} onChange={updateBroadcastEnabled} />
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => openChannelModal()}>添加渠道</Button>
+            </Space>
+          </div>
+          <Card bordered={false}>
+            <Table
+              rowKey="channel_id"
+              dataSource={notificationChannels}
+              columns={[
+                { title: '名称', dataIndex: 'name' },
+                {
+                  title: '渠道',
+                  dataIndex: 'channel_type',
+                  render: (value: string) => <Tag>{value}</Tag>,
+                },
+                { title: 'URL', dataIndex: 'endpoint_url', ellipsis: true, render: renderEllipsisCell },
+                {
+                  title: '启用',
+                  render: (_: unknown, record: NotificationChannelRecord) => (
+                    <Switch
+                      checked={record.enabled !== false}
+                      onChange={(checked) => toggleNotificationChannel(record, checked)}
+                    />
+                  ),
+                },
+                {
+                  title: '操作',
+                  render: (_: unknown, record: NotificationChannelRecord) => (
+                    <Space>
+                      <Button onClick={() => testNotificationChannel(record.channel_id)}>测试</Button>
+                      <Button icon={<EditOutlined />} onClick={() => openChannelModal(record)}>编辑</Button>
+                      <Button danger onClick={() => deleteNotificationChannel(record.channel_id)}>删除</Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
           </Card>
-          <Card bordered={false}><Table rowKey="name" dataSource={callbacksData} columns={[{ title: '名称', dataIndex: 'name' }, { title: '通道', dataIndex: 'channel' }, { title: 'URL', dataIndex: 'url' }, { title: 'Team', dataIndex: 'team' }, { title: '操作', render: (_, r) => <Space><Button onClick={() => testCallback(r.name)}>测试</Button><Button danger onClick={() => deleteCallback(r.name)}>删除</Button></Space> }]} /></Card>
+          <Modal
+            title={editingChannel ? `编辑通知渠道：${editingChannel.name}` : '添加通知渠道'}
+            open={channelModalOpen}
+            onCancel={() => {
+              setChannelModalOpen(false)
+              setEditingChannel(null)
+              channelForm.resetFields()
+            }}
+            onOk={saveNotificationChannel}
+            okText="保存"
+            cancelText="取消"
+            width={720}
+          >
+            <Form form={channelForm} layout="vertical">
+              <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+                <Input placeholder="运维飞书群" />
+              </Form.Item>
+              <Form.Item name="channel_type" label="渠道类型" rules={[{ required: true }]}>
+                <Select
+                  options={['webhook', 'feishu', 'dingtalk', 'wechat_work', 'slack', 'discord'].map((value) => ({
+                    value,
+                    label: value,
+                  }))}
+                />
+              </Form.Item>
+              <Form.Item name="endpoint_url" label="Webhook URL" rules={[{ required: true }]}>
+                <Input placeholder="https://..." />
+              </Form.Item>
+              <Form.Item
+                name="secret"
+                label="加签密钥（可选）"
+                extra="仅当机器人/Webhook 启用了「加签」安全设置时需要填写，例如钉钉自定义机器人的 SEC 密钥。普通 Webhook、飞书、Slack 等通常留空即可。"
+              >
+                <Input.Password placeholder="留空则保留已有密钥；未启用加签请留空" />
+              </Form.Item>
+              <Form.Item name="enabled" label="启用" valuePropName="checked" initialValue={true}>
+                <Switch />
+              </Form.Item>
+            </Form>
+          </Modal>
         </Space>
       )
     }

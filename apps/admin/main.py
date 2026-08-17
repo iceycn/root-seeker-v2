@@ -44,6 +44,15 @@ from rootseeker.infra_core.openai_compat import (
     test_openai_compatible_connection,
 )
 from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
+from rootseeker.channel_routing.models import OutboundTarget
+from rootseeker.channel_routing.outbound import get_production_channel_registry, send_outbound_notification
+from rootseeker.storage.notification_channels import (
+    ALLOWED_CHANNEL_TYPES,
+    NotificationChannelStore,
+    build_notification_channel_store,
+    mask_channel_for_api,
+    migrate_legacy_callbacks_from_admin,
+)
 
 ADMIN_CASE_ID = "admin-console"
 ADMIN_STEP_ID = "admin-route"
@@ -369,14 +378,38 @@ class AdminAiProviderRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class AdminCallbackRequest(BaseModel):
+class AdminNotificationChannelRequest(BaseModel):
     name: str = Field(min_length=1)
-    channel: str = Field(default="webhook")
-    url: str = Field(min_length=1)
+    channel_type: str = Field(default="webhook")
+    endpoint_url: str = Field(min_length=1)
     enabled: bool = True
-    team: str = "default"
     secret: str = ""
+    sort_order: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AdminNotificationChannelUpdateRequest(BaseModel):
+    name: str | None = None
+    channel_type: str | None = None
+    endpoint_url: str | None = None
+    enabled: bool | None = None
+    secret: str | None = None
+    sort_order: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AdminNotificationChannelPatchRequest(BaseModel):
+    enabled: bool | None = None
+    name: str | None = None
+    channel_type: str | None = None
+    endpoint_url: str | None = None
+    secret: str | None = None
+    sort_order: int | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AdminNotificationChannelSettingsRequest(BaseModel):
+    broadcast_enabled: bool | None = None
 
 
 class AdminCronJobCreateRequest(BaseModel):
@@ -518,6 +551,35 @@ def _load_admin_config(
     for skill in store.list_skills():
         skill.source_kind = SkillSourceKind.CUSTOM
         runtime.skill_registry.upsert(skill)
+
+
+def _notification_channel_store(config_root: Path) -> NotificationChannelStore:
+    return build_notification_channel_store(config_root)
+
+
+def _migrate_legacy_notification_callbacks(config_root: Path, store: AdminConfigStore) -> None:
+    channel_store = _notification_channel_store(config_root)
+    data = store.load()
+    migrated = migrate_legacy_callbacks_from_admin(data, channel_store)
+    if migrated.get("callbacks") != data.get("callbacks"):
+        store.save(migrated)
+
+
+def _test_notification_channel_record(channel: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(channel.get("metadata") or {})
+    secret = str(channel.get("secret") or "").strip()
+    if secret:
+        metadata["secret"] = secret
+    target = OutboundTarget(
+        channel=str(channel.get("channel_type") or "webhook"),
+        endpoint=str(channel.get("endpoint_url") or ""),
+        team="default",
+        metadata=metadata,
+    )
+    message = (
+        f"[RootSeeker] 通知渠道测试 | channel={channel.get('channel_type')} | name={channel.get('name')}"
+    )
+    return send_outbound_notification(target, message, registry=get_production_channel_registry())
 
 
 def _builtin_skill_dir(config_root: Path, slug: str) -> Path:
@@ -1540,6 +1602,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     config_root = Path(repo_root or Path.cwd())
     store = build_admin_config_store(config_root)
     _migrate_repo_remotes_git_username(store)
+    _migrate_legacy_notification_callbacks(config_root, store)
     runtime, repo_sync_service = _create_admin_runtime(config_root, store)
     history_store = build_error_history_store(config_root)
     _load_admin_config(runtime, store, repo_sync_service)
@@ -1556,7 +1619,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     @app.get("/repos")
     @app.get("/catalog")
     @app.get("/plugins")
-    @app.get("/callbacks")
+    @app.get("/notification-channels")
     @app.get("/semantic-search")
     @app.get("/error-chat")
     @app.get("/overview")
@@ -1714,66 +1777,92 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             display_name=str(provider.get("metadata", {}).get("display_name") or name),
         )
 
-    @app.get("/api/callbacks")
-    def list_callbacks() -> dict[str, Any]:
-        items = store.list_callbacks()
+    @app.get("/api/notification-channels")
+    def list_notification_channels() -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        items = [mask_channel_for_api(item) for item in channel_store.list_channels()]
         return {"items": items, "total": len(items)}
 
-    @app.post("/api/callbacks")
-    def upsert_callback(req: AdminCallbackRequest) -> dict[str, Any]:
-        payload = req.model_dump(mode="json")
-        store.upsert_callback(payload)
-        env_key_by_channel = {
-            "webhook": "ROOTSEEKER_NOTIFY_WEBHOOK_URL",
-            "feishu": "ROOTSEEKER_NOTIFY_FEISHU_URL",
-            "dingtalk": "ROOTSEEKER_NOTIFY_DINGTALK_URL",
-            "wechat_work": "ROOTSEEKER_NOTIFY_WECHAT_WORK_URL",
-            "slack": "ROOTSEEKER_NOTIFY_SLACK_URL",
-            "discord": "ROOTSEEKER_NOTIFY_DISCORD_URL",
-        }
-        settings: dict[str, Any] = {
-            "ROOTSEEKER_NOTIFY_TEAM": req.team,
-            "ROOTSEEKER_NOTIFY_DEFAULT_URL": req.url,
-        }
-        channel_key = env_key_by_channel.get(req.channel)
-        if channel_key:
-            settings[channel_key] = req.url
-        if req.secret:
-            settings[f"ROOTSEEKER_NOTIFY_{req.channel.upper()}_SECRET"] = req.secret
-        store.update_settings(settings)
-        return {"ok": True, "callback": payload, "settings": store.get_settings()}
-
-    @app.delete("/api/callbacks/{name}")
-    def delete_callback(name: str) -> dict[str, Any]:
-        store.delete_callback(name)
-        return {"ok": True, "name": name}
-
-    @app.post("/api/callbacks/{name}/test")
-    def test_callback(name: str) -> dict[str, Any]:
-        callback = next((item for item in store.list_callbacks() if item.get("name") == name), None)
-        if callback is None:
-            raise HTTPException(status_code=404, detail=f"callback not found: {name}")
-        url = str(callback.get("url") or "")
-        if not url:
-            return {"ok": False, "name": name, "error": "url is empty"}
+    @app.post("/api/notification-channels")
+    def create_notification_channel(req: AdminNotificationChannelRequest) -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        if req.channel_type not in ALLOWED_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail=f"unsupported channel_type: {req.channel_type}")
         try:
-            with httpx.Client(timeout=10.0, trust_env=False) as client:
-                response = client.post(
-                    url,
-                    json={
-                        "source": "rootseeker-admin",
-                        "event": "callback.test",
-                        "message": "RootSeeker callback test",
-                    },
-                )
-                return {
-                    "ok": 200 <= response.status_code < 500,
-                    "name": name,
-                    "status_code": response.status_code,
-                    "body_preview": response.text[:500],
-                }
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "name": name, "error": str(exc)}
+            saved = channel_store.upsert_channel(req.model_dump(mode="json"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "channel": mask_channel_for_api(saved)}
+
+    @app.put("/api/notification-channels/{channel_id}")
+    def update_notification_channel(
+        channel_id: str,
+        req: AdminNotificationChannelUpdateRequest,
+    ) -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        existing = channel_store.get_channel(channel_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"notification channel not found: {channel_id}")
+        payload = dict(existing)
+        updates = req.model_dump(mode="json", exclude_unset=True)
+        if "channel_type" in updates and updates["channel_type"] not in ALLOWED_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail=f"unsupported channel_type: {updates['channel_type']}")
+        payload.update(updates)
+        try:
+            saved = channel_store.upsert_channel(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "channel": mask_channel_for_api(saved)}
+
+    @app.patch("/api/notification-channels/{channel_id}")
+    def patch_notification_channel(
+        channel_id: str,
+        req: AdminNotificationChannelPatchRequest,
+    ) -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        existing = channel_store.get_channel(channel_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"notification channel not found: {channel_id}")
+        payload = dict(existing)
+        payload.update(req.model_dump(mode="json", exclude_unset=True))
+        if payload.get("channel_type") not in ALLOWED_CHANNEL_TYPES:
+            raise HTTPException(status_code=400, detail=f"unsupported channel_type: {payload.get('channel_type')}")
+        try:
+            saved = channel_store.upsert_channel(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "channel": mask_channel_for_api(saved)}
+
+    @app.delete("/api/notification-channels/{channel_id}")
+    def delete_notification_channel(channel_id: str) -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        existing = channel_store.get_channel(channel_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"notification channel not found: {channel_id}")
+        channel_store.delete_channel(channel_id)
+        return {"ok": True, "channel_id": channel_id}
+
+    @app.post("/api/notification-channels/{channel_id}/test")
+    def test_notification_channel(channel_id: str) -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        channel = channel_store.get_channel(channel_id)
+        if channel is None:
+            raise HTTPException(status_code=404, detail=f"notification channel not found: {channel_id}")
+        return _test_notification_channel_record(channel)
+
+    @app.get("/api/notification-channel-settings")
+    def get_notification_channel_settings() -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        return {"settings": channel_store.get_settings()}
+
+    @app.put("/api/notification-channel-settings")
+    def update_notification_channel_settings(
+        req: AdminNotificationChannelSettingsRequest,
+    ) -> dict[str, Any]:
+        channel_store = _notification_channel_store(config_root)
+        patch = req.model_dump(mode="json", exclude_unset=True)
+        settings = channel_store.update_settings(patch)
+        return {"ok": True, "settings": settings}
 
     def _cron_state_store() -> CronStateStore:
         return build_cron_state_store(config_root)

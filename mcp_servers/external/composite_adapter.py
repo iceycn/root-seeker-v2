@@ -241,9 +241,9 @@ class CompositeProductionAdapter:
         return self._zoekt.get_index_status()
 
     def send_notification(self, channel: str, message: str) -> dict[str, Any]:
-        from rootseeker.channel_routing.notify_dispatch import dispatch_env_resolved_notify
+        from rootseeker.channel_routing.notify_dispatch import dispatch_broadcast_notify
 
-        return dispatch_env_resolved_notify(channel, message)
+        return dispatch_broadcast_notify(message, channel=channel)
 
     def close(self) -> None:
         """Close all adapter connections."""

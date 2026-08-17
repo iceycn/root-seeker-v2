@@ -145,9 +145,9 @@ class StubInternalToolAdapter:
         return {"ready": True, "indexes": [{"name": "stub-zoekt", "ready": True}]}
 
     def send_notification(self, channel: str, message: str) -> dict[str, Any]:
-        from rootseeker.channel_routing.notify_dispatch import dispatch_env_resolved_notify
+        from rootseeker.channel_routing.notify_dispatch import dispatch_broadcast_notify
 
-        return dispatch_env_resolved_notify(channel, message)
+        return dispatch_broadcast_notify(channel=channel, message=message)
 
     def repo_register(self, args: dict[str, Any]) -> dict[str, Any]:
         return repo_register_tool(self.repo_sync_service, args)

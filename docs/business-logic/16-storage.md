@@ -21,6 +21,7 @@ RootSeeker V2 将 Case、Evidence、Report、Flow Checkpoint、Task 等核心业
 | Admin 配置 | `apps/admin/config_store.py:build_admin_config_store` | `resolve_admin_store` → file 或 MySQL |
 | Cron 状态 | `rootseeker/cron/state_store.py:build_cron_state_store` | `resolve_cron_state_store` → file 或 MySQL |
 | Error 历史 | `apps/admin/error_history.py:build_error_history_store` | `resolve_error_history_store` → file / sqlite / MySQL |
+| 通知渠道 | `rootseeker/storage/notification_channels.py:build_notification_channel_store` | `resolve_notification_channel_store` → 跟随 `storage_backend` |
 | 子后端解析 | `rootseeker/storage/backend_resolve.py` | `resolve_admin_store` / `resolve_cron_state_store` / `resolve_error_history_store` |
 | Replay（运行时） | `rootseeker/storage/sqlite_replay_history.py`、`mysql_replay_history.py` | `create_dev_runtime` → `_build_replay_store` 按 backend 选择 |
 | 设置源 | `rootseeker/infra_core/settings.py:RootSeekerSettings` | `ROOTSEEKER_*` 环境变量，`storage_backend` 默认 `memory` |
@@ -122,6 +123,21 @@ Task Store **不在** `_build_storage` 中装配；`TaskRuntime` 构造时单独
 
 **重要：** Cron 状态**没有** sqlite 分支；`storage_backend=sqlite` 且子 Store 为 `auto` 时，Admin/Cron/error_history 均落**文件**，与主业务 SQLite 文件分离。详见 [13-cron-scheduler.md](./13-cron-scheduler.md) §5.1。
 
+### 3.4.1 通知渠道 Store（跟随 `storage_backend`）
+
+与 Admin/Cron/error_history **不同**，NotificationChannelStore **不提供**独立 `ROOTSEEKER_*_STORE` 环境变量，**固定跟随**主 `ROOTSEEKER_STORAGE_BACKEND`：
+
+| `storage_backend` | 实现 | 持久化位置 |
+| --- | --- | --- |
+| `mysql` | `MysqlNotificationChannelStore` | MySQL 表 `notification_channels`、`notification_channel_settings` |
+| `sqlite` | `SqliteNotificationChannelStore` | `data/admin/notification_channels.db`（**独立 sqlite 文件**，不在 `rootseeker.db` 内） |
+| `memory` | `FileNotificationChannelStore` | `data/admin/notification_channels.json` |
+
+工厂：`build_notification_channel_store(repo_root)` — `rootseeker/storage/notification_channels.py`  
+解析：`resolve_notification_channel_store(settings)` — `rootseeker/storage/backend_resolve.py`
+
+Admin 启动时可将 legacy `AdminConfigStore.callbacks[]` **一次性导入**新 Store（无旧 HTTP API）。出站广播见 [10-channel-routing.md](./10-channel-routing.md) §3.3。
+
 ### 3.5 Replay 持久化现状（诚实说明）
 
 | 组件 | 状态 |
@@ -211,7 +227,8 @@ Task Store **不在** `_build_storage` 中装配；`TaskRuntime` 构造时单独
 | --- | --- |
 | `tests/unit/test_bootstrap_storage.py` | sqlite 下 case/report/evidence/checkpoint 跨两个 `create_dev_runtime` 实例持久化；TaskRuntime pending 任务跨实例执行 |
 | `tests/unit/storage/test_sqlite_store.py` | `SqliteCaseStore` / Evidence / Report / Task / Checkpoint / **SqliteReplayStore** CRUD |
-| `tests/unit/storage/test_backend_resolve.py` | `auto` 跟随 mysql→mysql、sqlite→file；显式 override |
+| `tests/unit/storage/test_backend_resolve.py` | `auto` 跟随 mysql→mysql、sqlite→file；`resolve_notification_channel_store` 跟随 sqlite→sqlite |
+| `tests/unit/storage/test_notification_channel_store.py` | NotificationChannelStore file/sqlite CRUD + legacy callbacks 迁移 |
 | `tests/unit/storage/test_mysql_pool.py` | MySQL 连接池 acquire/release |
 | `tests/unit/storage/test_mysql_json.py` | `decode_mysql_json` 边界 |
 | `tests/integration/test_e2e_full_chain.py` | 手动组合 Sqlite 主 Store + SqliteReplayStore 全链路 |
@@ -239,4 +256,5 @@ Task Store **不在** `_build_storage` 中装配；`TaskRuntime` 构造时单独
 | `mysql_task.py` | `MysqlTaskStore` |
 | `mysql_checkpoint.py` | `MysqlCheckpointStore` |
 | `mysql_conn.py` | `MysqlConnectConfig`、连接池、`mysql_config_from_settings` |
-| `backend_resolve.py` | Admin / Cron / error_history 子后端解析 |
+| `backend_resolve.py` | Admin / Cron / error_history / notification_channel 子后端解析 |
+| `notification_channels.py` | File / Sqlite / Mysql 通知渠道 Store |

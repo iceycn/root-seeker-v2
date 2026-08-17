@@ -159,7 +159,7 @@
     <button class="nav-btn" data-view="catalog" onclick="route('catalog')">♡ Service Catalog</button>
     <div class="group-title">设置</div>
     <button class="nav-btn active" data-view="ai" onclick="route('ai')">◈ 大模型</button>
-    <button class="nav-btn" data-view="callbacks" onclick="route('callbacks')">↗ 消息回调</button>
+    <button class="nav-btn" data-view="notification-channels" onclick="route('notification-channels')">↗ 通知渠道</button>
     <button class="nav-btn" data-view="settings" onclick="route('settings')">⚙ 高级设置</button>
   </aside>
   <main class="main">
@@ -247,7 +247,7 @@ function table(rows, cols) {
     `</tbody></table>`;
 }
 function btn(label, fn, cls="primary"){ return `<button class="${cls}" onclick="${fn}">${label}</button>`; }
-function route(view){ setActive(view); ({status,settings,ai,callbacks,skills,plugins,repos,catalog,semantic}[view])().catch(e=>show(String(e))); }
+function route(view){ setActive(view); ({status,settings,ai,notificationChannels,skills,plugins,repos,catalog,semantic}[view])().catch(e=>show(String(e))); }
 
 async function status(){
   pageTitle.textContent="总览状态"; pageDesc.textContent="系统状态、索引状态和管理配置概览。";
@@ -340,23 +340,35 @@ async function testAI(name){
 async function deleteAIByName(name){ show(await req(`/api/ai-providers/${encodeURIComponent(name)}`,{method:"DELETE"})); await ai(); }
 async function deleteAI(){ show(await req(`/api/ai-providers/${encodeURIComponent(aiName.value)}`,{method:"DELETE"})); await ai(); }
 
-async function callbacks(){
-  pageTitle.textContent="消息回调"; pageDesc.textContent="配置通知通道和外部消息回调。";
-  const d = await req("/api/callbacks");
-  content.innerHTML = `<section class="card"><div class="card-title">添加 / 编辑回调</div><div class="form-grid">
-    <div><label>名称</label><input id="cbName" value="default-webhook"></div>
-    <div><label>通道</label><select id="cbChannel"><option value="webhook">webhook</option><option value="feishu">feishu</option><option value="dingtalk">dingtalk</option><option value="wechat_work">wechat_work</option><option value="slack">slack</option><option value="discord">discord</option></select></div>
-    <div><label>回调 URL</label><input id="cbUrl" placeholder="https://..." /></div>
-    <div><label>Team</label><input id="cbTeam" value="default"></div>
-    <div><label>Secret</label><input id="cbSecret" type="password"></div>
-  </div><div class="actions">${btn("保存回调","saveCallback()")}${btn("删除","deleteCallback()","danger")}</div></section>
-  <section class="card"><div class="card-title">已配置回调</div>${table(d.items,[{label:"名称",value:x=>x.name},{label:"通道",value:x=>x.channel},{label:"URL",value:x=>x.url},{label:"Team",value:x=>x.team},{label:"启用",value:x=>x.enabled?"是":"否"},{label:"操作",html:true,value:x=>btn("测试",`testCallback('${escapeHtml(x.name)}')`,"secondary") + ' ' + btn("填入",`fillCallback('${escapeHtml(x.name)}','${escapeHtml(x.channel)}','${escapeHtml(x.url)}','${escapeHtml(x.team||"default")}')`,"secondary")}])}</section>`;
+async function notificationChannels(){
+  pageTitle.textContent="通知渠道"; pageDesc.textContent="配置分析结论出站通知，并测试渠道是否可达。";
+  const d = await req("/api/notification-channels");
+  const settings = await req("/api/notification-channel-settings");
+  content.innerHTML = `<section class="card"><div class="card-title">添加 / 编辑渠道</div><div class="form-grid">
+    <div><label>名称</label><input id="ncName" value="default-webhook"></div>
+    <div><label>渠道</label><select id="ncType"><option value="webhook">webhook</option><option value="feishu">feishu</option><option value="dingtalk">dingtalk</option><option value="wechat_work">wechat_work</option><option value="slack">slack</option><option value="discord">discord</option></select></div>
+    <div><label>Webhook URL</label><input id="ncUrl" placeholder="https://..." /></div>
+    <div><label>Secret</label><input id="ncSecret" type="password"></div>
+  </div><div class="actions">${btn("保存渠道","saveNotificationChannel()")}${btn("删除","deleteNotificationChannel()","danger")}</div></section>
+  <section class="card"><div class="card-title">全局广播：${settings.settings?.broadcast_enabled===false?"关闭":"开启"}</div></section>
+  <section class="card"><div class="card-title">已配置渠道</div>${table(d.items,[{label:"名称",value:x=>x.name},{label:"渠道",value:x=>x.channel_type},{label:"URL",value:x=>x.endpoint_url},{label:"启用",value:x=>x.enabled?"是":"否"},{label:"操作",html:true,value:x=>btn("测试",`testNotificationChannel('${escapeHtml(x.channel_id)}')`,"secondary") + ' ' + btn("填入",`fillNotificationChannel('${escapeHtml(x.name)}','${escapeHtml(x.channel_type)}','${escapeHtml(x.endpoint_url)}','${escapeHtml(x.channel_id)}')`,"secondary")}])}</section>`;
   show(d);
 }
-function fillCallback(name,channel,url,team){ cbName.value=name; cbChannel.value=channel; cbUrl.value=url; cbTeam.value=team; cbSecret.value=""; }
-async function saveCallback(){ show(await req("/api/callbacks",{method:"POST",body:JSON.stringify({name:cbName.value,channel:cbChannel.value,url:cbUrl.value,team:cbTeam.value,secret:cbSecret.value,enabled:true})})); await callbacks(); }
-async function deleteCallback(){ show(await req(`/api/callbacks/${encodeURIComponent(cbName.value)}`,{method:"DELETE"})); await callbacks(); }
-async function testCallback(name){ show(await req(`/api/callbacks/${encodeURIComponent(name)}/test`,{method:"POST"})); }
+function fillNotificationChannel(name,type,url,channelId){ ncName.value=name; ncType.value=type; ncUrl.value=url; ncSecret.value=""; ncName.dataset.channelId=channelId; }
+async function saveNotificationChannel(){
+  const payload={name:ncName.value,channel_type:ncType.value,endpoint_url:ncUrl.value,secret:ncSecret.value,enabled:true};
+  const channelId=ncName.dataset.channelId;
+  if(channelId){ show(await req(`/api/notification-channels/${encodeURIComponent(channelId)}`,{method:"PUT",body:JSON.stringify(payload)})); }
+  else { show(await req("/api/notification-channels",{method:"POST",body:JSON.stringify(payload)})); }
+  await notificationChannels();
+}
+async function deleteNotificationChannel(){
+  const channelId=ncName.dataset.channelId;
+  if(!channelId){ show("请先选择要删除的渠道"); return; }
+  show(await req(`/api/notification-channels/${encodeURIComponent(channelId)}`,{method:"DELETE"}));
+  await notificationChannels();
+}
+async function testNotificationChannel(channelId){ show(await req(`/api/notification-channels/${encodeURIComponent(channelId)}/test`,{method:"POST"})); }
 
 async function settings(){
   pageTitle.textContent="高级设置"; pageDesc.textContent="常用连接配置和高级 JSON 配置。";
