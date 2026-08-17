@@ -22,8 +22,16 @@ class FlowExecutor:
     def __init__(self, runtime: DevRuntime) -> None:
         self._runtime = runtime
 
-    def execute_default(self, case_request: CaseCreateRequest) -> FlowExecutionResult:
-        result = self._runtime.run_default_flow_from_case_request(case_request)
+    def execute_default(
+        self,
+        case_request: CaseCreateRequest,
+        *,
+        publish_completion: bool = True,
+    ) -> FlowExecutionResult:
+        result = self._runtime.run_default_flow_from_case_request(
+            case_request,
+            publish_completion=publish_completion,
+        )
         trace = build_execution_trace(
             case_id=result.case.case_id,
             skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",

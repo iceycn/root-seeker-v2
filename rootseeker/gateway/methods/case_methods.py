@@ -37,11 +37,24 @@ def register_case_methods(registry: Any, runtime: DevRuntime) -> None:
             source=str(params.get("source", "gateway")),
             metadata=dict(params.get("metadata", {})),
         )
+        use_agent_flag = params.get("use_agent") if "use_agent" in params else None
+        if use_agent_flag is not None:
+            use_agent_flag = bool(use_agent_flag)
+        if runtime.resolve_use_agent(use_agent_flag):
+            agent_result = runtime.run_agent_from_case_request(req)
+            return {
+                "case_id": agent_result.case_id,
+                "status": agent_result.status,
+                "attempt_count": len(agent_result.attempts),
+                "runner": "agent",
+            }
+
         result = runtime.run_default_flow_from_case_request(req)
         return {
             "case_id": result.case.case_id,
             "status": result.case.status.value,
             "evidence_count": len(result.evidence_pack.items),
+            "runner": "default_flow",
         }
 
     def case_get(params: dict[str, Any]) -> dict[str, Any]:

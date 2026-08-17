@@ -11,7 +11,7 @@ __all__ = ["webhook_payload_to_case_create"]
 
 def webhook_payload_to_case_create(payload: dict[str, Any]) -> CaseCreateRequest:
     """Normalize webhook payload through channel routing pipeline into ``CaseCreateRequest``."""
-    source = str(payload.get("source") or "webhook")
+    source = str(payload.get("_channel") or payload.get("source") or "webhook")
     normalized = ingest_channel_message(ChannelMessage(channel=source, payload=payload))
     metadata = dict(normalized.metadata)
     if normalized.trace_id:

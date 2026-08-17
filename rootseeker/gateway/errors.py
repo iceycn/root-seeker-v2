@@ -10,9 +10,11 @@ __all__ = [
 class GatewayError(RuntimeError):
     code = "gateway_error"
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, code: str | None = None) -> None:
         super().__init__(message)
         self.message = message
+        if code is not None:
+            self.code = code
 
 
 class GatewayMethodNotFoundError(GatewayError):

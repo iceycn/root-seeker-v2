@@ -4,7 +4,7 @@ from pathlib import Path
 
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.evaluation import EvaluationReport
-from rootseeker.replay import ReplayRunner, ReplayStore, default_replay_suite
+from rootseeker.replay import ReplayRunner, default_replay_suite
 
 __all__ = ["run_scheduled_replay"]
 
@@ -16,7 +16,7 @@ def run_scheduled_replay(
     repeat_each: int = 1,
 ) -> EvaluationReport:
     runtime = create_dev_runtime(repo_root or Path.cwd())
-    runner = ReplayRunner(runtime, ReplayStore())
+    runner = ReplayRunner(runtime, runtime.replay_store)
     runner.load_cases(default_replay_suite())
     result = runner.run_suite(suite_name=suite_name, repeat_each=repeat_each)
     return result.report

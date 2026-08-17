@@ -49,6 +49,7 @@ class Authorizer:
         "gateway.unsubscribe": ["gateway:subscribe"],
         "gateway.publish": ["gateway:publish"],
         "system.list_methods": ["system:read"],
+        "system.list_presence": ["system:read"],
         "system.ping": ["system:read"],
     }
 

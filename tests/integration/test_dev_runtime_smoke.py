@@ -62,3 +62,19 @@ def test_webhook_aliyun_channel() -> None:
     cr = webhook_payload_to_case_create(payload)
     assert "[Aliyun]" in cr.title
     assert cr.service_name == "api-server"
+
+
+def test_webhook_payload_uses_channel_field_when_source_missing() -> None:
+    """Replay/agent paths may carry _channel from POST /webhook/{channel} without source."""
+    payload = {
+        "alertName": "HighCPU",
+        "alertState": "ALARM",
+        "instanceName": "api-server",
+        "metricName": "cpu",
+        "curValue": "95%",
+        "_channel": "aliyun",
+    }
+    cr = webhook_payload_to_case_create(payload)
+    assert cr.source == "aliyun"
+    assert "[Aliyun]" in cr.title
+    assert cr.service_name == "api-server"

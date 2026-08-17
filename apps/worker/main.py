@@ -23,7 +23,7 @@ def _seed_demo_task(task_runtime: TaskRuntime) -> None:
 
 
 def run_once(repo_root: Path | None = None, *, seed_demo: bool = False) -> int:
-    runtime = create_dev_runtime(repo_root or Path.cwd())
+    runtime = create_dev_runtime(repo_root or Path.cwd(), node_role="worker")
     task_runtime = TaskRuntime(runtime)
     if seed_demo:
         _seed_demo_task(task_runtime)
@@ -45,7 +45,7 @@ def run_loop(
     max_runs: int = 100,
     seed_demo: bool = False,
 ) -> int:
-    runtime = create_dev_runtime(repo_root or Path.cwd())
+    runtime = create_dev_runtime(repo_root or Path.cwd(), node_role="worker")
     task_runtime = TaskRuntime(runtime)
     if seed_demo:
         _seed_demo_task(task_runtime)
@@ -53,6 +53,7 @@ def run_loop(
     empty_polls = 0
     runs = 0
     while max_runs <= 0 or runs < max_runs:
+        runtime.heartbeat_presence("worker")
         task = task_runtime.run_once()
         if task is None:
             empty_polls += 1

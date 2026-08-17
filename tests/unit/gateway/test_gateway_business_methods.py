@@ -20,6 +20,7 @@ def test_gateway_server_registers_business_methods() -> None:
     # Check system methods
     assert "system.ping" in methods
     assert "system.list_methods" in methods
+    assert "system.list_presence" in methods
 
     # Check approval methods
     assert "approval.list" in methods
@@ -63,6 +64,27 @@ def test_gateway_case_create() -> None:
     assert result.get("case_id")
     assert result.get("status") == "completed"
     assert result.get("evidence_count", 0) >= 0
+    assert result.get("runner") == "default_flow"
+
+
+def test_gateway_case_create_with_agent_runner(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    server = GatewayServer(runtime=runtime)
+
+    result = server.methods.invoke(
+        "case.create",
+        {
+            "title": "Agent Case",
+            "symptom": "symptom",
+            "service_name": "test-service",
+            "use_agent": True,
+        },
+    )
+
+    assert result.get("runner") == "agent"
+    assert result.get("case_id")
+    assert result.get("attempt_count", 0) >= 1
 
 
 def test_gateway_case_get() -> None:
@@ -219,6 +241,17 @@ def test_gateway_tool_invoke() -> None:
 
     assert result.get("ok") is True
     assert "content" in result
+
+
+def test_gateway_system_list_presence() -> None:
+    runtime = create_dev_runtime(_repo_root(), node_role="gateway-test")
+    server = GatewayServer(runtime=runtime)
+
+    result = server.methods.invoke("system.list_presence", {})
+
+    assert result["total"] == 1
+    assert result["items"][0]["role"] == "gateway-test"
+    assert result["items"][0]["node_id"] == runtime.node_id
 
 
 def test_gateway_approval_methods_can_approve_pending_tool(monkeypatch) -> None:

@@ -24,6 +24,7 @@ from rootseeker.analysis.call_chain import (
 )
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
 from rootseeker.analysis.service_identity import resolve_service_name
+from rootseeker.agent_runtime.result import AgentRunResult
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
 from rootseeker.code_index.git_auth import GitCredentials
 from rootseeker.code_index.repo_sync import RepoSyncService
@@ -405,6 +406,7 @@ class AdminErrorChatSubmitRequest(BaseModel):
     environment: str = "prod"
     severity: str = "error"
     trace_id: str = "trace-admin-error-chat"
+    use_agent: bool = False
 
 
 ADMIN_STATIC_HTML = Path(__file__).with_name("static") / "admin.html"
@@ -499,6 +501,7 @@ def _create_admin_runtime(config_root: Path, store: AdminConfigStore) -> DevRunt
     runtime = create_dev_runtime(
         runtime_root,
         repo_sync_service=repo_sync_service,
+        node_role="admin",
     )
     return runtime, repo_sync_service
 
@@ -1457,6 +1460,52 @@ def _run_and_store_llm_analysis(
     history_store.update(item_id, {"ai_analysis": ai_analysis})
 
 
+def _agent_flow_run_id(result: AgentRunResult) -> str:
+    if result.trace_id:
+        return result.trace_id
+    if result.attempts:
+        last_flow_run_id = result.attempts[-1].flow_run_id
+        if last_flow_run_id:
+            return last_flow_run_id
+    return ""
+
+
+def _admin_flow_view(runtime: DevRuntime, result: Any) -> Any:
+    """Normalize default-flow or agent-flow results for admin helpers."""
+    from types import SimpleNamespace
+
+    if isinstance(result, AgentRunResult):
+        case = runtime.case_store.get(result.case_id)
+        report = runtime.report_store.get(result.case_id)
+        pack = runtime.evidence_store.get_pack(result.case_id)
+        if case is None or report is None or pack is None:
+            raise HTTPException(
+                status_code=500,
+                detail="agent flow result missing persisted case data",
+            )
+        return SimpleNamespace(
+            case=case,
+            report=report,
+            evidence_pack=pack,
+            tool_results=[],
+            runner="agent",
+        )
+
+    return SimpleNamespace(
+        case=result.case,
+        report=result.report,
+        evidence_pack=result.evidence_pack,
+        tool_results=result.tool_results,
+        runner="default_flow",
+    )
+
+
+def _resolve_admin_flow_run_id(runtime: DevRuntime, result: Any) -> str:
+    if isinstance(result, AgentRunResult):
+        return _agent_flow_run_id(result)
+    return _save_default_flow_checkpoint(runtime, result)
+
+
 def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
     trace = build_execution_trace(
         case_id=result.case.case_id,
@@ -1889,41 +1938,46 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         started = time.perf_counter()
         service_name = resolve_service_name(req.service_name, text=req.content)
-        result = runtime.run_default_flow_from_payload(
-            {
-                "title": "错误排查请求",
-                "service_name": service_name,
-                "message": req.content,
-                "source": "admin-error-chat",
-                "tenant": "demo",
-                "environment": req.environment,
-                "severity": req.severity,
-                "team": "default",
-                "trace_id": req.trace_id,
-            }
-        )
+        payload = {
+            "title": "错误排查请求",
+            "service_name": service_name,
+            "message": req.content,
+            "source": "admin-error-chat",
+            "tenant": "demo",
+            "environment": req.environment,
+            "severity": req.severity,
+            "team": "default",
+            "trace_id": req.trace_id,
+        }
+        if req.use_agent:
+            payload["use_agent"] = True
+        flow_result = runtime.run_flow_from_payload(payload)
+        flow_view = _admin_flow_view(runtime, flow_result)
         flow_elapsed_ms = int((time.perf_counter() - started) * 1000)
-        flow_run_id = _save_default_flow_checkpoint(runtime, result)
+        flow_run_id = _resolve_admin_flow_run_id(runtime, flow_result)
         if _has_ready_ai_provider(store):
             ai_analysis = {"ok": False, "pending": True, "reason": "AI analysis is running"}
         else:
-            ai_analysis = _run_llm_analysis(store=store, content=req.content, flow_result=result)
+            ai_analysis = _run_llm_analysis(
+                store=store, content=req.content, flow_result=flow_view
+            )
         item = history_store.append(
             {
                 "role": "user",
                 "content": req.content,
                 "request": req.model_dump(mode="json"),
-                "case": result.case.model_dump(mode="json"),
-                "report": result.report.model_dump(mode="json"),
+                "case": flow_view.case.model_dump(mode="json"),
+                "report": flow_view.report.model_dump(mode="json"),
                 "flow_run_id": flow_run_id,
-                "evidence_count": len(result.evidence_pack.items),
-                "evidence_summary": result.evidence_pack.summary,
+                "runner": flow_view.runner,
+                "evidence_count": len(flow_view.evidence_pack.items),
+                "evidence_summary": flow_view.evidence_pack.summary,
                 "evidence_items": [
-                    evidence.model_dump(mode="json") for evidence in result.evidence_pack.items
+                    evidence.model_dump(mode="json") for evidence in flow_view.evidence_pack.items
                 ],
                 "flow_elapsed_ms": flow_elapsed_ms,
                 "ai_analysis": ai_analysis,
-                "tool_results": [tool.model_dump(mode="json") for tool in result.tool_results],
+                "tool_results": [tool.model_dump(mode="json") for tool in flow_view.tool_results],
             }
         )
         if ai_analysis.get("pending"):
@@ -1933,7 +1987,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
                 history_store=history_store,
                 item_id=str(item["id"]),
                 content=req.content,
-                flow_result=result,
+                flow_result=flow_view,
             )
         return {"ok": True, "item": item}
 

@@ -27,7 +27,7 @@ from rootseeker.channel_routing.outbound import (
     set_default_channel_registry,
 )
 from rootseeker.channel_routing.router import resolve_route
-from rootseeker.channel_routing.security import ChannelSecurity
+from rootseeker.channel_routing.security import ChannelSecurity, build_channel_security_from_settings
 from rootseeker.channel_routing.session_key import build_session_key
 from rootseeker.channel_routing.target_resolver import resolve_outbound_target
 from rootseeker.channel_routing.webhook import webhook_payload_to_case_create
@@ -37,6 +37,7 @@ __all__ = [
     "ChannelMessage",
     "ChannelRegistry",
     "ChannelSecurity",
+    "build_channel_security_from_settings",
     "DingTalkChannelAdapter",
     "DiscordChannelAdapter",
     "FeishuChannelAdapter",

@@ -4,6 +4,8 @@ from rootseeker.gateway import (
     GatewayRequestFrame,
     GatewayServer,
 )
+from rootseeker.gateway.server import build_gateway_server
+from rootseeker.infra_core import RootSeekerSettings
 
 
 def test_gateway_protocol_frames() -> None:
@@ -75,3 +77,15 @@ def test_gateway_unsubscribe() -> None:
     )
     result = server.publish("agent.event", {"k": "v"})
     assert result["delivered_count"] == 0
+
+
+def test_build_gateway_server_rejects_unauthenticated_request_when_auth_enabled() -> None:
+    settings = RootSeekerSettings(
+        gateway_auth_enabled=True,
+        gateway_auth_secret_key="test-secret",
+    )
+    server = build_gateway_server(None, settings=settings)
+    response = server.handle_http_request({"method": "system.ping", "params": {}})
+
+    assert response["ok"] is False
+    assert response["error"]["code"] == "unauthorized"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from rootseeker.contracts.common import utc_now
 from rootseeker.cron.concurrency import ConcurrencyGuard
@@ -15,6 +15,7 @@ from rootseeker.cron.jobs import (
 from rootseeker.cron.recovery import recover_stale_running
 from rootseeker.cron.retry import can_retry, next_retry_at
 from rootseeker.cron.schedule import parse_schedule
+from rootseeker.cron.stagger import stable_stagger_seconds
 from rootseeker.cron.state_store import CronStateStore, InMemoryCronStateStore
 
 __all__ = ["CronExecutor", "CronScheduler"]
@@ -99,7 +100,7 @@ class CronScheduler:
             state.last_success_at = finished_at
             state.last_error = None
             state.consecutive_failures = 0
-            state.next_run_at = parse_schedule(job.schedule, job.timezone).next_after(finished_at)
+            state.next_run_at = _schedule_next_run(job, finished_at)
         elif result.status == JobRunStatus.FAILED:
             state.status = CronJobStatus.FAILED
             state.last_error = result.message
@@ -107,11 +108,11 @@ class CronScheduler:
             state.next_run_at = (
                 next_retry_at(job, state, finished_at)
                 if can_retry(job, state)
-                else parse_schedule(job.schedule, job.timezone).next_after(finished_at)
+                else _schedule_next_run(job, finished_at)
             )
         else:
             state.status = CronJobStatus.IDLE
-            state.next_run_at = parse_schedule(job.schedule, job.timezone).next_after(finished_at)
+            state.next_run_at = _schedule_next_run(job, finished_at)
         state.updated_at = finished_at
         self.state_store.save_state(state)
         self.state_store.append_run(result)
@@ -122,7 +123,7 @@ class CronScheduler:
         if state is None:
             state = CronJobState(
                 job_id=job.job_id,
-                next_run_at=parse_schedule(job.schedule, job.timezone).next_after(now),
+                next_run_at=_schedule_next_run(job, now),
                 status=CronJobStatus.IDLE,
             )
             self.state_store.save_state(state)
@@ -131,3 +132,12 @@ class CronScheduler:
     @staticmethod
     def _is_due(state: CronJobState, now: datetime) -> bool:
         return state.next_run_at is not None and state.next_run_at <= now
+
+
+def _schedule_next_run(job: CronJobSpec, after: datetime) -> datetime:
+    next_at = parse_schedule(job.schedule, job.timezone).next_after(after)
+    stagger_max = int(job.metadata.get("stagger_max_offset_seconds", 0) or 0)
+    if stagger_max > 0:
+        offset = stable_stagger_seconds(job.job_id, max_offset_seconds=stagger_max)
+        next_at = next_at + timedelta(seconds=offset)
+    return next_at

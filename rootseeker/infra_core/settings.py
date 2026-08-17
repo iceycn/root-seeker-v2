@@ -62,6 +62,8 @@ class RootSeekerSettings(BaseSettings):
     agent_llm_allow_write_tools: bool = False
     agent_tool_call_max_concurrency: int = 4
     agent_max_attempts: int = 2
+    agent_flow_enabled: bool = False
+    root_cause_mcp_expansion_enabled: bool = True
 
     # Skill-driven flow: LLM reads tool skill docs to generate per-step arguments.
     skill_llm_argument_planning_enabled: bool = True
@@ -73,6 +75,25 @@ class RootSeekerSettings(BaseSettings):
     approval_required_for_write_tools: bool = False
     approval_webhook_url: str | None = None
     approval_webhook_timeout_seconds: float = 5.0
+
+    # Gateway control plane security (off by default for local dev).
+    gateway_auth_enabled: bool = False
+    gateway_auth_secret_key: str | None = None
+    gateway_rate_limit_enabled: bool = False
+    gateway_rate_limit_per_minute: int = 60
+
+    # Infrastructure guards (wired into DevRuntime; opt-in enforcement).
+    network_guard_allow_private: bool = False
+    exec_approval_deny_all: bool = False
+    exec_approval_allow_patterns: str = ""
+
+    # Process presence (heartbeat registry; in-memory per runtime instance).
+    node_id: str | None = None
+    node_role: str = "runtime"
+
+    # Inbound webhook security (optional; off when unset).
+    webhook_signing_secret: str | None = None
+    webhook_allowlist_ips: str = ""
 
     # Code Index — align with root_seek/config.yaml: zoekt.api_base_url, qdrant.url, qdrant.collection
     zoekt_endpoint: str | None = None

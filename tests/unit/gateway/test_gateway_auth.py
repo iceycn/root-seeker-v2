@@ -12,3 +12,23 @@ def test_signed_token_verification_uses_timezone_aware_timestamp() -> None:
     assert credentials is not None
     assert credentials.client_id == "client-1"
     assert credentials.capabilities == ["tool.invoke"]
+
+
+def test_authenticate_accepts_signed_tokens() -> None:
+    provider = TokenAuthProvider(secret_key="secret")
+    token = provider.create_signed_token("client-1", capabilities=["admin"])
+
+    credentials = provider.authenticate(token)
+
+    assert credentials is not None
+    assert credentials.client_id == "client-1"
+
+
+def test_signed_token_supports_colon_in_capabilities() -> None:
+    provider = TokenAuthProvider(secret_key="secret")
+    token = provider.create_signed_token("client-1", capabilities=["case:write", "tool:invoke"])
+
+    credentials = provider.authenticate(token)
+
+    assert credentials is not None
+    assert credentials.capabilities == ["case:write", "tool:invoke"]

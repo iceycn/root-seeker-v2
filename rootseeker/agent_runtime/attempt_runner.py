@@ -8,6 +8,7 @@ from rootseeker.contracts.case import (
     CaseStep,
     StepStatus,
 )
+from rootseeker.contracts.state_machine import validate_case_transition, validate_step_transition
 from rootseeker.contracts.common import new_id, utc_now
 from rootseeker.contracts.evidence import EvidencePack, EvidenceType
 from rootseeker.contracts.tool import ToolCallRequest
@@ -83,7 +84,7 @@ class AttemptRunner:
                     reason="llm planner did not produce executable tool calls",
                 )
 
-        flow_result = self.flow_runtime.run_default(case_request)
+        flow_result = self.flow_runtime.run_default(case_request, publish_completion=False)
         tool_traces = self.tool_call_loop.from_flow_result(flow_result)
         compacted_context = self.context_compactor.compact(
             prompt_messages=prompt_messages,
@@ -164,7 +165,7 @@ class AttemptRunner:
                     continue
                 step = steps_by_step_id[step_id]
                 request = requests_by_step_id[step_id]
-                step.status = StepStatus.SKIPPED
+                _transition_step_status(step, StepStatus.SKIPPED)
                 trace = ToolExecutionTrace(
                     step_id=step.step_id,
                     tool_name=request.tool_name,
@@ -198,7 +199,7 @@ class AttemptRunner:
                     step = steps_by_step_id[step_id]
                     request = requests_by_step_id[step_id]
                     call = calls_by_step_id[step_id]
-                    step.status = StepStatus.SKIPPED
+                    _transition_step_status(step, StepStatus.SKIPPED)
                     trace = ToolExecutionTrace(
                         step_id=step_id,
                         tool_name=request.tool_name,
@@ -213,6 +214,11 @@ class AttemptRunner:
                     if call.required:
                         blocking_step_ids.add(step_id)
                 continue
+
+            for step_id in ready_step_ids:
+                _transition_step_status(steps_by_step_id[step_id], StepStatus.RUNNING)
+            if case.status == CaseStatus.PLANNED:
+                _transition_case_status(case, CaseStatus.RUNNING)
 
             records = self.tool_call_loop.execute_records(
                 [requests_by_step_id[step_id] for step_id in ready_step_ids],
@@ -239,7 +245,7 @@ class AttemptRunner:
                 continue
             step.outputs = sanitize_tool_result_for_persistence(record.result.content)
             if record.result.ok:
-                step.status = StepStatus.COMPLETED
+                _transition_step_status(step, StepStatus.COMPLETED)
                 append_tool_json_evidence(
                     pack,
                     tool_name=record.result.tool_name,
@@ -250,15 +256,15 @@ class AttemptRunner:
                     ),
                 )
             else:
-                step.status = StepStatus.FAILED
-        case.status = (
-            CaseStatus.FAILED
-            if any(
-                step.status in {StepStatus.FAILED, StepStatus.SKIPPED}
-                and calls_by_step_id[step.step_id].required
-                for step in case.steps
-            )
-            else CaseStatus.COMPLETED
+                _transition_step_status(step, StepStatus.FAILED)
+        failed = any(
+            step.status in {StepStatus.FAILED, StepStatus.SKIPPED}
+            and calls_by_step_id[step.step_id].required
+            for step in case.steps
+        )
+        _transition_case_status(
+            case,
+            CaseStatus.FAILED if failed else CaseStatus.COMPLETED,
         )
         case.updated_at = utc_now()
         self.flow_runtime.runtime.case_store.put(case)
@@ -347,19 +353,19 @@ def _build_case_from_plan(
             name=f"LLM planned {call.tool_name}",
             skill_name=skill_slug,
             action=call.tool_name,
-            status=StepStatus.RUNNING,
+            status=StepStatus.PENDING,
             tool_name=call.tool_name,
             inputs=dict(call.arguments),
         )
         for call in plan_result.plan.tool_calls
     ]
-    return CaseRecord(
+    case = CaseRecord(
         case_id=case_id,
         title=case_request.title,
         symptom=case_request.symptom,
         service_name=case_request.service_name,
         source=case_request.source,
-        status=CaseStatus.RUNNING,
+        status=CaseStatus.PENDING,
         selected_skills=[skill_slug],
         steps=steps,
         metadata={
@@ -369,6 +375,18 @@ def _build_case_from_plan(
             "llm_tool_plan_calls": [call.to_payload() for call in plan_result.plan.tool_calls],
         },
     )
+    _transition_case_status(case, CaseStatus.PLANNED)
+    return case
+
+
+def _transition_case_status(case: CaseRecord, new: CaseStatus) -> None:
+    validate_case_transition(case.status, new)
+    case.status = new
+
+
+def _transition_step_status(case_step: CaseStep, new: StepStatus) -> None:
+    validate_step_transition(case_step.status, new)
+    case_step.status = new
 
 
 def _evidence_type_for_tool(tool_name: str) -> EvidenceType:

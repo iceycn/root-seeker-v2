@@ -16,6 +16,7 @@ def build_runtime_health(runtime: DevRuntime) -> dict[str, Any]:
         "cases": _count_component(lambda: _store_count(runtime.case_store)),
         "audit": _count_component(lambda: runtime.audit_log.count()),
         "checkpoints": _count_component(lambda: _store_count(runtime.flow_checkpoint_store)),
+        "presence": _count_component(lambda: len(runtime.presence_registry.list_nodes())),
     }
     status = "ok" if all(item["status"] == "ok" for item in components.values()) else "degraded"
     return {"status": status, "components": components}

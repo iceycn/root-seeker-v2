@@ -8,6 +8,12 @@ def test_cli_demo_command() -> None:
     assert code == 0
 
 
+def test_cli_demo_command_with_use_agent(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    code = cli_main(["demo", "--use-agent"])
+    assert code == 0
+
+
 def test_cli_resume_command_with_missing_checkpoint_returns_failure() -> None:
     code = cli_main(
         [

@@ -21,8 +21,16 @@ class FlowRuntime:
         self.checkpoints = checkpoints or runtime.flow_checkpoint_store
         self._executor = FlowExecutor(runtime)
 
-    def run_default(self, case_request: CaseCreateRequest) -> FlowExecutionResult:
-        result = self._executor.execute_default(case_request)
+    def run_default(
+        self,
+        case_request: CaseCreateRequest,
+        *,
+        publish_completion: bool = True,
+    ) -> FlowExecutionResult:
+        result = self._executor.execute_default(
+            case_request,
+            publish_completion=publish_completion,
+        )
         self.checkpoints.save(
             result.trace.execution_id, _build_checkpoint_payload(result, status="completed")
         )

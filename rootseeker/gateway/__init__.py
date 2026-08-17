@@ -11,10 +11,11 @@ from rootseeker.gateway.protocol import (
     GatewayRequestFrame,
     GatewayResponseFrame,
 )
-from rootseeker.gateway.server import GatewayServer
+from rootseeker.gateway.server import GatewayServer, build_gateway_server
 from rootseeker.gateway.subscriptions import SubscriptionRegistry
 from rootseeker.gateway.transport import GatewayTransport, TransportConnection, TransportMessage
 from rootseeker.gateway.websocket_transport import WebSocketTransport
+from rootseeker.gateway.ws_bridge import GatewayWsBridge
 
 __all__ = [
     "AuthCredentials",
@@ -29,6 +30,8 @@ __all__ = [
     "GatewayRequestFrame",
     "GatewayResponseFrame",
     "GatewayServer",
+    "GatewayWsBridge",
+    "build_gateway_server",
     "GatewayTransport",
     "InMemoryEventSink",
     "RateLimitResult",

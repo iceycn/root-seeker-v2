@@ -15,7 +15,7 @@ from rootseeker.agent_runtime.model_router import ModelRouter
 from rootseeker.agent_runtime.tool_call_loop import ToolCallExecution
 from rootseeker.agent_runtime.tool_plan import parse_tool_plan_content
 from rootseeker.bootstrap import create_dev_runtime
-from rootseeker.contracts.case import CaseCreateRequest
+from rootseeker.contracts.case import CaseCreateRequest, CaseStatus, StepStatus
 from rootseeker.contracts.tool import ToolCallResult
 from rootseeker.flow_runtime import FlowRuntime
 
@@ -187,6 +187,10 @@ def test_agent_attempt_can_execute_llm_tool_plan(monkeypatch) -> None:
     assert result.tool_traces[1].plan_metadata["timeout_seconds"] == 30.0
     assert result.tool_traces[1].plan_metadata["required"] is True
     assert runtime.case_store.get(result.case_id) is not None
+    case = runtime.case_store.get(result.case_id)
+    assert case is not None
+    assert case.status == CaseStatus.COMPLETED
+    assert all(step.status == StepStatus.COMPLETED for step in case.steps)
     pack = runtime.evidence_store.get_pack(result.case_id)
     assert pack is not None
     assert len(pack.items) == 2

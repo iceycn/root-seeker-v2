@@ -85,11 +85,13 @@ def run_loop(
 ) -> int:
     run_count = 0
     first_tick = True
+    presence_runtime = create_dev_runtime(Path.cwd(), node_role="scheduler")
     while max_runs <= 0 or run_count < max_runs:
         attempt = 0
         while True:
             attempt += 1
             try:
+                presence_runtime.heartbeat_presence("scheduler")
                 results = _run_scheduler_tick(
                     repo_root=Path.cwd(),
                     suite_name=suite_name,
@@ -416,7 +418,7 @@ def _build_executor(repo_root: Path, *, admin_store: AdminConfigStore | None = N
             )
 
         # replay.default_flow
-        runtime = create_dev_runtime(repo_root)
+        runtime = create_dev_runtime(repo_root, node_role="scheduler")
         task_runtime = TaskRuntime(runtime)
         suite_name = str(job.metadata.get("suite_name") or "cron-default-flow")
         repeat_each = int(job.metadata.get("repeat_each") or 1)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import secrets
@@ -84,14 +85,12 @@ class TokenAuthProvider(AuthProvider):
     def authenticate(self, token: str) -> AuthCredentials | None:
         """Authenticate a token."""
         credentials = self._tokens.get(token)
-        if credentials is None:
-            return None
-
-        if credentials.is_expired():
-            self._tokens.pop(token, None)
-            return None
-
-        return credentials
+        if credentials is not None:
+            if credentials.is_expired():
+                self._tokens.pop(token, None)
+                return None
+            return credentials
+        return self.verify_signed_token(token)
 
     def validate(self, credentials: AuthCredentials) -> bool:
         """Validate credentials."""
@@ -115,7 +114,8 @@ class TokenAuthProvider(AuthProvider):
     def create_signed_token(self, client_id: str, capabilities: list[str] | None = None) -> str:
         """Create a HMAC-signed token."""
         timestamp = str(int(utc_now().timestamp()))
-        payload = f"{client_id}:{timestamp}:{','.join(capabilities or [])}"
+        caps_part = self._encode_capabilities(capabilities or [])
+        payload = f"{client_id}:{timestamp}:{caps_part}"
         signature = hmac.new(
             self.secret_key.encode(),
             payload.encode(),
@@ -125,14 +125,17 @@ class TokenAuthProvider(AuthProvider):
 
     def verify_signed_token(self, token: str) -> AuthCredentials | None:
         """Verify a HMAC-signed token."""
-        parts = token.split(":")
-        if len(parts) != 4:
+        if token.count(":") < 3:
             return None
 
-        client_id, timestamp_str, caps_str, signature = parts
+        body, signature = token.rsplit(":", 1)
+        parts = body.split(":", 2)
+        if len(parts) != 3:
+            return None
 
-        # Verify signature
-        payload = f"{client_id}:{timestamp_str}:{caps_str}"
+        client_id, timestamp_str, caps_part = parts
+
+        payload = f"{client_id}:{timestamp_str}:{caps_part}"
         expected_sig = hmac.new(
             self.secret_key.encode(),
             payload.encode(),
@@ -142,7 +145,6 @@ class TokenAuthProvider(AuthProvider):
         if not hmac.compare_digest(signature, expected_sig):
             return None
 
-        # Check timestamp
         try:
             timestamp = int(timestamp_str)
             token_time = datetime.fromtimestamp(timestamp, UTC)
@@ -151,10 +153,27 @@ class TokenAuthProvider(AuthProvider):
         except ValueError:
             return None
 
-        capabilities = caps_str.split(",") if caps_str else []
+        capabilities = self._decode_capabilities(caps_part)
 
         return AuthCredentials(
             client_id=client_id,
             token=token,
             capabilities=capabilities,
         )
+
+    @staticmethod
+    def _encode_capabilities(capabilities: list[str]) -> str:
+        joined = ",".join(capabilities)
+        if not joined:
+            return ""
+        return base64.urlsafe_b64encode(joined.encode()).decode()
+
+    @staticmethod
+    def _decode_capabilities(caps_part: str) -> list[str]:
+        if not caps_part:
+            return []
+        try:
+            decoded = base64.urlsafe_b64decode(caps_part.encode()).decode()
+            return decoded.split(",") if decoded else []
+        except (ValueError, UnicodeDecodeError):
+            return caps_part.split(",") if caps_part else []

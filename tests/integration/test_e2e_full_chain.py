@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
 
 from rootseeker.bootstrap import create_dev_runtime
@@ -27,12 +26,9 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def test_e2e_full_chain_with_sqlite_persistence() -> None:
+def test_e2e_full_chain_with_sqlite_persistence(tmp_path: Path) -> None:
     """Complete E2E test: webhook → case → skill → evidence → report → notify with SQLite."""
-    # Setup SQLite stores
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
+    db_path = tmp_path / "e2e.db"
     case_store = SqliteCaseStore(db_path=db_path)
     evidence_store = SqliteEvidenceStore(db_path=db_path)
     report_store = SqliteReportStore(db_path=db_path)
@@ -122,9 +118,6 @@ def test_e2e_full_chain_with_sqlite_persistence() -> None:
     assert audit_events
     assert all(evt.detail.get("skill_name") == "flows/default-log-triage" for evt in audit_events)
 
-    # Cleanup
-    db_path.unlink(missing_ok=True)
-
 
 def test_e2e_multi_channel_notification() -> None:
     """Test notification routing to multiple channels."""
@@ -161,11 +154,9 @@ def test_e2e_multi_channel_notification() -> None:
     assert len(rec_wechat.get_sent_messages()) == 1
 
 
-def test_e2e_sqlite_task_and_checkpoint_persistence() -> None:
+def test_e2e_sqlite_task_and_checkpoint_persistence(tmp_path: Path) -> None:
     """Test task and checkpoint persistence in SQLite."""
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        db_path = Path(f.name)
-
+    db_path = tmp_path / "task-checkpoint.db"
     task_store = SqliteTaskStore(db_path=db_path)
     checkpoint_store = SqliteCheckpointStore(db_path=db_path)
 
@@ -202,6 +193,3 @@ def test_e2e_sqlite_task_and_checkpoint_persistence() -> None:
     assert persisted_cp is not None
     assert persisted_cp["case_id"] == "case-e2e-001"
     assert persisted_cp["step_index"] == 3
-
-    # Cleanup
-    db_path.unlink(missing_ok=True)

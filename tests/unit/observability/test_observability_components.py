@@ -41,6 +41,7 @@ def test_runtime_health_and_prometheus_metrics(monkeypatch) -> None:
     assert health["status"] == "ok"
     assert health["components"]["skills"]["count"] >= 1
     assert health["components"]["tools"]["count"] >= 1
+    assert health["components"]["presence"]["count"] >= 1
 
     metrics = render_prometheus_metrics(runtime)
     assert "rootseeker_up 1" in metrics

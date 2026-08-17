@@ -253,3 +253,51 @@ def test_root_cause_engine_convergence_check() -> None:
     result = engine.analyze(pack=pack)
 
     assert result.recommendation  # Should have recommendation
+
+
+def test_root_cause_engine_runs_until_max_iterations_when_not_converged() -> None:
+    """Engine should iterate up to max_iterations and force converge on the last round."""
+    engine = RootCauseEngine(confidence_threshold=0.99, min_evidence_count=50)
+    pack = _make_evidence_pack([
+        ("log", "logs", "error timeout"),
+        ("trace", "traces", "latency spike"),
+    ])
+
+    result = engine.analyze(pack=pack, max_iterations=4)
+
+    assert result.iteration_count == 4
+    assert result.is_converged
+    assert "强制收敛" in result.recommendation or "分析已收敛" in result.recommendation
+
+
+def test_root_cause_engine_conclusion_uses_weighted_evidence() -> None:
+    """Conclusion should rank contributing factors by evidence weight."""
+    engine = RootCauseEngine()
+    pack = _make_evidence_pack([
+        ("log", "low-priority", "info message"),
+        ("trace", "jaeger", "critical latency spike"),
+        ("trace", "jaeger", "timeout in downstream"),
+        ("code", "repo", "null pointer"),
+    ])
+
+    result = engine.analyze(pack=pack)
+
+    assert result.conclusion.contributing_factors
+    assert result.conclusion.contributing_factors[0] == "trace"
+    assert "jaeger" in result.conclusion.narrative
+
+
+def test_root_cause_engine_focuses_evidence_on_later_iterations() -> None:
+    """Later iterations should analyze a narrowed high-weight evidence subset."""
+    engine = RootCauseEngine(confidence_threshold=0.99, min_evidence_count=2)
+    pack = _make_evidence_pack([
+        ("log", "noise", "info"),
+        ("log", "noise", "debug"),
+        ("trace", "jaeger", "critical error timeout"),
+        ("trace", "jaeger", "downstream failure"),
+        ("code", "repo", "null pointer"),
+    ])
+
+    result = engine.analyze(pack=pack, max_iterations=3)
+
+    assert result.iteration_count >= 2

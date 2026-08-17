@@ -551,6 +551,21 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     assert history["items"][0]["evidence_items"] == item["evidence_items"]
 
 
+def test_admin_error_chat_with_use_agent(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    client = TestClient(create_app(tmp_path))
+
+    response = client.post(
+        "/api/error-chat",
+        json={"content": "NullPointerException at Foo.java:12", "use_agent": True},
+    )
+
+    assert response.status_code == 200
+    item = response.json()["item"]
+    assert item["runner"] == "agent"
+    assert item["case"]["case_id"].startswith("case-")
+
+
 def test_admin_error_chat_infers_service_name_when_omitted(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
     content = (

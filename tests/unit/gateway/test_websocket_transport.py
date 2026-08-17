@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from rootseeker.gateway import TransportMessage, WebSocketTransport
@@ -24,6 +26,29 @@ def test_websocket_transport_get_connection_not_found() -> None:
     transport = WebSocketTransport()
     conn = transport.get_connection("nonexistent")
     assert conn is None
+
+
+@pytest.mark.asyncio
+async def test_websocket_transport_broadcast_wildcard_topic() -> None:
+    """Subscribers with case.* should receive case.{id} events."""
+    from rootseeker.gateway.protocol import GatewayEventFrame
+    from rootseeker.gateway.websocket_transport import WebSocketConnectionState
+
+    transport = WebSocketTransport()
+    mock_ws = MagicMock()
+    mock_ws.send_json = AsyncMock()
+
+    connection_id = "ws-wildcard"
+    transport._connections[connection_id] = WebSocketConnectionState(
+        connection_id=connection_id,
+        websocket=mock_ws,
+    )
+    transport._connections[connection_id].subscriptions.add("case.*")
+
+    event = GatewayEventFrame(topic="case.abc", payload={"case_id": "abc"})
+    delivered = await transport.broadcast("case.abc", event)
+    assert delivered == 1
+    mock_ws.send_json.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,8 @@ from typing import Any
 
 from rootseeker.contracts.common import utc_now
 from rootseeker.skill_system.draft_builder import SkillDraft
-from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
+from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME, load_skill_from_path
+from rootseeker.skill_system.registry import SkillRegistry
 from rootseeker.skill_system.review import ReviewStatus, SkillReview
 
 __all__ = ["PublishedSkill", "SkillPublisher", "PublishStatus"]
@@ -54,9 +55,11 @@ class SkillPublisher:
         *,
         target_dir: Path | None = None,
         registry_path: Path | None = None,
+        registry: SkillRegistry | None = None,
     ) -> None:
         self._target_dir = target_dir or Path("skills/generated")
         self._registry_path = registry_path
+        self._registry = registry
         self._published: dict[str, PublishedSkill] = {}
 
     def publish(
@@ -77,6 +80,9 @@ class SkillPublisher:
 
         # Write SKILL.md
         skill_path = self._write_skill_file(draft)
+
+        if self._registry is not None:
+            self._registry.upsert(load_skill_from_path(skill_path))
 
         # Create published record
         published = PublishedSkill(

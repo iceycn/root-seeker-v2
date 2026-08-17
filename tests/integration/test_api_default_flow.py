@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import hashlib
+import hmac
+
 from fastapi.testclient import TestClient
 
 from apps.api.main import create_app
@@ -17,6 +20,12 @@ def test_api_run_default_flow_and_query_report() -> None:
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
     assert r.json()["components"]["skills"]["count"] >= 1
+    assert r.json()["components"]["presence"]["count"] >= 1
+
+    presence = client.get("/system/presence")
+    assert presence.status_code == 200
+    assert presence.json()["total"] >= 1
+    assert presence.json()["items"][0]["role"] == "api"
 
     ready = client.get("/readyz")
     assert ready.status_code == 200
@@ -75,6 +84,105 @@ def test_api_run_default_flow_and_query_report() -> None:
     cp_payload = checkpoints_resp.json()
     assert cp_payload["total"] >= 1
     assert any(item["flow_run_id"] == flow_run_id for item in cp_payload["items"])
+
+
+def test_api_run_agent_case(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    app = create_app(_repo_root())
+    client = TestClient(app)
+
+    response = client.post(
+        "/cases/run-agent",
+        json={
+            "title": "Agent API case",
+            "symptom": "error ratio high",
+            "service_name": "order-service",
+            "source": "api-agent-test",
+            "metadata": {"trace_id": "trace-agent-api-1"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["case_id"].startswith("case-")
+    assert payload["attempt_count"] >= 1
+    assert payload["route_mode"] == "rule_flow"
+    assert payload["case"] is not None
+    assert payload["report"] is not None
+    assert payload["evidence_count"] >= 1
+
+
+def test_api_run_default_with_use_agent_flag(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    app = create_app(_repo_root())
+    client = TestClient(app)
+
+    response = client.post(
+        "/cases/run-default",
+        json={
+            "title": "Agent via run-default",
+            "symptom": "error ratio high",
+            "service_name": "order-service",
+            "source": "api-test",
+            "use_agent": True,
+            "metadata": {"trace_id": "trace-run-default-agent-1"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runner"] == "agent"
+    assert payload["case_id"].startswith("case-")
+
+
+def test_api_webhook_with_use_agent_flag(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    app = create_app(_repo_root())
+    client = TestClient(app)
+
+    resp = client.post(
+        "/webhook/webhook",
+        json={
+            "title": "Agent Webhook",
+            "message": "Service latency high",
+            "service_name": "payment-service",
+            "use_agent": True,
+            "trace_id": "trace-webhook-agent-001",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["runner"] == "agent"
+    assert data["case_id"]
+
+
+def test_api_webhook_rejects_invalid_signature(monkeypatch) -> None:
+    secret = "integration-test-secret"
+    monkeypatch.setenv("ROOTSEEKER_WEBHOOK_SIGNING_SECRET", secret)
+    app = create_app(_repo_root())
+    client = TestClient(app)
+    payload = {
+        "title": "Signed Alert",
+        "message": "error",
+        "service_name": "order-service",
+        "_channel": "webhook",
+    }
+
+    resp = client.post("/webhook/webhook", json=payload, headers={"x-signature": "bad"})
+    assert resp.status_code == 403
+
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        str(sorted(payload.items())).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    ok = client.post(
+        "/webhook/webhook",
+        json=payload,
+        headers={"x-signature": expected},
+    )
+    assert ok.status_code == 200
+    assert ok.json()["ok"] is True
 
 
 def test_api_webhook_generic_channel() -> None:

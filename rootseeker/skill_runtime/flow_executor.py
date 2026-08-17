@@ -11,6 +11,10 @@ from rootseeker.contracts.case import (
     CaseStep,
     StepStatus,
 )
+from rootseeker.contracts.state_machine import (
+    validate_case_transition,
+    validate_step_transition,
+)
 from rootseeker.contracts.common import new_id, utc_now
 from rootseeker.contracts.evidence import EvidencePack
 from rootseeker.contracts.report import CaseReport
@@ -133,7 +137,7 @@ def execute_skill_flow(
     content_loader: SkillContentLoader | None = None,
     argument_planner: StepArgumentPlanner | None = None,
     flow_skill: SkillSpec | None = None,
-    plugin_id: str = DEFAULT_FLOW_PLUGIN_ID,
+    plugin_id: str | None = None,
     start_from_step_index: int = 0,
     prior_step_outputs: dict[str, dict[str, Any]] | None = None,
     prior_case_id: str | None = None,
@@ -157,6 +161,7 @@ def execute_skill_flow(
         plan = None
 
     skill_slug = flow_skill.slug
+    effective_plugin_id = _resolve_flow_plugin_id(flow_skill, plugin_id)
     case_id = prior_case_id or new_id("case-")
     case = CaseRecord(
         case_id=case_id,
@@ -164,7 +169,7 @@ def execute_skill_flow(
         symptom=case_request.symptom,
         service_name=case_request.service_name,
         source=case_request.source,
-        status=CaseStatus.RUNNING,
+        status=CaseStatus.PENDING,
         selected_skills=[skill_slug],
         metadata=dict(case_request.metadata),
     )
@@ -179,11 +184,12 @@ def execute_skill_flow(
         )
         for step in flow_skill.steps
     ]
+    _transition_case_status(case, CaseStatus.PLANNED)
 
     prior_outputs = dict(prior_step_outputs or {})
     for idx, step in enumerate(case.steps):
         if idx < start_from_step_index:
-            step.status = StepStatus.COMPLETED
+            _set_step_status(step, StepStatus.COMPLETED, validate=False)
             if step.step_id in prior_outputs:
                 step.outputs = dict(prior_outputs[step.step_id])
 
@@ -193,6 +199,7 @@ def execute_skill_flow(
     step_outputs = dict(prior_outputs)
     deferred_steps: list[tuple[SkillStepDefinition, CaseStep]] = []
     display_skill_slug = skill_slug
+    execution_started = False
 
     for flow_step, case_step in zip(flow_skill.steps, case.steps, strict=True):
         if case_step.status == StepStatus.COMPLETED:
@@ -213,6 +220,9 @@ def execute_skill_flow(
         if flow_step.defer_until:
             deferred_steps.append((flow_step, case_step))
             continue
+        if not execution_started:
+            _transition_case_status(case, CaseStatus.RUNNING)
+            execution_started = True
         _run_step(
             flow_skill=flow_skill,
             flow_step=flow_step,
@@ -224,7 +234,7 @@ def execute_skill_flow(
             gateway=gateway,
             content_loader=content_loader,
             argument_planner=argument_planner,
-            plugin_id=plugin_id,
+            plugin_id=effective_plugin_id,
             pack=pack,
             step_outputs=step_outputs,
             tool_results=tool_results,
@@ -234,11 +244,21 @@ def execute_skill_flow(
         if case.status == CaseStatus.FAILED:
             break
 
-    report = build_case_report(case_id=case.case_id, title=case.title, pack=pack)
+    report = build_case_report(
+        case_id=case.case_id,
+        title=case.title,
+        pack=pack,
+        gateway=gateway,
+        trace_id=str(case_request.metadata.get("trace_id") or "") or None,
+        service_name=case_request.service_name,
+    )
 
     for flow_step, case_step in deferred_steps:
         if case.status == CaseStatus.FAILED:
             break
+        if not execution_started:
+            _transition_case_status(case, CaseStatus.RUNNING)
+            execution_started = True
         _run_step(
             flow_skill=flow_skill,
             flow_step=flow_step,
@@ -250,7 +270,7 @@ def execute_skill_flow(
             gateway=gateway,
             content_loader=content_loader,
             argument_planner=argument_planner,
-            plugin_id=plugin_id,
+            plugin_id=effective_plugin_id,
             pack=pack,
             step_outputs=step_outputs,
             tool_results=tool_results,
@@ -260,9 +280,18 @@ def execute_skill_flow(
         )
 
     if case.status != CaseStatus.FAILED:
-        case.status = CaseStatus.COMPLETED
+        if not execution_started:
+            _transition_case_status(case, CaseStatus.RUNNING)
+        _transition_case_status(case, CaseStatus.COMPLETED)
     case.updated_at = utc_now()
-    report = build_case_report(case_id=case.case_id, title=case.title, pack=pack)
+    report = build_case_report(
+        case_id=case.case_id,
+        title=case.title,
+        pack=pack,
+        gateway=gateway,
+        trace_id=str(case_request.metadata.get("trace_id") or "") or None,
+        service_name=case_request.service_name,
+    )
     return SkillFlowRunResult(
         case=case,
         evidence_pack=pack,
@@ -300,11 +329,11 @@ def _run_step(
     )
     tool_spec = tool_registry.get_spec(flow_step.action)
     if tool_spec is None:
-        case_step.status = StepStatus.FAILED
-        case.status = CaseStatus.FAILED
+        _transition_step_status(case_step, StepStatus.FAILED)
+        _transition_case_status(case, CaseStatus.FAILED)
         return
 
-    case_step.status = StepStatus.RUNNING
+    _transition_step_status(case_step, StepStatus.RUNNING)
     arg_plan = argument_planner.plan(
         case_request=case_request,
         action=flow_step.action,
@@ -336,7 +365,7 @@ def _run_step(
         persisted = sanitize_tool_result_for_persistence(result.content)
         case_step.outputs = dict(persisted)
         step_outputs[flow_step.step_id] = dict(persisted)
-        case_step.status = StepStatus.COMPLETED
+        _transition_step_status(case_step, StepStatus.COMPLETED)
         map_tool_result_to_evidence(
             pack=pack,
             action=flow_step.action,
@@ -358,7 +387,7 @@ def _run_step(
     case_step.outputs = dict(persisted)
     if result.ok:
         step_outputs[flow_step.step_id] = dict(persisted)
-        case_step.status = StepStatus.COMPLETED
+        _transition_step_status(case_step, StepStatus.COMPLETED)
         if flow_step.action == "incident.normalize":
             cr = persisted.get("case_request")
             if isinstance(cr, dict):
@@ -374,8 +403,33 @@ def _run_step(
             tool_skill=tool_skill,
         )
     else:
-        case_step.status = StepStatus.FAILED
-        case.status = CaseStatus.FAILED
+        _transition_step_status(case_step, StepStatus.FAILED)
+        _transition_case_status(case, CaseStatus.FAILED)
+
+
+def _resolve_flow_plugin_id(flow_skill: SkillSpec, plugin_id: str | None) -> str:
+    if plugin_id is not None:
+        return plugin_id
+    meta_plugin = flow_skill.metadata.get("flow_plugin_id")
+    if meta_plugin:
+        return str(meta_plugin)
+    return DEFAULT_FLOW_PLUGIN_ID
+
+
+def _transition_case_status(case: CaseRecord, new: CaseStatus) -> None:
+    validate_case_transition(case.status, new)
+    case.status = new
+
+
+def _transition_step_status(case_step: CaseStep, new: StepStatus) -> None:
+    validate_step_transition(case_step.status, new)
+    case_step.status = new
+
+
+def _set_step_status(case_step: CaseStep, new: StepStatus, *, validate: bool) -> None:
+    if validate:
+        validate_step_transition(case_step.status, new)
+    case_step.status = new
 
 
 def _resolve_tool_skill(skill_registry: SkillRegistry, step: SkillStepDefinition) -> SkillSpec:

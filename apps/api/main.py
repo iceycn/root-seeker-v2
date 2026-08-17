@@ -7,11 +7,19 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from rootseeker.agent_runtime.result import AgentRunResult
+from plugins.builtin.default_log_triage_flow import DefaultFlowRunResult
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
-from rootseeker.channel_routing import ChannelMessage, ingest_channel_message
+from rootseeker.channel_routing import (
+    ChannelMessage,
+    build_channel_security_from_settings,
+    ingest_channel_message,
+    webhook_payload_to_case_create,
+)
 from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.flow_runtime import FlowRuntime, build_execution_trace
-from rootseeker.gateway import GatewayRequestFrame, GatewayResponseFrame, GatewayServer
+from rootseeker.gateway import GatewayRequestFrame, GatewayResponseFrame, build_gateway_server
+from rootseeker.gateway.ws_bridge import GatewayWsBridge
 from rootseeker.gateway.websocket_transport import WebSocketTransport
 from rootseeker.observability import build_runtime_health, render_prometheus_metrics
 
@@ -22,6 +30,7 @@ class RunCaseRequest(BaseModel):
     service_name: str = Field(min_length=1)
     source: str = Field(default="api", min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    use_agent: bool = False
 
 
 class WebhookResponse(BaseModel):
@@ -29,6 +38,7 @@ class WebhookResponse(BaseModel):
     case_id: str | None = None
     flow_run_id: str | None = None
     message: str = ""
+    runner: str | None = None
 
 
 class RegisterRepoRequest(BaseModel):
@@ -120,29 +130,94 @@ class GraphTraceRequest(BaseModel):
     repo: str | None = None
 
 
-_REPO_REST_CASE_ID = "api-repo-rest"
-_REPO_REST_STEP_ID = "route"
-_REPO_REST_SKILL = "api.repo_gateway"
+class CatalogResolveRequest(BaseModel):
+    tenant: str = Field(default="demo", min_length=1)
+    environment: str = Field(default="prod", min_length=1)
+    service_name: str = Field(min_length=1)
+
+
+class CatalogLogSourcesRequest(BaseModel):
+    tenant: str = Field(default="demo", min_length=1)
+    environment: str = Field(default="prod", min_length=1)
+    service_name: str = Field(min_length=1)
+
+
+class LogQueryByTraceRequest(BaseModel):
+    trace_id: str = Field(min_length=1)
+    service_name: str | None = None
+
+
+class LogQueryByTemplateRequest(BaseModel):
+    template_id: str = Field(min_length=1)
+    service_name: str | None = None
+
+
+class TraceChainRequest(BaseModel):
+    trace_id: str = Field(min_length=1)
+
+
+class CodeSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+
+
+class CodeReadRequest(BaseModel):
+    path: str = Field(min_length=1)
+    repo: str | None = None
+
+
+class NotifySendRequest(BaseModel):
+    channel: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+
+
+class LspReferencesRequest(BaseModel):
+    symbol: str = Field(min_length=1)
+
+
+class LspPositionRequest(BaseModel):
+    file_path: str = Field(min_length=1)
+    line: int = Field(ge=1)
+    character: int = Field(ge=0)
+
+
+class LspSymbolsRequest(BaseModel):
+    file_path: str = Field(min_length=1)
+
+
+_API_REST_CASE_ID = "api-internal-rest"
+_API_REST_STEP_ID = "route"
+_API_REST_SKILL = "api.internal_gateway"
 _REPO_CODE_INDEX_PLUGIN_ID = "builtin.code_index"
+_PLUGIN_BY_TOOL_PREFIX = {
+    "catalog": "builtin.service_catalog",
+    "log": "builtin.log_query",
+    "trace": "builtin.log_query",
+    "notify": "builtin.notify",
+}
 
 
-def _invoke_builtin_repo_tool(
+def _plugin_id_for_tool(tool_name: str) -> str:
+    prefix = tool_name.split(".", 1)[0]
+    return _PLUGIN_BY_TOOL_PREFIX.get(prefix, _REPO_CODE_INDEX_PLUGIN_ID)
+
+
+def _invoke_internal_tool(
     runtime: DevRuntime,
     tool_name: str,
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
-    """仓库相关 REST 路由统一通过内置 MCP（McpGateway + internal ToolRegistry）执行。"""
+    """REST 路由统一通过内置 MCP（McpGateway + internal ToolRegistry）执行。"""
     req = ToolCallRequest(
-        case_id=_REPO_REST_CASE_ID,
-        step_id=_REPO_REST_STEP_ID,
-        skill_name=_REPO_REST_SKILL,
+        case_id=_API_REST_CASE_ID,
+        step_id=_API_REST_STEP_ID,
+        skill_name=_API_REST_SKILL,
         tool_name=tool_name,
         arguments=arguments,
     )
     result = runtime.gateway.invoke(
         req,
         actor="rest-api",
-        plugin_id=_REPO_CODE_INDEX_PLUGIN_ID,
+        plugin_id=_plugin_id_for_tool(tool_name),
     )
     if not result.ok:
         msg = result.error.message if result.error else "tool invocation failed"
@@ -150,11 +225,126 @@ def _invoke_builtin_repo_tool(
     return result.content
 
 
+def _invoke_builtin_repo_tool(
+    runtime: DevRuntime,
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """仓库相关 REST 路由（兼容旧名，委托 _invoke_internal_tool）。"""
+    return _invoke_internal_tool(runtime, tool_name, arguments)
+
+
+def _agent_flow_run_id(result: AgentRunResult) -> str | None:
+    if result.trace_id:
+        return result.trace_id
+    if result.attempts:
+        return result.attempts[-1].flow_run_id
+    return None
+
+
+def _build_agent_api_response(runtime: DevRuntime, result: AgentRunResult) -> dict[str, Any]:
+    case = runtime.case_store.get(result.case_id)
+    report = runtime.report_store.get(result.case_id)
+    pack = runtime.evidence_store.get_pack(result.case_id)
+    return {
+        "case_id": result.case_id,
+        "status": result.status,
+        "trace_id": result.trace_id,
+        "attempt_count": len(result.attempts),
+        "route_mode": result.metadata.get("route_mode"),
+        "runner": "agent",
+        "flow_run_id": _agent_flow_run_id(result),
+        "case": case.model_dump(mode="json") if case is not None else None,
+        "report": report.model_dump(mode="json") if report is not None else None,
+        "evidence_count": len(pack.items) if pack is not None else 0,
+        "attempts": [
+            {
+                "attempt_id": attempt.attempt_id,
+                "status": attempt.status,
+                "route_mode": attempt.route.mode,
+                "tool_trace_count": len(attempt.tool_traces),
+            }
+            for attempt in result.attempts
+        ],
+    }
+
+
+def _build_default_api_response(
+    runtime: DevRuntime,
+    flow_runtime: FlowRuntime,
+    result: DefaultFlowRunResult,
+) -> dict[str, Any]:
+    case_payload = result.case.model_dump(mode="json")
+    report_payload = result.report.model_dump(mode="json")
+    trace = build_execution_trace(
+        case_id=result.case.case_id,
+        skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",
+        flow_id="builtin.default_log_triage_flow",
+        case_steps=result.case.steps,
+    )
+    flow_runtime.checkpoints.save(
+        trace.execution_id,
+        {
+            "case_id": result.case.case_id,
+            "flow_id": trace.flow_id,
+            "skill_slug": trace.skill_slug,
+            "status": "completed",
+            "next_step_index": len(trace.steps),
+            "steps": [
+                {
+                    "step_id": step.step_id,
+                    "name": step.name,
+                    "status": step.status.value,
+                    "tool_name": step.tool_name,
+                }
+                for step in trace.steps
+            ],
+        },
+    )
+    return {
+        "case": case_payload,
+        "report": report_payload,
+        "evidence_count": len(result.evidence_pack.items),
+        "flow_run_id": trace.execution_id,
+        "runner": "default_flow",
+        "tool_results": [r.model_dump(mode="json") for r in result.tool_results],
+    }
+
+
 def create_app(repo_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="RootSeeker API", version="0.1.0")
 
-    runtime = create_dev_runtime(repo_root or Path.cwd())
+    runtime = create_dev_runtime(repo_root or Path.cwd(), node_role="api")
     flow_runtime = FlowRuntime(runtime)
+
+    # WebSocket Gateway (must be created before routes that flush broadcasts)
+    ws_transport = WebSocketTransport()
+    gateway_server = build_gateway_server(runtime)
+    gateway_ws_bridge = GatewayWsBridge(gateway_server, ws_transport)
+
+    def _forward_case_completed(payload: dict[str, Any]) -> None:
+        case_id = str(payload.get("case_id", ""))
+        if not case_id:
+            return
+        gateway_ws_bridge.publish(f"case.{case_id}", payload)
+
+    runtime.event_bus.subscribe("case.completed", _forward_case_completed)
+
+    @app.get("/system/presence")
+    def list_system_presence() -> dict[str, Any]:
+        nodes = runtime.presence_registry.list_nodes()
+        return {
+            "items": [
+                {
+                    "node_id": node.node_id,
+                    "role": node.role,
+                    "last_seen_at": node.last_seen_at.isoformat(),
+                    "metadata": dict(node.metadata),
+                }
+                for node in nodes
+            ],
+            "total": len(nodes),
+        }
 
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
@@ -186,42 +376,23 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         }
 
     @app.post("/cases/run-default")
-    def run_default_case(req: RunCaseRequest) -> dict[str, Any]:
-        result = runtime.run_default_flow_from_payload(req.model_dump(mode="json"))
-        case_payload = result.case.model_dump(mode="json")
-        report_payload = result.report.model_dump(mode="json")
-        trace = build_execution_trace(
-            case_id=result.case.case_id,
-            skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",
-            flow_id="builtin.default_log_triage_flow",
-            case_steps=result.case.steps,
-        )
-        flow_runtime.checkpoints.save(
-            trace.execution_id,
-            {
-                "case_id": result.case.case_id,
-                "flow_id": trace.flow_id,
-                "skill_slug": trace.skill_slug,
-                "status": "completed",
-                "next_step_index": len(trace.steps),
-                "steps": [
-                    {
-                        "step_id": step.step_id,
-                        "name": step.name,
-                        "status": step.status.value,
-                        "tool_name": step.tool_name,
-                    }
-                    for step in trace.steps
-                ],
-            },
-        )
-        return {
-            "case": case_payload,
-            "report": report_payload,
-            "evidence_count": len(result.evidence_pack.items),
-            "flow_run_id": trace.execution_id,
-            "tool_results": [r.model_dump(mode="json") for r in result.tool_results],
-        }
+    async def run_default_case(req: RunCaseRequest) -> dict[str, Any]:
+        payload = req.model_dump(mode="json")
+        flow_result = runtime.run_flow_from_payload(payload)
+        await gateway_ws_bridge.flush_broadcasts()
+        if isinstance(flow_result, AgentRunResult):
+            return _build_agent_api_response(runtime, flow_result)
+        return _build_default_api_response(runtime, flow_runtime, flow_result)
+
+    @app.post("/cases/run-agent")
+    async def run_agent_case(req: RunCaseRequest) -> dict[str, Any]:
+        """Run a case through AgentRuntime (LLM tool plan with default-flow fallback)."""
+        from rootseeker.contracts.case import CaseCreateRequest
+
+        case_request = CaseCreateRequest.model_validate(req.model_dump(mode="json"))
+        result = runtime.run_agent_from_case_request(case_request)
+        await gateway_ws_bridge.flush_broadcasts()
+        return _build_agent_api_response(runtime, result)
 
     @app.get("/cases/{case_id}")
     def get_case(case_id: str) -> dict[str, Any]:
@@ -289,7 +460,13 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             headers=dict(request.headers),
             remote_ip=request.client.host if request.client else None,
         )
-        normalized = ingest_channel_message(msg)
+        try:
+            normalized = ingest_channel_message(
+                msg,
+                security=build_channel_security_from_settings(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
         # Build CaseCreateRequest from normalized message
         metadata = dict(normalized.metadata)
@@ -310,8 +487,23 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             metadata=metadata,
         )
 
-        # Run default flow
-        result = runtime.run_default_flow_from_case_request(case_request)
+        flow_result = runtime.run_flow_from_case_request(
+            case_request,
+            use_agent=runtime._resolve_use_agent_from_payload(payload, case_request),
+        )
+
+        if isinstance(flow_result, AgentRunResult):
+            flow_run_id = _agent_flow_run_id(flow_result)
+            await gateway_ws_bridge.flush_broadcasts()
+            return WebhookResponse(
+                ok=True,
+                case_id=flow_result.case_id,
+                flow_run_id=flow_run_id,
+                runner="agent",
+                message=f"Webhook processed via agent for channel: {channel}",
+            )
+
+        result = flow_result
         trace = build_execution_trace(
             case_id=result.case.case_id,
             skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",
@@ -343,16 +535,14 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             },
         )
 
+        await gateway_ws_bridge.flush_broadcasts()
         return WebhookResponse(
             ok=True,
             case_id=result.case.case_id,
             flow_run_id=trace.execution_id,
+            runner="default_flow",
             message=f"Webhook processed successfully via channel: {channel}",
         )
-
-    # WebSocket Gateway
-    ws_transport = WebSocketTransport()
-    gateway_server = GatewayServer(runtime)
 
     @app.websocket("/gateway/ws")
     async def gateway_websocket(websocket: WebSocket) -> None:
@@ -366,6 +556,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         """
         conn = await ws_transport.accept(websocket)
         connection_id = conn.connection_id
+        gateway_ws_bridge.ensure_client(connection_id)
 
         # Send connection established message
         await websocket.send_json(
@@ -384,6 +575,12 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
                 frame = await ws_transport.handle_message(connection_id, data)
                 if isinstance(frame, GatewayRequestFrame):
                     response = gateway_server.handle_request(frame)
+                    if frame.method == "gateway.publish" and response.ok:
+                        topic = str(frame.params.get("topic", ""))
+                        payload = frame.params.get("payload", {})
+                        if topic and isinstance(payload, dict):
+                            gateway_ws_bridge.queue_broadcast(topic, payload)
+                    await gateway_ws_bridge.flush_broadcasts()
                     await websocket.send_json(response.model_dump(mode="json"))
                 elif isinstance(frame, GatewayResponseFrame):
                     await websocket.send_json(frame.model_dump(mode="json"))
@@ -393,6 +590,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             pass
         finally:
             heartbeat_task.cancel()
+            gateway_ws_bridge.disconnect(connection_id)
             await ws_transport.close(connection_id, reason="disconnect")
 
     @app.get("/gateway/connections")
@@ -411,6 +609,101 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
             ],
             "total": len(connections),
         }
+
+    # Internal tool HTTP bridge（供 HttpInternalToolAdapter 与远程进程转发）
+    # ========================================
+
+    @app.post("/catalog/resolve_service")
+    def catalog_resolve_service(req: CatalogResolveRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "catalog.resolve_service",
+            req.model_dump(mode="json"),
+        )
+
+    @app.post("/catalog/get_log_sources")
+    def catalog_get_log_sources(req: CatalogLogSourcesRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "catalog.get_log_sources",
+            req.model_dump(mode="json"),
+        )
+
+    @app.post("/log/query_by_trace_id")
+    def log_query_by_trace_id(req: LogQueryByTraceRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "log.query_by_trace_id",
+            req.model_dump(mode="json", exclude_none=True),
+        )
+
+    @app.post("/log/query_by_template")
+    def log_query_by_template(req: LogQueryByTemplateRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "log.query_by_template",
+            req.model_dump(mode="json", exclude_none=True),
+        )
+
+    @app.post("/trace/get_chain")
+    def trace_get_chain(req: TraceChainRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "trace.get_chain",
+            req.model_dump(mode="json"),
+        )
+
+    @app.post("/code/search")
+    def code_search(req: CodeSearchRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(runtime, "code.search", req.model_dump(mode="json"))
+
+    @app.post("/code/read")
+    def code_read(req: CodeReadRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "code.read",
+            req.model_dump(mode="json", exclude_none=True),
+        )
+
+    @app.post("/index/get_status")
+    def index_get_status() -> dict[str, Any]:
+        return _invoke_internal_tool(runtime, "index.get_status", {})
+
+    @app.post("/notify/send")
+    def notify_send(req: NotifySendRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(runtime, "notify.send", req.model_dump(mode="json"))
+
+    @app.post("/lsp/references")
+    def lsp_references(req: LspReferencesRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "lsp.references",
+            req.model_dump(mode="json"),
+        )
+
+    @app.post("/lsp/definition")
+    def lsp_definition(req: LspPositionRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "lsp.definition",
+            req.model_dump(mode="json"),
+        )
+
+    @app.post("/lsp/hover")
+    def lsp_hover(req: LspPositionRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "lsp.hover",
+            req.model_dump(mode="json"),
+        )
+
+    @app.post("/lsp/symbols")
+    def lsp_symbols(req: LspSymbolsRequest) -> dict[str, Any]:
+        return _invoke_internal_tool(
+            runtime,
+            "lsp.symbols",
+            req.model_dump(mode="json"),
+        )
 
     # Repository Management REST（薄封装：体内调用内置 MCP repo.* 工具，便于审计与策略统一）
     # ========================================

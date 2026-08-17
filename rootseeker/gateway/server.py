@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from rootseeker.gateway.auth import AuthProvider
+from rootseeker.gateway.auth import AuthProvider, TokenAuthProvider
 from rootseeker.gateway.authorizer import Authorizer, RateLimiter
 from rootseeker.gateway.broadcaster import GatewayBroadcaster
 from rootseeker.gateway.connection import GatewayConnection
@@ -14,7 +14,7 @@ from rootseeker.gateway.method_registry import GatewayMethodRegistry
 from rootseeker.gateway.protocol import GatewayEventFrame, GatewayRequestFrame, GatewayResponseFrame
 from rootseeker.gateway.subscriptions import SubscriptionRegistry
 
-__all__ = ["GatewayServer"]
+__all__ = ["GatewayServer", "build_gateway_server"]
 
 
 class GatewayServer:
@@ -87,7 +87,9 @@ class GatewayServer:
             return
         token = str(frame.params.get("token") or "")
         credentials = self._auth_provider.authenticate(token)
-        if credentials is None or not self._auth_provider.validate(credentials):
+        if credentials is None:
+            raise GatewayError("authentication failed", code="unauthorized")
+        if not self._auth_provider.validate(credentials):
             raise GatewayError("authentication failed", code="unauthorized")
         if not self._authorizer.authorize(credentials, frame.method):
             raise GatewayError("permission denied", code="forbidden")
@@ -161,3 +163,27 @@ class GatewayServer:
             ok=False,
             error={"code": err.code, "message": err.message},
         )
+
+
+def build_gateway_server(
+    runtime: Any,
+    settings: Any | None = None,
+) -> GatewayServer:
+    """Construct GatewayServer with optional auth and rate limiting from settings."""
+    from rootseeker.infra_core import RootSeekerSettings
+
+    cfg = settings or RootSeekerSettings()
+    auth_provider: AuthProvider | None = None
+    rate_limiter: RateLimiter | None = None
+
+    if cfg.gateway_auth_enabled:
+        secret = cfg.gateway_auth_secret_key or "dev-secret-key"
+        auth_provider = TokenAuthProvider(secret_key=secret)
+    if cfg.gateway_rate_limit_enabled:
+        rate_limiter = RateLimiter(requests_per_minute=cfg.gateway_rate_limit_per_minute)
+
+    return GatewayServer(
+        runtime,
+        auth_provider=auth_provider,
+        rate_limiter=rate_limiter,
+    )

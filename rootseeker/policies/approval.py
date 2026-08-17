@@ -60,12 +60,25 @@ class InMemoryApprovalEventSink:
 
 
 class WebhookApprovalEventSink:
-    def __init__(self, url: str, *, timeout_seconds: float = 5.0) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        timeout_seconds: float = 5.0,
+        network_guard: Any | None = None,
+    ) -> None:
         self.url = url
         self.timeout_seconds = timeout_seconds
+        self._network_guard = network_guard
         self.last_error: str | None = None
 
     def emit(self, event: ApprovalEvent) -> None:
+        if self._network_guard is not None:
+            try:
+                self._network_guard.validate_url(self.url)
+            except ValueError as exc:
+                self.last_error = str(exc)
+                return
         body = json.dumps(event.to_payload()).encode("utf-8")
         req = urllib_request.Request(
             self.url,

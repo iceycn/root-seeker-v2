@@ -9,6 +9,7 @@ from rootseeker.gateway.methods.approval_methods import register_approval_method
 from rootseeker.gateway.methods.case_methods import register_case_methods
 from rootseeker.gateway.methods.flow_methods import register_flow_methods
 from rootseeker.gateway.methods.skill_methods import register_skill_methods
+from rootseeker.gateway.methods.system_methods import register_system_methods
 from rootseeker.gateway.methods.tool_methods import register_tool_methods
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "register_case_methods",
     "register_flow_methods",
     "register_skill_methods",
+    "register_system_methods",
     "register_tool_methods",
 ]
 
@@ -27,4 +29,5 @@ def register_all_business_methods(registry: Any, runtime: DevRuntime) -> None:
     register_case_methods(registry, runtime)
     register_flow_methods(registry, runtime)
     register_skill_methods(registry, runtime)
+    register_system_methods(registry, runtime)
     register_tool_methods(registry, runtime)

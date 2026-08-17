@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -10,6 +11,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from rootseeker.contracts.common import new_id, utc_now
 from rootseeker.gateway.protocol import GatewayEventFrame, GatewayRequestFrame, GatewayResponseFrame
+from rootseeker.gateway.subscriptions import topic_matches
 from rootseeker.gateway.transport import GatewayTransport, TransportConnection, TransportMessage
 
 __all__ = ["WebSocketTransport", "WebSocketConnectionState"]
@@ -53,6 +55,20 @@ class WebSocketTransport(GatewayTransport):
         self._connection_timeout = connection_timeout_seconds
         self._max_message_size = max_message_size_bytes
         self._lock = asyncio.Lock()
+        self._on_subscribe_handler: Callable[[str, str], Awaitable[None] | None] | None = None
+        self._on_unsubscribe_handler: Callable[[str, str], Awaitable[None] | None] | None = None
+
+    def on_subscribe(
+        self,
+        handler: Callable[[str, str], Awaitable[None] | None],
+    ) -> None:
+        self._on_subscribe_handler = handler
+
+    def on_unsubscribe(
+        self,
+        handler: Callable[[str, str], Awaitable[None] | None],
+    ) -> None:
+        self._on_unsubscribe_handler = handler
 
     async def accept(
         self,
@@ -108,7 +124,7 @@ class WebSocketTransport(GatewayTransport):
         to_remove: list[str] = []
 
         for connection_id, state in self._connections.items():
-            if topic in state.subscriptions:
+            if any(topic_matches(subscribed, topic) for subscribed in state.subscriptions):
                 try:
                     await state.websocket.send_json(event.model_dump(mode="json"))
                     delivered += 1
@@ -215,12 +231,16 @@ class WebSocketTransport(GatewayTransport):
             topic = str(data.get("topic", ""))
             if topic:
                 await self.subscribe(connection_id, topic)
+                if self._on_subscribe_handler is not None:
+                    await self._on_subscribe_handler(connection_id, topic)
                 await state.websocket.send_json({"frame_type": "subscribed", "topic": topic})
             return None
 
         if frame_type == "unsubscribe":
             topic = str(data.get("topic", ""))
             if topic:
+                if self._on_unsubscribe_handler is not None:
+                    await self._on_unsubscribe_handler(connection_id, topic)
                 await self.unsubscribe(connection_id, topic)
                 await state.websocket.send_json({"frame_type": "unsubscribed", "topic": topic})
             return None

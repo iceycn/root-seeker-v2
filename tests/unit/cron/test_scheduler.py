@@ -111,3 +111,32 @@ def test_recovery_clears_stale_running_state() -> None:
     assert recovered.status == CronJobStatus.FAILED
     assert recovered.running_count == 0
     assert recovered.consecutive_failures == 1
+
+
+def test_scheduler_applies_stagger_to_initial_next_run() -> None:
+    now = datetime(2026, 4, 28, 10, 0, tzinfo=UTC)
+    job = CronJobSpec(
+        job_id="job-a",
+        schedule="0 * * * *",
+        handler="test",
+        metadata={"stagger_max_offset_seconds": 60},
+    )
+    store = InMemoryCronStateStore()
+
+    CronScheduler(
+        jobs=[job],
+        executor=lambda spec: JobRunResult(
+            job_id=spec.job_id,
+            status=JobRunStatus.SKIPPED,
+            started_at=now,
+            finished_at=now,
+        ),
+        state_store=store,
+    ).tick(now)
+
+    state = store.get_state(job.job_id)
+    base_next = datetime(2026, 4, 28, 11, 0, tzinfo=UTC)
+    offset = stable_stagger_seconds(job.job_id, max_offset_seconds=60)
+
+    assert state is not None
+    assert state.next_run_at == base_next + timedelta(seconds=offset)
