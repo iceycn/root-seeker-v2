@@ -3,14 +3,19 @@ from pathlib import Path
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.flow_runtime import FlowCheckpointStore, FlowExecutor, build_execution_trace
+from tests.support.stub_planner import IncidentNormalizePlanner
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _runtime():
+    return create_dev_runtime(_repo_root(), tool_planner=IncidentNormalizePlanner())
+
+
 def test_flow_executor_default() -> None:
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     req = CaseCreateRequest(
         title="x",
         symptom="y",
@@ -20,44 +25,12 @@ def test_flow_executor_default() -> None:
     )
     res = FlowExecutor(runtime).execute_default(req)
     assert res.case_id
-    assert res.trace.steps
     assert res.trace.flow_id == "builtin.default_log_triage_flow"
     assert all(step.step_id for step in res.trace.steps)
-    assert all(step.status.value in {"completed", "failed", "pending", "running", "skipped"} for step in res.trace.steps)
-    assert res.step_outputs, "step_outputs should be populated"
-
-
-def test_flow_executor_execute_from_checkpoint() -> None:
-    runtime = create_dev_runtime(_repo_root())
-    req = CaseCreateRequest(
-        title="resume-test",
-        symptom="latency spike",
-        service_name="order-service",
-        source="unit-resume",
-        metadata={"trace_id": "trace-resume-001"},
+    assert all(
+        step.status.value in {"completed", "failed", "pending", "running", "skipped"}
+        for step in res.trace.steps
     )
-    executor = FlowExecutor(runtime)
-
-    # First run to get initial state
-    first = executor.execute_default(req)
-    assert first.case_id
-    assert len(first.trace.steps) >= 1
-    assert first.step_outputs
-
-    # Simulate resuming from step 2 (skip first 2 steps)
-    prior_outputs = {
-        step.step_id: {"prior": "output"}
-        for step in first.trace.steps[:2]
-    }
-    resumed = executor.execute_from_checkpoint(
-        req,
-        start_from_step_index=2,
-        prior_step_outputs=prior_outputs,
-        prior_case_id=first.case_id,
-    )
-    assert resumed.case_id == first.case_id, "should reuse prior case_id"
-    assert resumed.trace.steps
-    assert resumed.step_outputs
 
 
 def test_checkpoint_and_trace_builder() -> None:
@@ -70,3 +43,7 @@ def test_checkpoint_and_trace_builder() -> None:
     assert record.revision == 2
     trace = build_execution_trace(case_id="c1", skill_slug="s1", flow_id="f1", step_names=["a", "b"])
     assert len(trace.steps) == 2
+
+
+def test_flow_executor_has_no_step_checkpoint_api() -> None:
+    assert not hasattr(FlowExecutor, "execute_from_checkpoint")

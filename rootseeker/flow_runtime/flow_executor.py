@@ -42,29 +42,3 @@ class FlowExecutor:
         return FlowExecutionResult(
             case_id=result.case.case_id, trace=trace, step_outputs=step_outputs
         )
-
-    def execute_from_checkpoint(
-        self,
-        case_request: CaseCreateRequest,
-        *,
-        start_from_step_index: int,
-        prior_step_outputs: dict[str, dict[str, Any]],
-        prior_case_id: str,
-    ) -> FlowExecutionResult:
-        """Resume flow execution from a specific step index."""
-        result = self._runtime.run_default_flow_from_case_request(
-            case_request,
-            start_from_step_index=start_from_step_index,
-            prior_step_outputs=prior_step_outputs,
-            prior_case_id=prior_case_id,
-        )
-        trace = build_execution_trace(
-            case_id=result.case.case_id,
-            skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",
-            flow_id="builtin.default_log_triage_flow",
-            case_steps=result.case.steps,
-        )
-        step_outputs = {step.step_id: dict(step.outputs) for step in result.case.steps}
-        return FlowExecutionResult(
-            case_id=result.case.case_id, trace=trace, step_outputs=step_outputs
-        )

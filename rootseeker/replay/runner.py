@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from plugins.builtin.default_log_triage_flow import DEFAULT_FLOW_PLUGIN_ID, DefaultFlowRunResult
-from rootseeker.bootstrap import DevRuntime
+from rootseeker.bootstrap import DEFAULT_FLOW_PLUGIN_ID, DefaultFlowRunResult, DevRuntime
 from rootseeker.contracts.common import new_id
 from rootseeker.contracts.execution_trace import CaseExecutionTrace, SkillExecutionTrace
 from rootseeker.contracts.replay import ReplayCaseSpec, ReplayRunSnapshot

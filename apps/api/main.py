@@ -8,9 +8,8 @@ from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSoc
 from pydantic import BaseModel, Field
 
 from rootseeker.agent_runtime.result import AgentRunResult
-from plugins.builtin.default_log_triage_flow import DefaultFlowRunResult
 from apps.admin.config_store import build_admin_config_store
-from rootseeker.bootstrap import DevRuntime, create_dev_runtime
+from rootseeker.bootstrap import DefaultFlowRunResult, DevRuntime, create_dev_runtime
 from rootseeker.channel_routing import (
     ChannelMessage,
     build_channel_security_from_settings,
@@ -312,7 +311,7 @@ def _build_default_api_response(
     }
 
 
-def create_app(repo_root: Path | None = None) -> FastAPI:
+def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> FastAPI:
     app = FastAPI(title="RootSeeker API", version="0.1.0")
 
     repo_root = Path(repo_root or Path.cwd())
@@ -322,6 +321,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         node_role="api",
         mcp_extra_env=admin_store.mcp_runtime_env(),
         mcp_extra_env_provider=admin_store.mcp_runtime_env,
+        tool_planner=tool_planner,
     )
     flow_runtime = FlowRuntime(runtime)
 

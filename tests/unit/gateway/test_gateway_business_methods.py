@@ -4,15 +4,20 @@ from pathlib import Path
 
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.gateway import GatewayServer
+from tests.support.stub_planner import IncidentNormalizePlanner
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _runtime(**kwargs):
+    return create_dev_runtime(_repo_root(), tool_planner=IncidentNormalizePlanner(), **kwargs)
+
+
 def test_gateway_server_registers_business_methods() -> None:
     """Test that GatewayServer registers business methods when runtime is provided."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     methods = server.methods.list_methods()
@@ -36,8 +41,8 @@ def test_gateway_server_registers_business_methods() -> None:
 
     # Check flow methods
     assert "flow.run" in methods
-    assert "flow.resume" in methods
-    assert "flow.step" in methods
+    assert "flow.resume" not in methods
+    assert "flow.step" not in methods
     assert "flow.checkpoints" in methods
 
     # Check skill methods
@@ -51,7 +56,7 @@ def test_gateway_server_registers_business_methods() -> None:
 
 def test_gateway_case_create() -> None:
     """Test case.create method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("case.create", {
@@ -69,7 +74,7 @@ def test_gateway_case_create() -> None:
 
 def test_gateway_case_create_with_agent_runner(monkeypatch) -> None:
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke(
@@ -89,7 +94,7 @@ def test_gateway_case_create_with_agent_runner(monkeypatch) -> None:
 
 def test_gateway_case_get() -> None:
     """Test case.get method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     # Create a case first
@@ -109,7 +114,7 @@ def test_gateway_case_get() -> None:
 
 def test_gateway_case_list_returns_created_cases() -> None:
     """Test case.list returns cases from the runtime store."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     create_result = server.methods.invoke("case.create", {
@@ -126,7 +131,7 @@ def test_gateway_case_list_returns_created_cases() -> None:
 
 def test_gateway_skill_list() -> None:
     """Test skill.list method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("skill.list", {})
@@ -139,7 +144,7 @@ def test_gateway_skill_list() -> None:
 
 def test_gateway_skill_get() -> None:
     """Test skill.get method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("skill.get", {"slug": "default-log-triage"})
@@ -150,7 +155,7 @@ def test_gateway_skill_get() -> None:
 
 def test_gateway_tool_list() -> None:
     """Test tool.list method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("tool.list", {})
@@ -163,7 +168,7 @@ def test_gateway_tool_list() -> None:
 
 def test_gateway_flow_run() -> None:
     """Test flow.run method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("flow.run", {
@@ -179,7 +184,7 @@ def test_gateway_flow_run() -> None:
 
 def test_gateway_flow_checkpoints() -> None:
     """Test flow.checkpoints method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     # Run a flow first; the gateway methods should share one checkpoint store.
@@ -199,35 +204,23 @@ def test_gateway_flow_checkpoints() -> None:
     assert any(item["flow_run_id"] == run_result["flow_run_id"] for item in result["items"])
 
 
-def test_gateway_flow_resume_sees_checkpoint_from_flow_run() -> None:
-    """Test flow.resume can see a checkpoint created by flow.run."""
-    runtime = create_dev_runtime(_repo_root())
+def test_gateway_flow_resume_is_not_registered() -> None:
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
-
-    run_result = server.methods.invoke("flow.run", {
-        "title": "Resume Checkpoint Test",
-        "symptom": "Test",
-        "service_name": "test-service",
-    })
-
-    result = server.methods.invoke("flow.resume", {
-        "flow_run_id": run_result["flow_run_id"],
-        "case_request": {
-            "title": "Resume Checkpoint Test",
-            "symptom": "Test",
-            "service_name": "test-service",
-            "source": "gateway-test",
-            "metadata": {},
-        },
-    })
-
-    assert result["resumed"] is False
-    assert result["reason"] == "skipped_completed"
+    methods = server.methods.list_methods()
+    assert "flow.resume" not in methods
+    assert "flow.step" not in methods
+    result = server.methods.invoke(
+        "case.resume",
+        {"flow_run_id": "any", "case_request": {}},
+    )
+    assert result.get("code") == "FLOW_STEP_UNSUPPORTED"
+    assert result.get("resumed") is False
 
 
 def test_gateway_tool_invoke() -> None:
     """Test tool.invoke method."""
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("tool.invoke", {
@@ -244,7 +237,7 @@ def test_gateway_tool_invoke() -> None:
 
 
 def test_gateway_system_list_presence() -> None:
-    runtime = create_dev_runtime(_repo_root(), node_role="gateway-test")
+    runtime = _runtime(node_role="gateway-test")
     server = GatewayServer(runtime=runtime)
 
     result = server.methods.invoke("system.list_presence", {})
@@ -257,7 +250,7 @@ def test_gateway_system_list_presence() -> None:
 def test_gateway_approval_methods_can_approve_pending_tool(monkeypatch) -> None:
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
     monkeypatch.setenv("ROOTSEEKER_APPROVAL_REQUIRED_FOR_WRITE_TOOLS", "true")
-    runtime = create_dev_runtime(_repo_root())
+    runtime = _runtime()
     server = GatewayServer(runtime=runtime)
 
     first = server.methods.invoke("tool.invoke", {

@@ -13,8 +13,6 @@ __all__ = ["TaskKind", "TaskStatus", "TaskRecord"]
 
 class TaskKind(StrEnum):
     CASE_RUN = "case_run"
-    FLOW_RESUME = "flow_resume"
-    FLOW_STEP = "flow_step"
     CRON = "cron"
     REPLAY = "replay"
 

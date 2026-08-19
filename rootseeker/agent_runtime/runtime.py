@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any
 
 from rootseeker.bootstrap import DevRuntime
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.flow_runtime import FlowRuntime
 
+from .attempt_runner import AttemptRunner
+from .llm_tool_planner import LlmToolPlanner
 from .result import AgentRunEvent, AgentRunResult
 from .run_loop import AgentRunLoop
 
@@ -26,10 +27,25 @@ class AgentRuntime:
         runtime: DevRuntime,
         flow_runtime: FlowRuntime | None = None,
         run_loop: AgentRunLoop | None = None,
+        *,
+        tool_planner: LlmToolPlanner | None = None,
     ) -> None:
         self.runtime = runtime
         self.flow_runtime = flow_runtime or FlowRuntime(runtime)
-        self.run_loop = run_loop or AgentRunLoop(runtime, flow_runtime=self.flow_runtime)
+        if run_loop is not None:
+            self.run_loop = run_loop
+            return
+        planner = tool_planner if tool_planner is not None else getattr(runtime, "tool_planner", None)
+        attempt_runner = (
+            AttemptRunner(self.flow_runtime, tool_planner=planner)
+            if planner is not None
+            else AttemptRunner(self.flow_runtime)
+        )
+        self.run_loop = AgentRunLoop(
+            runtime,
+            flow_runtime=self.flow_runtime,
+            attempt_runner=attempt_runner,
+        )
 
     def run_case(self, case_request: CaseCreateRequest) -> str:
         return self.run_case_detailed(case_request).case_id

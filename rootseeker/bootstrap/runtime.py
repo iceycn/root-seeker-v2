@@ -9,9 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_servers.internal.adapters import InternalToolAdapter
 from mcp_servers.internal.handlers import register_internal_tools
-from plugins.builtin.default_log_triage_flow import (
-    DefaultFlowRunResult,
-)
+from rootseeker.bootstrap.results import DefaultFlowRunResult
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.code_index.repo_sync import RepoSyncService
 from rootseeker.config import build_internal_adapter_from_settings
@@ -76,6 +74,7 @@ class DevRuntime:
     presence_registry: PresenceRegistry
     node_id: str
     agent_flow_enabled: bool = False
+    tool_planner: Any = None
 
     def heartbeat_presence(
         self,
@@ -119,7 +118,9 @@ class DevRuntime:
     def run_agent_from_case_request(self, case_request: CaseCreateRequest) -> AgentRunResult:
         from rootseeker.agent_runtime import AgentRuntime
 
-        result = AgentRuntime(self).run_case_detailed(case_request)
+        result = AgentRuntime(self, tool_planner=self.tool_planner).run_case_detailed(
+            case_request
+        )
         case = self.case_store.get(result.case_id)
         pack = self.evidence_store.get_pack(result.case_id)
         if case is not None:
@@ -138,29 +139,18 @@ class DevRuntime:
         case_request: CaseCreateRequest,
         *,
         use_agent: bool | None = None,
-        start_from_step_index: int = 0,
-        prior_step_outputs: dict[str, dict[str, Any]] | None = None,
-        prior_case_id: str | None = None,
     ) -> DefaultFlowRunResult | AgentRunResult:
         if self.resolve_use_agent(use_agent):
             return self.run_agent_from_case_request(case_request)
-        return self.run_default_flow_from_case_request(
-            case_request,
-            start_from_step_index=start_from_step_index,
-            prior_step_outputs=prior_step_outputs,
-            prior_case_id=prior_case_id,
-        )
+        return self.run_default_flow_from_case_request(case_request)
 
     def run_default_flow_from_case_request(
         self,
         case_request: CaseCreateRequest,
         *,
-        start_from_step_index: int = 0,
-        prior_step_outputs: dict[str, dict[str, Any]] | None = None,
-        prior_case_id: str | None = None,
         publish_completion: bool = True,
     ) -> DefaultFlowRunResult:
-        del start_from_step_index, prior_step_outputs, prior_case_id, publish_completion
+        del publish_completion
         agent_result = self.run_agent_from_case_request(case_request)
         case = self.case_store.get(agent_result.case_id)
         pack = self.evidence_store.get_pack(agent_result.case_id)
@@ -215,12 +205,11 @@ class DevRuntime:
         case_request: CaseCreateRequest,
         *,
         use_agent: bool | None = None,
-        **kwargs: Any,
     ) -> DefaultFlowRunResult | AgentRunResult:
         resolved = use_agent
         if resolved is None and "use_agent" in case_request.metadata:
             resolved = bool(case_request.metadata["use_agent"])
-        return self.run_case_from_request(case_request, use_agent=resolved, **kwargs)
+        return self.run_case_from_request(case_request, use_agent=resolved)
 
     def run_flow_from_payload(
         self,
@@ -247,6 +236,7 @@ def create_dev_runtime(
     node_role: str | None = None,
     mcp_extra_env: dict[str, str] | None = None,
     mcp_extra_env_provider: Callable[[], dict[str, str]] | None = None,
+    tool_planner: Any = None,
 ) -> DevRuntime:
     """Wire bundled plugins, builtin skills, internal tools, and gateway (dev/smoke)."""
 
@@ -330,6 +320,7 @@ def create_dev_runtime(
         event_bus=event_bus,
         presence_registry=presence_registry,
         node_id=node_id,
+        tool_planner=tool_planner,
     )
     resolved_role = node_role if node_role is not None else settings.node_role
     if resolved_role:

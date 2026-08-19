@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from statistics import mean
 
-from plugins.builtin.default_log_triage_flow import DefaultFlowRunResult
+from rootseeker.bootstrap import DefaultFlowRunResult
 from rootseeker.contracts.replay import ReplayCaseSpec
 
 __all__ = ["evaluate_run_metrics", "aggregate_suite_metrics"]

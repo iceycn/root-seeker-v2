@@ -38,8 +38,6 @@ class Authorizer:
         "case.list": ["case:read"],
         "case.resume": ["case:write"],
         "flow.run": ["flow:execute"],
-        "flow.resume": ["flow:execute"],
-        "flow.step": ["flow:execute"],
         "flow.checkpoints": ["flow:read"],
         "skill.list": ["skill:read"],
         "skill.get": ["skill:read"],

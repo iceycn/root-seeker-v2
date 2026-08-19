@@ -107,11 +107,10 @@ def test_planner_messages_include_playbook_not_unloaded_helper_body() -> None:
 
 
 def test_attempt_runner_does_not_call_execute_skill_flow(monkeypatch) -> None:
-    called = {"flow": False}
-    monkeypatch.setattr(
-        "rootseeker.skill_runtime.flow_executor.execute_skill_flow",
-        lambda **kwargs: called.__setitem__("flow", True),
-    )
+    import importlib
+
+    skill_runtime = importlib.import_module("rootseeker.skill_runtime")
+    assert not hasattr(skill_runtime, "execute_skill_flow")
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
     runtime = create_dev_runtime(_repo_root())
     planner = _FailingPlanner()
@@ -121,7 +120,6 @@ def test_attempt_runner_does_not_call_execute_skill_flow(monkeypatch) -> None:
         tool_planner=planner,
     )
     result = runner.run_once(_case_request(), allow_default_fallback=False)
-    assert called["flow"] is False
     assert result.status == "failed"
     assert result.metadata.get("error_code") == "SKILL_PLANNER_FAILED"
 

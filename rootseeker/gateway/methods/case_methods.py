@@ -17,7 +17,7 @@ def register_case_methods(registry: Any, runtime: DevRuntime) -> None:
     - case.create: Create a new case and run default flow
     - case.get: Get case by ID
     - case.list: List cases (with optional filters)
-    - case.resume: Resume a case from checkpoint
+    - case.resume: Unsupported YAML step resume (returns FLOW_STEP_UNSUPPORTED)
     """
 
     def case_create(params: dict[str, Any]) -> dict[str, Any]:
@@ -97,48 +97,13 @@ def register_case_methods(registry: Any, runtime: DevRuntime) -> None:
         }
 
     def case_resume(params: dict[str, Any]) -> dict[str, Any]:
-        """Resume a case from checkpoint.
-
-        Params:
-            flow_run_id: Flow run ID to resume from
-            force: Force replay even if completed
-            case_request: Case request payload for resume
-        """
-        from rootseeker.flow_runtime import FlowRuntime
-
-        flow_run_id = str(params.get("flow_run_id", ""))
-        if not flow_run_id:
-            return {"error": "flow_run_id is required"}
-
-        force = bool(params.get("force", False))
-        req_payload = params.get("case_request", {})
-
-        flow_runtime = FlowRuntime(runtime)
-
-        try:
-            req = CaseCreateRequest.model_validate(req_payload)
-        except Exception as e:
-            return {"error": f"invalid case_request: {e}"}
-
-        try:
-            result = flow_runtime.resume_default(
-                flow_run_id=flow_run_id,
-                case_request=req,
-                force=force,
-            )
-            if result is None:
-                return {
-                    "resumed": False,
-                    "reason": "skipped_completed",
-                    "flow_run_id": flow_run_id,
-                }
-            return {
-                "resumed": True,
-                "case_id": result.case_id,
-                "flow_run_id": flow_run_id,
-            }
-        except ValueError as e:
-            return {"error": str(e), "resumed": False}
+        """YAML step resume is no longer supported."""
+        del params
+        return {
+            "error": "FLOW_STEP_UNSUPPORTED",
+            "code": "FLOW_STEP_UNSUPPORTED",
+            "resumed": False,
+        }
 
     registry.register("case.create", case_create)
     registry.register("case.get", case_get)
