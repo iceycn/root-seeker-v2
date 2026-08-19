@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -11,7 +12,7 @@ from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from apps.admin.config_store import (
@@ -54,7 +55,11 @@ from rootseeker.infra_core.openai_compat import (
 )
 from rootseeker.mcp_plane.server_manager import discover_stdio_tools
 from rootseeker.mcp_plane.tool_resolution import list_external_tool_specs, skill_allows_external_mcp
+from rootseeker.skill_system.errors import SkillError
+from rootseeker.skill_system.installer import install_from_source
+from rootseeker.skill_system.names import normalize_skill_name
 from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
+from rootseeker.skill_system.playbook import PlaybookResolver
 from rootseeker.storage.mcp_servers import (
     ALLOWED_MCP_TRANSPORTS,
     build_mcp_server_store,
@@ -367,17 +372,10 @@ class AdminEnvVarRequest(BaseModel):
     scope: str = "runtime"
 
 
-class AdminSkillUpsertRequest(BaseModel):
-    spec: SkillSpec
-
-
-class AdminQuickSkillRequest(BaseModel):
-    name: str = Field(min_length=1)
-    slug: str = Field(min_length=1)
-    description: str = ""
-    tags: str = ""
-    triggers: str = ""
-    required_tools: str = ""
+class AdminSkillInstallRequest(BaseModel):
+    source: str = Field(min_length=1)
+    overwrite: bool = False
+    only_name: str | None = None
 
 
 class AdminAiProviderRequest(BaseModel):
@@ -551,7 +549,12 @@ def _admin_repo_credential_resolver(store: AdminConfigStore):
     return resolve
 
 
-def _create_admin_runtime(config_root: Path, store: AdminConfigStore) -> DevRuntime:
+def _create_admin_runtime(
+    config_root: Path,
+    store: AdminConfigStore,
+    *,
+    tool_planner: Any = None,
+) -> tuple[DevRuntime, RepoSyncService]:
     runtime_root = config_root if (config_root / "plugins" / "builtin").exists() else Path.cwd()
     settings = RootSeekerSettings()
     repo_sync_service = RepoSyncService(
@@ -567,12 +570,19 @@ def _create_admin_runtime(config_root: Path, store: AdminConfigStore) -> DevRunt
         credential_resolver=_admin_repo_credential_resolver(store),
     )
     set_repo_sync_service(repo_sync_service)
+    overlay = store.get_skill_overlay()
     runtime = create_dev_runtime(
         runtime_root,
         repo_sync_service=repo_sync_service,
         node_role="admin",
         mcp_extra_env=store.mcp_runtime_env(),
         mcp_extra_env_provider=store.mcp_runtime_env,
+        tool_planner=tool_planner,
+        skill_overlay=overlay,
+        builtin_root=runtime_root / "skills" / "builtin",
+        custom_root=config_root / "skills" / "custom",
+        external_root=config_root / "skills" / "external",
+        admin_config_root=config_root,
     )
     return runtime, repo_sync_service
 
@@ -586,9 +596,6 @@ def _load_admin_config(
         repo_sync_service.register(repo)
     for entry in store.list_catalog():
         runtime.service_catalog.upsert(entry)
-    for skill in store.list_skills():
-        skill.source_kind = SkillSourceKind.CUSTOM
-        runtime.skill_registry.upsert(skill)
 
 
 def _notification_channel_store(config_root: Path) -> NotificationChannelStore:
@@ -771,6 +778,60 @@ def _skill_tool_parameters(runtime: DevRuntime, skill: SkillSpec) -> list[dict[s
                 }
             )
     return docs
+
+
+_SKILL_CONFLICT_CODES = {
+    "SKILL_BUILTIN_PROTECTED",
+    "SKILL_NAME_CONFLICT",
+    "SKILL_NOT_PLAYBOOK",
+    "SKILL_DEFAULT_REQUIRED",
+}
+
+
+def _skill_error_response(exc: SkillError) -> JSONResponse:
+    status = 409 if exc.code in _SKILL_CONFLICT_CODES else 400
+    return JSONResponse(status_code=status, content={"code": exc.code, "message": str(exc)})
+
+
+def _playbook_resolver(runtime: DevRuntime) -> PlaybookResolver:
+    overlay = runtime.skill_overlay
+    if overlay is None:
+        from rootseeker.skill_system.overlay import SkillOverlayState
+
+        overlay = SkillOverlayState()
+        runtime.skill_overlay = overlay
+    return PlaybookResolver(runtime.skill_registry, overlay=overlay)
+
+
+def _persist_runtime_overlay(runtime: DevRuntime, store: AdminConfigStore) -> None:
+    overlay = runtime.skill_overlay
+    if overlay is None:
+        from rootseeker.skill_system.overlay import SkillOverlayState
+
+        overlay = SkillOverlayState()
+        runtime.skill_overlay = overlay
+    store.save_skill_overlay(overlay)
+    runtime.reload_skill_registry()
+
+
+def _skill_install_names(runtime: DevRuntime) -> tuple[set[str], set[str]]:
+    builtin_names: set[str] = set()
+    existing_names: set[str] = set()
+    for spec in runtime.skill_registry.list_skills():
+        name = normalize_skill_name(spec.name)
+        existing_names.add(name)
+        if spec.source_kind == SkillSourceKind.BUILTIN:
+            builtin_names.add(name)
+    return builtin_names, existing_names
+
+
+def _delete_skill_directory(spec: SkillSpec) -> None:
+    raw = spec.metadata.get("skill_dir")
+    if not isinstance(raw, str) or not raw.strip():
+        return
+    path = Path(raw)
+    if path.is_dir():
+        shutil.rmtree(path)
 
 
 def _join_url(base_url: str, path: str) -> str:
@@ -1719,15 +1780,21 @@ def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
     return trace.execution_id
 
 
-def create_app(repo_root: Path | None = None) -> FastAPI:
+def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> FastAPI:
     app = FastAPI(title="RootSeeker Admin", version="0.1.0")
     config_root = Path(repo_root or Path.cwd())
     store = build_admin_config_store(config_root)
     _migrate_repo_remotes_git_username(store)
     _migrate_legacy_notification_callbacks(config_root, store)
-    runtime, repo_sync_service = _create_admin_runtime(config_root, store)
+    runtime, repo_sync_service = _create_admin_runtime(
+        config_root, store, tool_planner=tool_planner
+    )
     history_store = build_error_history_store(config_root)
     _load_admin_config(runtime, store, repo_sync_service)
+
+    @app.exception_handler(SkillError)
+    def handle_skill_error(_request: Any, exc: SkillError) -> JSONResponse:
+        return _skill_error_response(exc)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -2341,21 +2408,32 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
 
     @app.get("/api/skills")
     def list_skills() -> dict[str, Any]:
-        items = [skill.model_dump(mode="json") for skill in runtime.skill_registry.list_skills()]
+        resolver = _playbook_resolver(runtime)
+        items = [resolver.public_item(skill) for skill in runtime.skill_registry.list_skills()]
         return {"items": items, "total": len(items)}
+
+    @app.post("/api/skills/install")
+    def install_skill(req: AdminSkillInstallRequest) -> dict[str, Any]:
+        builtin_names, existing_names = _skill_install_names(runtime)
+        external_root = runtime.skill_external_root or (config_root / "skills" / "external")
+        names = install_from_source(
+            req.source,
+            external_root=external_root,
+            builtin_names=builtin_names,
+            existing_names=existing_names,
+            overwrite=req.overwrite,
+            only_name=req.only_name,
+        )
+        runtime.reload_skill_registry()
+        resolver = _playbook_resolver(runtime)
+        items = [resolver.public_item(skill) for skill in runtime.skill_registry.list_skills() if skill.name in names]
+        return {"ok": True, "installed": names, "items": items}
 
     @app.get("/api/skills/{slug:path}/content")
     def get_skill_content(slug: str) -> dict[str, Any]:
         skill = runtime.skill_registry.get(slug)
         if skill is None:
             raise HTTPException(status_code=404, detail="skill not found")
-        if skill.source_kind != SkillSourceKind.BUILTIN:
-            return {
-                "slug": slug,
-                "source_kind": skill.source_kind.value,
-                "skill_md": "",
-                "runtime_spec": skill.model_dump(mode="json"),
-            }
         skill_dir = _resolve_skill_dir(config_root, skill, slug)
         skill_path = skill_dir / "SKILL.md"
         sidecar_path = skill_dir / ROOTSEEKER_SKILL_SPEC_FILENAME
@@ -2378,41 +2456,55 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         skill = runtime.skill_registry.get(slug)
         if skill is None:
             raise HTTPException(status_code=404, detail="skill not found")
-        payload = skill.model_dump(mode="json")
+        payload = _playbook_resolver(runtime).public_item(skill)
         payload["tool_parameters"] = _skill_tool_parameters(runtime, skill)
         return payload
 
     @app.put("/api/skills")
-    def upsert_skill(req: AdminSkillUpsertRequest) -> dict[str, Any]:
-        skill = req.spec
-        skill.source_kind = SkillSourceKind.CUSTOM
-        runtime.skill_registry.upsert(skill)
-        store.upsert_skill(skill)
-        return {"ok": True, "skill": skill.model_dump(mode="json")}
+    def upsert_skill() -> JSONResponse:
+        return JSONResponse(
+            status_code=410,
+            content={"code": "GONE", "message": "JSON SkillSpec upsert is removed; install a SKILL.md package"},
+        )
 
     @app.post("/api/skills/quick")
-    def upsert_quick_skill(req: AdminQuickSkillRequest) -> dict[str, Any]:
-        skill = SkillSpec(
-            name=req.name,
-            slug=req.slug,
-            description=req.description,
-            tags=[item.strip() for item in req.tags.split(",") if item.strip()],
-            triggers=[item.strip() for item in req.triggers.split(",") if item.strip()],
-            required_tools=[item.strip() for item in req.required_tools.split(",") if item.strip()],
-            steps=[],
-            source_kind=SkillSourceKind.CUSTOM,
-            version="0.1.0",
-            metadata={},
+    def upsert_quick_skill() -> JSONResponse:
+        return JSONResponse(
+            status_code=410,
+            content={"code": "GONE", "message": "JSON SkillSpec quick create is removed; use /api/skills/install"},
         )
-        runtime.skill_registry.upsert(skill)
-        store.upsert_skill(skill)
-        return {"ok": True, "skill": skill.model_dump(mode="json")}
+
+    @app.post("/api/skills/{name:path}/default")
+    def set_default_skill(name: str) -> dict[str, Any]:
+        overlay = _playbook_resolver(runtime).set_default(name)
+        runtime.skill_overlay = overlay
+        _persist_runtime_overlay(runtime, store)
+        return {"ok": True, "default_playbook": overlay.default_playbook}
+
+    @app.post("/api/skills/{name:path}/enable")
+    def enable_skill(name: str) -> dict[str, Any]:
+        overlay = _playbook_resolver(runtime).set_enabled(name, True)
+        runtime.skill_overlay = overlay
+        _persist_runtime_overlay(runtime, store)
+        return {"ok": True, "name": normalize_skill_name(name), "enabled": True}
+
+    @app.post("/api/skills/{name:path}/disable")
+    def disable_skill(name: str) -> dict[str, Any]:
+        overlay = _playbook_resolver(runtime).set_enabled(name, False)
+        runtime.skill_overlay = overlay
+        _persist_runtime_overlay(runtime, store)
+        return {"ok": True, "name": normalize_skill_name(name), "enabled": False}
 
     @app.delete("/api/skills/{slug:path}")
     def delete_skill(slug: str) -> dict[str, Any]:
-        removed = runtime.skill_registry.unregister(slug)
-        store.delete_skill(slug)
-        return {"ok": removed, "slug": slug}
+        resolver = _playbook_resolver(runtime)
+        spec = runtime.skill_registry.get(slug)
+        overlay = resolver.delete_user_skill(slug)
+        runtime.skill_overlay = overlay
+        if spec is not None:
+            _delete_skill_directory(spec)
+        _persist_runtime_overlay(runtime, store)
+        return {"ok": True, "slug": normalize_skill_name(slug)}
 
     @app.get("/api/plugins")
     def list_plugins() -> dict[str, Any]:

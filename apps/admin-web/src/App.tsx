@@ -20,6 +20,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   ConfigProvider,
   Divider,
   Empty,
@@ -84,6 +85,10 @@ type SkillRecord = ApiRecord & {
   steps?: ApiRecord[]
   version?: string
   source_kind?: string
+  role?: string
+  enabled?: boolean
+  is_default?: boolean
+  env?: string[]
   metadata?: ApiRecord
 }
 
@@ -1442,10 +1447,35 @@ function App() {
     setSkills(data.items || [])
   }
 
-  const saveQuickSkill = async () => {
+  const installSkill = async () => {
     const values = await skillForm.validateFields()
-    await api('/api/skills/quick', { method: 'POST', body: JSON.stringify(values) })
-    apiMessage.success('Skill 已保存')
+    await api('/api/skills/install', {
+      method: 'POST',
+      body: JSON.stringify({ source: values.source, overwrite: Boolean(values.overwrite) }),
+    })
+    apiMessage.success('Skill 已安装')
+    skillForm.resetFields()
+    await refreshSkills()
+  }
+
+  const setDefaultSkill = async (record: SkillRecord) => {
+    const name = record.name || record.slug
+    await api(`/api/skills/${encodeURIComponent(name)}/default`, { method: 'POST' })
+    apiMessage.success(`已设为默认：${name}`)
+    await refreshSkills()
+  }
+
+  const disableSkill = async (record: SkillRecord) => {
+    const name = record.name || record.slug
+    await api(`/api/skills/${encodeURIComponent(name)}/disable`, { method: 'POST' })
+    apiMessage.success(`已禁用：${name}`)
+    await refreshSkills()
+  }
+
+  const enableSkill = async (record: SkillRecord) => {
+    const name = record.name || record.slug
+    await api(`/api/skills/${encodeURIComponent(name)}/enable`, { method: 'POST' })
+    apiMessage.success(`已启用：${name}`)
     await refreshSkills()
   }
 
@@ -1770,7 +1800,10 @@ function App() {
           <Space wrap>
             {(record.tags || []).map((tag) => <Tag key={tag}>{tag}</Tag>)}
           </Space>
-          <Typography.Text type="secondary">类型：{kindLabel(record.skill_kind)}</Typography.Text>
+          <Typography.Text type="secondary">类型：{kindLabel(record.skill_kind)} · 角色：{record.role || '-'}</Typography.Text>
+          <Typography.Text type="secondary">状态：{record.enabled === false ? '已禁用' : '启用'}{record.is_default ? ' · 当前默认 playbook' : ''}</Typography.Text>
+          <Typography.Text type="secondary">Allowed tools：{(record['allowed-tools'] as string[] | undefined || record.bound_tools || []).join(', ') || '-'}</Typography.Text>
+          <Typography.Text type="secondary">Env keys：{(record.env || []).join(', ') || '-'}</Typography.Text>
           <Typography.Text type="secondary">Triggers：{(record.triggers || []).join(', ') || '-'}</Typography.Text>
           <Typography.Text type="secondary">Required Tools：{(record.required_tools || []).join(', ') || '-'}</Typography.Text>
           {(record.bound_tools?.length ?? 0) > 0 && (
@@ -1805,10 +1838,14 @@ function App() {
           title: '操作',
           render: (_: unknown, record: SkillRecord) => (
             <Space>
-              <Button icon={readOnly ? <EyeOutlined /> : <EditOutlined />} onClick={() => openSkillEditor(record, readOnly)}>
-                {readOnly ? '查看' : '查看/编辑'}
+              <Button icon={<EyeOutlined />} onClick={() => openSkillEditor(record, true)}>
+                查看
               </Button>
-              {!readOnly && <Button danger icon={<DeleteOutlined />} onClick={() => deleteSkill(record)}>删除</Button>}
+              <Button onClick={() => setDefaultSkill(record)}>设为默认</Button>
+              {record.enabled === false
+                ? <Button onClick={() => enableSkill(record)}>启用</Button>
+                : <Button onClick={() => disableSkill(record)}>禁用</Button>}
+              {record.source_kind !== 'builtin' && <Button danger icon={<DeleteOutlined />} onClick={() => deleteSkill(record)}>删除</Button>}
             </Space>
           ),
         },
@@ -1850,12 +1887,15 @@ function App() {
                 label: `用户 Skills (${userSkills.length})`,
                 children: (
                   <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                    <Card title="快速创建 Custom Skill" bordered={false}>
+                    <Card title="安装 Skill" bordered={false}>
                       <Form form={skillForm} layout="inline">
-                        <Form.Item name="name" rules={[{ required: true }]}><Input placeholder="名称" /></Form.Item>
-                        <Form.Item name="slug" rules={[{ required: true }]}><Input placeholder="custom/example" /></Form.Item>
-                        <Form.Item name="tags"><Input placeholder="tags 逗号分隔" /></Form.Item>
-                        <Form.Item><Button type="primary" onClick={saveQuickSkill}>保存</Button></Form.Item>
+                        <Form.Item name="source" rules={[{ required: true, message: '请填写本地路径或 Git URL' }]}>
+                          <Input placeholder="本地路径或 Git URL" style={{ width: 360 }} />
+                        </Form.Item>
+                        <Form.Item name="overwrite" valuePropName="checked">
+                          <Checkbox>覆盖已有</Checkbox>
+                        </Form.Item>
+                        <Form.Item><Button type="primary" onClick={installSkill}>安装</Button></Form.Item>
                       </Form>
                     </Card>
                     <Card bordered={false}>

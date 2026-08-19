@@ -34,6 +34,7 @@ from rootseeker.plugin_system import ManifestRegistry, build_registry_from_bundl
 from rootseeker.policies import ApprovalStore, WebhookApprovalEventSink
 from rootseeker.replay.store import ReplayStore
 from rootseeker.service_catalog import MemoryServiceCatalog
+from rootseeker.skill_system.overlay import SkillOverlayState
 from rootseeker.skill_system.registry import SkillRegistry, build_skill_registry
 from rootseeker.storage.mcp_servers import build_mcp_server_store
 from rootseeker.storage.memory import InMemoryCaseStore, InMemoryEvidenceStore, InMemoryReportStore
@@ -75,6 +76,36 @@ class DevRuntime:
     node_id: str
     agent_flow_enabled: bool = False
     tool_planner: Any = None
+    skill_overlay: SkillOverlayState | None = None
+    skill_builtin_root: Path | None = None
+    skill_custom_root: Path | None = None
+    skill_external_root: Path | None = None
+    admin_config_root: Path | None = None
+
+    def reload_skill_registry(self) -> None:
+        overlay = self.skill_overlay if self.skill_overlay is not None else SkillOverlayState()
+        self.skill_overlay = overlay
+        builtin_root = self.skill_builtin_root or (self.repo_root / "skills" / "builtin")
+        custom_root = self.skill_custom_root or (self.repo_root / "skills" / "custom")
+        external_root = self.skill_external_root or (self.repo_root / "skills" / "external")
+        self.skill_builtin_root = builtin_root
+        self.skill_custom_root = custom_root
+        self.skill_external_root = external_root
+        self.skill_registry = build_skill_registry(
+            builtin_root=builtin_root,
+            custom_root=custom_root,
+            external_root=external_root,
+            overlay=overlay,
+        )
+
+    def persist_skill_overlay(self) -> None:
+        from apps.admin.config_store import build_admin_config_store
+
+        overlay = self.skill_overlay if self.skill_overlay is not None else SkillOverlayState()
+        self.skill_overlay = overlay
+        config_root = self.admin_config_root or self.repo_root
+        build_admin_config_store(config_root).save_skill_overlay(overlay)
+        self.reload_skill_registry()
 
     def heartbeat_presence(
         self,
@@ -237,6 +268,11 @@ def create_dev_runtime(
     mcp_extra_env: dict[str, str] | None = None,
     mcp_extra_env_provider: Callable[[], dict[str, str]] | None = None,
     tool_planner: Any = None,
+    skill_overlay: SkillOverlayState | None = None,
+    builtin_root: Path | None = None,
+    custom_root: Path | None = None,
+    external_root: Path | None = None,
+    admin_config_root: Path | None = None,
 ) -> DevRuntime:
     """Wire bundled plugins, builtin skills, internal tools, and gateway (dev/smoke)."""
 
@@ -247,11 +283,17 @@ def create_dev_runtime(
             mcp_extra_env_provider = default_provider
     audit = InMemoryAuditLog()
     plugins = build_registry_from_bundled(root / "plugins" / "builtin")
+    skill_builtin_root = builtin_root or (root / "skills" / "builtin")
+    skill_custom_root = custom_root or (root / "skills" / "custom")
+    skill_external_root = external_root or (root / "skills" / "external")
+    overlay_root = admin_config_root or root
+    if skill_overlay is None:
+        skill_overlay = _load_skill_overlay(overlay_root)
     skills = build_skill_registry(
-        builtin_root=root / "skills" / "builtin",
-        custom_root=root / "skills" / "custom",
-        external_root=root / "skills" / "external",
-        overlay=None,
+        builtin_root=skill_builtin_root,
+        custom_root=skill_custom_root,
+        external_root=skill_external_root,
+        overlay=skill_overlay,
     )
     tools = ToolRegistry()
     settings = RootSeekerSettings()
@@ -321,6 +363,11 @@ def create_dev_runtime(
         presence_registry=presence_registry,
         node_id=node_id,
         tool_planner=tool_planner,
+        skill_overlay=skill_overlay,
+        skill_builtin_root=skill_builtin_root,
+        skill_custom_root=skill_custom_root,
+        skill_external_root=skill_external_root,
+        admin_config_root=overlay_root,
     )
     resolved_role = node_role if node_role is not None else settings.node_role
     if resolved_role:
@@ -412,3 +459,14 @@ def _load_admin_mcp_env(
         return {}, None
 
     return store.mcp_runtime_env(), store.mcp_runtime_env
+
+
+def _load_skill_overlay(repo_root: Path) -> SkillOverlayState:
+    try:
+        from apps.admin.config_store import build_admin_config_store
+    except ImportError:
+        return SkillOverlayState()
+    try:
+        return build_admin_config_store(repo_root).get_skill_overlay()
+    except Exception:
+        return SkillOverlayState()

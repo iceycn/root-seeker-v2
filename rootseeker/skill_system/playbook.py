@@ -78,6 +78,40 @@ class PlaybookResolver:
         role = entry.get("role") or spec.metadata.get("role") or "helper"
         return str(role)
 
+    def is_enabled(self, spec: SkillSpec) -> bool:
+        return self._is_enabled(spec)
+
+    def env_keys(self, spec: SkillSpec) -> list[str]:
+        raw = spec.metadata.get("env")
+        if isinstance(raw, str):
+            return [part for part in raw.split() if part]
+        if isinstance(raw, list):
+            return [str(item).strip() for item in raw if str(item).strip()]
+        return []
+
+    def public_item(self, spec: SkillSpec) -> dict[str, Any]:
+        name = normalize_skill_name(spec.name)
+        source_kind = (
+            spec.source_kind.value if hasattr(spec.source_kind, "value") else str(spec.source_kind)
+        )
+        skill_kind = spec.skill_kind.value if hasattr(spec.skill_kind, "value") else spec.skill_kind
+        return {
+            "name": spec.name,
+            "slug": spec.name,
+            "description": spec.description,
+            "role": self.effective_role(spec),
+            "enabled": self._is_enabled(spec),
+            "source_kind": source_kind,
+            "is_default": self._is_current_default(name),
+            "allowed-tools": list(spec.bound_tools),
+            "env": self.env_keys(spec),
+            "version": spec.version,
+            "skill_kind": skill_kind,
+            "tags": list(spec.tags),
+            "required_tools": list(spec.required_tools),
+            "bound_tools": list(spec.bound_tools),
+        }
+
     def _resolve_candidates(self, case_request: CaseCreateRequest) -> list[str]:
         names: list[str] = []
         preferred = self._preferred_name(case_request)

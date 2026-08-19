@@ -8,10 +8,14 @@ from typing import Any
 
 from rootseeker.contracts.repository import RepositoryRef
 from rootseeker.contracts.service_catalog import ServiceCatalogEntry
-from rootseeker.contracts.skill import SkillSourceKind, SkillSpec
 from rootseeker.infra_core.settings import RootSeekerSettings
+from rootseeker.skill_system.overlay import SkillOverlayState, normalize_overlay_payload
 from rootseeker.storage.backend_resolve import resolve_admin_store
-from rootseeker.storage.mysql_conn import MysqlConnectConfig, mysql_config_from_settings, mysql_connection
+from rootseeker.storage.mysql_conn import (
+    MysqlConnectConfig,
+    mysql_config_from_settings,
+    mysql_connection,
+)
 
 __all__ = [
     "ALLOWED_CRON_HANDLERS",
@@ -337,22 +341,21 @@ class AdminConfigStore:
         ]
         self.save(data)
 
-    def list_skills(self) -> list[SkillSpec]:
-        return [SkillSpec.model_validate(item) for item in self.load().get("skills", [])]
+    def get_skill_overlay(self) -> SkillOverlayState:
+        raw = self.get_settings().get("skills")
+        if not isinstance(raw, dict):
+            return SkillOverlayState()
+        return normalize_overlay_payload(raw)
 
-    def upsert_skill(self, skill: SkillSpec) -> None:
-        data = self.load()
-        payload = skill.model_dump(mode="json")
-        payload["source_kind"] = SkillSourceKind.CUSTOM.value
-        skills = [item for item in data.get("skills", []) if item.get("slug") != skill.slug]
-        skills.append(payload)
-        data["skills"] = skills
-        self.save(data)
-
-    def delete_skill(self, slug: str) -> None:
-        data = self.load()
-        data["skills"] = [item for item in data.get("skills", []) if item.get("slug") != slug]
-        self.save(data)
+    def save_skill_overlay(self, overlay: SkillOverlayState) -> None:
+        self.update_settings(
+            {
+                "skills": {
+                    "default_playbook": overlay.default_playbook,
+                    "overlays": dict(overlay.overlays),
+                }
+            }
+        )
 
     def get_settings(self) -> dict[str, Any]:
         return dict(self.load().get("settings", {}))

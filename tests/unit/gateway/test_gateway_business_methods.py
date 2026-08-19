@@ -48,6 +48,10 @@ def test_gateway_server_registers_business_methods() -> None:
     # Check skill methods
     assert "skill.list" in methods
     assert "skill.get" in methods
+    assert "skill.install" in methods
+    assert "skill.set_default" in methods
+    assert "skill.disable" in methods
+    assert "skill.enable" in methods
 
     # Check tool methods
     assert "tool.invoke" in methods
@@ -138,8 +142,15 @@ def test_gateway_skill_list() -> None:
 
     assert "items" in result
     assert result["total"] >= 1
-    slugs = [s["slug"] for s in result["items"]]
-    assert "default-log-triage" in slugs
+    names = [s.get("name") or s.get("slug") for s in result["items"]]
+    assert "default-log-triage" in names
+    triage = next(s for s in result["items"] if (s.get("name") or s.get("slug")) == "default-log-triage")
+    assert triage["role"] == "playbook"
+    assert triage["enabled"] is True
+    assert triage["source_kind"] == "builtin"
+    assert triage["is_default"] is True
+    assert "allowed-tools" in triage
+    assert "env" in triage
 
 
 def test_gateway_skill_get() -> None:

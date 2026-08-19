@@ -12,10 +12,57 @@ from rootseeker.skill_system.errors import SkillError
 from rootseeker.skill_system.parser import load_skill_from_path
 
 __all__ = [
+    "detect_install_source",
     "install_from_directory",
     "install_from_git",
+    "install_from_source",
     "install_from_zip",
 ]
+
+
+def detect_install_source(source: str) -> str:
+    text = str(source or "").strip()
+    if not text:
+        raise SkillError("SKILL_INVALID_PACKAGE", "source is required")
+    path = Path(text)
+    lower = text.lower()
+    if path.is_file() and lower.endswith(".zip"):
+        return "zip"
+    if path.is_dir():
+        return "directory"
+    if lower.endswith(".git") or lower.startswith(("git@", "ssh://git")):
+        return "git"
+    if "://" in text:
+        scheme = text.split("://", 1)[0].lower()
+        if scheme in {"http", "https", "git", "ssh"}:
+            return "git"
+    if path.exists():
+        return "directory"
+    raise SkillError("SKILL_INVALID_PACKAGE", f"cannot determine install source: {source}")
+
+
+def install_from_source(
+    source: str,
+    *,
+    external_root: Path,
+    builtin_names: set[str],
+    existing_names: set[str],
+    overwrite: bool = False,
+    only_name: str | None = None,
+) -> list[str]:
+    kind = detect_install_source(source)
+    kwargs = {
+        "external_root": external_root,
+        "builtin_names": builtin_names,
+        "existing_names": existing_names,
+        "overwrite": overwrite,
+        "only_name": only_name,
+    }
+    if kind == "zip":
+        return install_from_zip(Path(source), **kwargs)
+    if kind == "git":
+        return install_from_git(source, **kwargs)
+    return install_from_directory(Path(source), **kwargs)
 
 
 def install_from_directory(

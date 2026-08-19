@@ -360,7 +360,10 @@ class AttemptRunner:
         )
 
     def _resolve_playbook(self, case_request: CaseCreateRequest) -> SkillSpec:
-        resolver = PlaybookResolver(self.flow_runtime.runtime.skill_registry, overlay=None)
+        resolver = PlaybookResolver(
+            self.flow_runtime.runtime.skill_registry,
+            overlay=self.flow_runtime.runtime.skill_overlay,
+        )
         return resolver.resolve(case_request)
 
     def _resolve_playbook_env(self, playbook: SkillSpec):
@@ -372,7 +375,9 @@ class AttemptRunner:
             declared_keys=declared_keys,
             optional_keys=optional_keys,
             process_env={key: str(value) for key, value in os.environ.items()},
-            admin_items=_load_admin_env_items(self.flow_runtime.runtime.repo_root),
+            admin_items=_load_admin_env_items(
+                self.flow_runtime.runtime.admin_config_root or self.flow_runtime.runtime.repo_root
+            ),
             require=True,
         )
 

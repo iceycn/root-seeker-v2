@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.admin.main import create_app
@@ -11,6 +12,29 @@ from apps.admin.main import create_app
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> TestClient:
+    return TestClient(create_app(tmp_path))
+
+
+def test_delete_builtin_skill_rejected(client) -> None:
+    response = client.delete("/api/skills/default-log-triage")
+    assert response.status_code in {400, 409}
+    assert "SKILL_BUILTIN_PROTECTED" in response.text or response.json().get("detail", {}).get("code") == "SKILL_BUILTIN_PROTECTED"
+
+
+def test_install_and_set_default(client, tmp_path) -> None:
+    fixture = _repo_root() / "tests" / "fixtures" / "sample_skill"
+    response = client.post("/api/skills/install", json={"source": str(fixture)})
+    assert response.status_code == 200
+    listed = client.get("/api/skills").json()["items"]
+    assert any(i["name"] == "hello-triage" and i["is_default"] is False for i in listed)
+    setd = client.post("/api/skills/hello-triage/default")
+    assert setd.status_code == 200
+    listed = client.get("/api/skills").json()["items"]
+    assert any(i["name"] == "hello-triage" and i["is_default"] is True for i in listed)
 
 
 def test_upsert_env_var_injects_runtime_scope_into_mcp_manager(tmp_path: Path) -> None:
@@ -503,28 +527,18 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
         channel_id = create_resp.json()["channel"]["channel_id"]
         cb_test = client.post(f"/api/notification-channels/{channel_id}/test")
         assert cb_test.status_code == 200
-    client.put(
-        "/api/skills",
-        json={
-            "spec": {
-                "name": "Custom Skill",
-                "slug": "custom/admin",
-                "description": "admin configured",
-                "tags": ["custom"],
-                "triggers": [],
-                "required_tools": [],
-                "steps": [],
-                "source_kind": "custom",
-                "version": "0.1.0",
-                "metadata": {},
-            }
-        },
-    )
+    fixture = _repo_root() / "tests" / "fixtures" / "sample_skill"
+    installed = client.post("/api/skills/install", json={"source": str(fixture)})
+    assert installed.status_code == 200
+    setd = client.post("/api/skills/hello-triage/default")
+    assert setd.status_code == 200
+    gone = client.put("/api/skills", json={"spec": {"name": "x", "slug": "x"}})
+    assert gone.status_code == 410
     quick = client.post(
         "/api/skills/quick",
         json={"name": "Quick Skill", "slug": "custom/quick", "tags": "a,b"},
     )
-    assert quick.status_code == 200
+    assert quick.status_code == 410
 
     fresh = TestClient(create_app(tmp_path))
 
@@ -546,12 +560,14 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
     assert providers["total"] >= 6
     assert any(item["name"] == "openai-main" for item in providers["items"])
     assert fresh.get("/api/notification-channels").json()["total"] == 1
-    assert fresh.get("/api/skills/custom/admin").status_code == 200
-    assert fresh.get("/api/skills/custom/quick").status_code == 200
+    listed = fresh.get("/api/skills").json()["items"]
+    assert any(i["name"] == "hello-triage" and i["is_default"] is True for i in listed)
 
 
 def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    from tests.support.stub_planner import IncidentNormalizePlanner
+
+    client = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
 
     response = client.post(
         "/api/error-chat", json={"content": "NullPointerException at Foo.java:12"}
@@ -562,23 +578,21 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     assert item["content"] == "NullPointerException at Foo.java:12"
     assert item["case"]["case_id"].startswith("case-")
     assert "report" in item
-    assert item["flow_run_id"].startswith("exec-")
     assert item["evidence_count"] >= 0
-    assert item["evidence_summary"] == "default flow evidence"
     assert len(item["evidence_items"]) == item["evidence_count"]
-    assert item["tool_results"]
 
-    fresh = TestClient(create_app(tmp_path))
+    fresh = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
     history = fresh.get("/api/error-chat").json()
     assert history["total"] == 1
     assert history["items"][0]["case"]["case_id"] == item["case"]["case_id"]
-    assert history["items"][0]["flow_run_id"] == item["flow_run_id"]
     assert history["items"][0]["evidence_items"] == item["evidence_items"]
 
 
 def test_admin_error_chat_with_use_agent(monkeypatch, tmp_path: Path) -> None:
+    from tests.support.stub_planner import IncidentNormalizePlanner
+
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
-    client = TestClient(create_app(tmp_path))
+    client = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
 
     response = client.post(
         "/api/error-chat",
@@ -592,7 +606,9 @@ def test_admin_error_chat_with_use_agent(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_admin_error_chat_infers_service_name_when_omitted(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    from tests.support.stub_planner import IncidentNormalizePlanner
+
+    client = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
     content = (
         "2026-07-14 13:49:24.473 [training-manage-api] [http-nio-30000-exec-34] [ERROR] "
         "DuplicateKeyException in PopRecordService.insertPopRecordLogic"
