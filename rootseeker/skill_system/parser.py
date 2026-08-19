@@ -6,7 +6,9 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from rootseeker.contracts.skill import SkillKind, SkillSpec
+from rootseeker.contracts.skill import SkillKind, SkillSourceKind, SkillSpec
+from rootseeker.skill_system.errors import SkillError
+from rootseeker.skill_system.names import validate_skill_name
 
 ROOTSEEKER_SKILL_SPEC_FILENAME = "rootseeker-skill.yaml"
 
@@ -37,12 +39,15 @@ def _split_frontmatter(text: str) -> tuple[str, str]:
 
 
 def parse_skill_document(text: str) -> SkillSpec:
-    yaml_text, _body = _split_frontmatter(text)
-    data = yaml.safe_load(yaml_text)
-    if not isinstance(data, dict):
-        raise ValueError("SKILL frontmatter must parse to a mapping")
+    data = _parse_frontmatter_dict(text)
+    out = _normalize_skill_dict(data)
+    name = str(out.get("name") or "").strip()
+    if name and "slug" not in out:
+        out["slug"] = name
+    if "steps" not in out:
+        out["steps"] = []
     try:
-        return SkillSpec.model_validate(_normalize_skill_dict(data))
+        return SkillSpec.model_validate(out)
     except ValidationError as e:
         raise ValueError(f"Invalid SkillSpec in SKILL.md: {e}") from e
 
@@ -93,22 +98,29 @@ def _parse_rootseeker_skill_spec(path: Path) -> dict[str, Any]:
     return data
 
 
-def load_skill_from_path(path: Path) -> SkillSpec:
+def load_skill_from_path(path: Path, *, source_kind: SkillSourceKind | None = None) -> SkillSpec:
     text = path.read_text(encoding="utf-8")
-    skill_dir = path.parent
-    sidecar = path.with_name(ROOTSEEKER_SKILL_SPEC_FILENAME)
-    if not sidecar.exists():
-        return SkillSpec.model_validate(
-            _normalize_skill_dict(_parse_frontmatter_dict(text), skill_dir=skill_dir)
-        )
-    frontmatter = _parse_frontmatter(text)
-    data = _parse_rootseeker_skill_spec(sidecar)
-    data.setdefault("name", frontmatter.get("name"))
-    data.setdefault("description", frontmatter.get("description", ""))
-    try:
-        return SkillSpec.model_validate(_normalize_skill_dict(data, skill_dir=skill_dir))
-    except ValidationError as e:
-        raise ValueError(f"Invalid SkillSpec in {ROOTSEEKER_SKILL_SPEC_FILENAME}: {e}") from e
+    data = _parse_frontmatter_dict(text)
+    dir_name = path.parent.name
+    name = str(data.get("name") or "").strip()
+    validate_skill_name(name)
+    if name != dir_name:
+        raise SkillError("SKILL_INVALID_PACKAGE", f"name {name!r} must match directory {dir_name!r}")
+    allowed = str(data.get("allowed-tools") or data.get("allowed_tools") or "").split()
+    meta = dict(data.get("metadata") or {})
+    meta.setdefault("role", "helper")
+    meta["skill_dir"] = str(path.parent)
+    spec = SkillSpec(
+        name=name,
+        slug=name,
+        description=str(data.get("description") or ""),
+        bound_tools=allowed,
+        required_tools=list(allowed),
+        source_kind=source_kind or SkillSourceKind.BUILTIN,
+        metadata=meta,
+        steps=[],
+    )
+    return spec
 
 
 def _parse_frontmatter_dict(text: str) -> dict[str, Any]:
