@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rootseeker.contracts.skill import SkillExecutionPlan, SkillKind, SkillSpec
+from rootseeker.contracts.skill import SkillExecutionPlan, SkillKind, SkillSourceKind, SkillSpec
 from rootseeker.skill_system.discovery import discover_skill_files
+from rootseeker.skill_system.names import normalize_skill_name
+from rootseeker.skill_system.overlay import SkillOverlayState, apply_overlay
 from rootseeker.skill_system.parser import load_skill_from_path
 
 __all__ = [
@@ -11,6 +13,7 @@ __all__ = [
     "DEFAULT_FLOW_SKILL_SLUG",
     "SkillRegistry",
     "build_registry_from_builtin_skills",
+    "build_skill_registry",
     "get_default_log_triage_skill",
 ]
 
@@ -48,7 +51,7 @@ class SkillRegistry:
         return True
 
     def get(self, slug: str) -> SkillSpec | None:
-        return self._by_slug.get(slug)
+        return self._by_slug.get(normalize_skill_name(slug))
 
     def list_skills(self) -> list[SkillSpec]:
         return list(self._by_slug.values())
@@ -81,11 +84,50 @@ class SkillRegistry:
             self._tool_action_index[action] = spec.slug
 
 
-def build_registry_from_builtin_skills(builtin_skills_root: Path) -> SkillRegistry:
+def build_skill_registry(
+    *,
+    builtin_root: Path,
+    custom_root: Path,
+    external_root: Path,
+    overlay: SkillOverlayState | None = None,
+) -> SkillRegistry:
     registry = SkillRegistry()
-    for path in discover_skill_files(builtin_skills_root):
-        registry.register(load_skill_from_path(path))
+    builtin_names: set[str] = set()
+
+    for path in discover_skill_files(builtin_root):
+        spec = load_skill_from_path(path, source_kind=SkillSourceKind.BUILTIN)
+        name = normalize_skill_name(spec.slug)
+        registry.register(spec)
+        builtin_names.add(name)
+
+    for path in discover_skill_files(custom_root):
+        spec = load_skill_from_path(path, source_kind=SkillSourceKind.CUSTOM)
+        name = normalize_skill_name(spec.slug)
+        if name in builtin_names:
+            continue
+        registry.upsert(spec)
+
+    for path in discover_skill_files(external_root):
+        spec = load_skill_from_path(path, source_kind=SkillSourceKind.EXTERNAL)
+        name = normalize_skill_name(spec.slug)
+        if name in builtin_names:
+            continue
+        registry.upsert(spec)
+
+    if overlay is not None:
+        for spec in registry.list_skills():
+            registry.upsert(apply_overlay(spec, overlay))
+
     return registry
+
+
+def build_registry_from_builtin_skills(builtin_skills_root: Path) -> SkillRegistry:
+    return build_skill_registry(
+        builtin_root=builtin_skills_root,
+        custom_root=builtin_skills_root.parent / "custom",
+        external_root=builtin_skills_root.parent / "external",
+        overlay=None,
+    )
 
 
 def get_default_log_triage_skill(registry: SkillRegistry) -> SkillSpec:
