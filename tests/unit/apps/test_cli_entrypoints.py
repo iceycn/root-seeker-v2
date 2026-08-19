@@ -52,7 +52,14 @@ def test_cli_resume_list_command() -> None:
     assert code == 0
 
 
-def test_worker_single_run_command() -> None:
+def test_worker_single_run_command(monkeypatch) -> None:
+    original = create_dev_runtime
+
+    def _create(*args, **kwargs):
+        kwargs.setdefault("tool_planner", IncidentNormalizePlanner())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("apps.worker.main.create_dev_runtime", _create)
     code = worker_main(["--seed-demo"])
     assert code == 0
 

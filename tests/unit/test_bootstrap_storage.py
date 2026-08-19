@@ -4,6 +4,7 @@ from pathlib import Path
 
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.contracts.case import CaseCreateRequest
+from tests.support.stub_planner import IncidentNormalizePlanner
 from rootseeker.contracts.replay import ReplayCaseSpec, ReplayRunSnapshot
 from rootseeker.storage.sqlite_replay_history import SqliteReplayHistoryStore
 from rootseeker.contracts.task import TaskKind, TaskStatus
@@ -54,7 +55,9 @@ def test_sqlite_task_runtime_runs_pending_task_across_runtime_instances(
     monkeypatch.setenv("ROOTSEEKER_SQLITE_DB_PATH", str(db_path))
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
 
-    first_task_runtime = TaskRuntime(create_dev_runtime(_repo_root()))
+    first_task_runtime = TaskRuntime(
+        create_dev_runtime(_repo_root(), tool_planner=IncidentNormalizePlanner())
+    )
     submitted = first_task_runtime.submit(
         kind=TaskKind.CASE_RUN,
         payload={
@@ -66,7 +69,9 @@ def test_sqlite_task_runtime_runs_pending_task_across_runtime_instances(
         },
     )
 
-    second_task_runtime = TaskRuntime(create_dev_runtime(_repo_root()))
+    second_task_runtime = TaskRuntime(
+        create_dev_runtime(_repo_root(), tool_planner=IncidentNormalizePlanner())
+    )
     executed = second_task_runtime.run_once()
 
     assert executed is not None
