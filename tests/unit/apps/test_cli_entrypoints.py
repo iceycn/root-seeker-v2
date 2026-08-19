@@ -1,15 +1,29 @@
 from apps.cli.main import main as cli_main
 from apps.scheduler.main import main as scheduler_main
 from apps.worker.main import main as worker_main
+from rootseeker.bootstrap import create_dev_runtime
+from tests.support.stub_planner import IncidentNormalizePlanner
 
 
-def test_cli_demo_command() -> None:
+def _inject_stub_planner(monkeypatch) -> None:
+    original = create_dev_runtime
+
+    def _create(*args, **kwargs):
+        kwargs.setdefault("tool_planner", IncidentNormalizePlanner())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr("apps.cli.main.create_dev_runtime", _create)
+
+
+def test_cli_demo_command(monkeypatch) -> None:
+    _inject_stub_planner(monkeypatch)
     code = cli_main(["demo"])
     assert code == 0
 
 
 def test_cli_demo_command_with_use_agent(monkeypatch) -> None:
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    _inject_stub_planner(monkeypatch)
     code = cli_main(["demo", "--use-agent"])
     assert code == 0
 

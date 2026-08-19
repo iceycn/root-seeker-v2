@@ -1,7 +1,9 @@
 from pathlib import Path
 
 from rootseeker.agent_runtime import AgentRuntime
+from rootseeker.agent_runtime.tool_plan import ToolPlan, ToolPlanCall, ToolPlanResult
 from rootseeker.bootstrap import create_dev_runtime
+from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.observability import (
     DiagnosticCollector,
     StructuredLogger,
@@ -9,6 +11,29 @@ from rootseeker.observability import (
     redact_payload,
     render_prometheus_metrics,
 )
+
+
+class _LogQueryPlanner:
+    def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs) -> ToolPlanResult:
+        del tools, history_summary, kwargs
+        return ToolPlanResult(
+            ok=True,
+            provider="unit",
+            model="planner",
+            plan=ToolPlan(
+                rationale="metrics coverage",
+                tool_calls=[
+                    ToolPlanCall(
+                        tool_name="log.query_by_trace_id",
+                        step_id="query-logs",
+                        arguments={
+                            "trace_id": case_request.metadata["trace_id"],
+                            "service_name": case_request.service_name,
+                        },
+                    )
+                ],
+            ),
+        )
 
 
 def test_redaction_masks_sensitive_keys() -> None:
@@ -51,8 +76,11 @@ def test_runtime_health_and_prometheus_metrics(monkeypatch) -> None:
 
 def test_prometheus_metrics_include_agent_tool_and_approval_activity(monkeypatch) -> None:
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
-    runtime = create_dev_runtime(Path(__file__).resolve().parents[3])
-    AgentRuntime(runtime).run_payload(
+    runtime = create_dev_runtime(
+        Path(__file__).resolve().parents[3],
+        tool_planner=_LogQueryPlanner(),
+    )
+    AgentRuntime(runtime, tool_planner=_LogQueryPlanner()).run_payload(
         {
             "title": "metrics activity case",
             "service_name": "order-service",
