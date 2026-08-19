@@ -59,3 +59,7 @@ def test_skill_execution_plan_and_generated_draft_can_serialize() -> None:
     )
     assert plan.skill_slug == "flows/default-log-triage"
     assert draft.spec.source_kind == SkillSourceKind.GENERATED
+
+
+def test_skill_source_kind_includes_external() -> None:
+    assert SkillSourceKind.EXTERNAL.value == "external"

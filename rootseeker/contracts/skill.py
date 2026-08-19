@@ -11,6 +11,7 @@ class SkillSourceKind(StrEnum):
     BUILTIN = "builtin"
     CUSTOM = "custom"
     GENERATED = "generated"
+    EXTERNAL = "external"
 
 
 class SkillKind(StrEnum):
