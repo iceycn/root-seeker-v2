@@ -67,7 +67,11 @@ class OpenAICompatibleToolPlanner:
         skill_catalog: list[dict[str, str]] | None = None,
         allowed_tool_names: set[str] | None = None,
     ) -> ToolPlanResult:
-        allowed_tools = _allowed_tools(tools, allow_write_tools=self.allow_write_tools)
+        allowed_tools = _allowed_tools(
+            tools,
+            allow_write_tools=self.allow_write_tools,
+            allowed_tool_names=allowed_tool_names,
+        )
         messages = build_tool_planner_messages(
             case_request=case_request,
             tools=allowed_tools,
@@ -173,7 +177,17 @@ def build_tool_planner_messages(
     ]
 
 
-def _allowed_tools(tools: list[ToolSpec], *, allow_write_tools: bool) -> list[ToolSpec]:
+def _allowed_tools(
+    tools: list[ToolSpec],
+    *,
+    allow_write_tools: bool,
+    allowed_tool_names: set[str] | None = None,
+) -> list[ToolSpec]:
     if allow_write_tools:
         return list(tools)
-    return [tool for tool in tools if tool.permission_level == ToolPermissionLevel.READ]
+    return [
+        tool
+        for tool in tools
+        if tool.permission_level == ToolPermissionLevel.READ
+        or (allowed_tool_names is not None and tool.name in allowed_tool_names)
+    ]

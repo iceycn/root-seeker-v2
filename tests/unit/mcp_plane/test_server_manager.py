@@ -6,7 +6,13 @@ import sys
 from pathlib import Path
 
 from rootseeker.contracts.tool import ToolCallRequest, ToolScope
-from rootseeker.mcp_plane import McpExternalClient, McpGateway, McpServerManager, PolicyGuard, ToolRegistry
+from rootseeker.mcp_plane import (
+    McpExternalClient,
+    McpGateway,
+    McpServerManager,
+    PolicyGuard,
+    ToolRegistry,
+)
 from rootseeker.mcp_plane.server_manager import (
     build_external_tool_name,
     discover_stdio_tools,
@@ -145,3 +151,15 @@ def test_mcp_extra_env_provider_restarts_session_on_change() -> None:
     second = manager.invoke("echo-env", "ext.echo-env.echo_env", {"key": "MCP_TEST_KEY"})
     assert second["text"] == "second"
     manager._close_all_sessions()
+
+
+def test_run_env_overlay_survives_provider_refresh_and_skill_key_wins() -> None:
+    manager = McpServerManager(extra_env_provider=lambda: {"RUNTIME": "a"})
+    manager.set_run_env_overlay({"SKILL_KEY": "secret", "RUNTIME": "from-skill"})
+    env = manager.extra_env
+    assert env["RUNTIME"] == "from-skill"
+    assert env["SKILL_KEY"] == "secret"
+    manager.set_run_env_overlay(None)
+    cleared = manager.extra_env
+    assert cleared == {"RUNTIME": "a"}
+    assert "SKILL_KEY" not in cleared

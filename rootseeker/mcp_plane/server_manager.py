@@ -97,11 +97,16 @@ class McpServerManager:
         self._registered_tool_names: dict[str, str] = {}
         self._extra_env: dict[str, str] = dict(extra_env or {})
         self._extra_env_provider = extra_env_provider
+        self._run_env_overlay: dict[str, str] = {}
 
     @property
     def extra_env(self) -> dict[str, str]:
         with self._lock:
             return self._refresh_extra_env_locked()
+
+    @property
+    def extra_env_provider(self) -> Callable[[], dict[str, str]] | None:
+        return self._extra_env_provider
 
     def set_extra_env(self, extra_env: dict[str, str] | None) -> None:
         with self._lock:
@@ -112,18 +117,26 @@ class McpServerManager:
         with self._lock:
             self._extra_env_provider = provider
 
-    def _refresh_extra_env_locked(self) -> dict[str, str]:
-        if self._extra_env_provider is None:
-            return dict(self._extra_env)
-        try:
-            loaded = self._extra_env_provider()
-        except Exception:
-            return dict(self._extra_env)
-        new_env = dict(loaded or {})
-        if new_env != self._extra_env:
-            self._extra_env = new_env
+    def set_run_env_overlay(self, overlay: dict[str, str] | None) -> None:
+        with self._lock:
+            self._run_env_overlay = dict(overlay or {})
             self._close_all_sessions()
-        return dict(self._extra_env)
+
+    def _refresh_extra_env_locked(self) -> dict[str, str]:
+        overlay = dict(self._run_env_overlay)
+        if self._extra_env_provider is None:
+            base = dict(self._extra_env)
+        else:
+            try:
+                loaded = self._extra_env_provider()
+            except Exception:
+                base = dict(self._extra_env)
+            else:
+                base = dict(loaded or {})
+                if base != self._extra_env:
+                    self._extra_env = base
+                    self._close_all_sessions()
+        return {**base, **overlay}
 
     def reload_from_store(
         self,

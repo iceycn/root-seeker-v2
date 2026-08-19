@@ -171,3 +171,157 @@ def test_missing_playbook_env_fails_without_planning(monkeypatch) -> None:
     assert planner.calls == 0
     assert result.status == "failed"
     assert result.metadata.get("error_code") == "SKILL_ENV_MISSING"
+
+
+def test_skill_env_overlay_survives_provider_refresh_during_plan(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    monkeypatch.setenv("SKILL_KEY", "secret")
+    runtime = create_dev_runtime(_repo_root())
+    runtime.mcp_server_manager.set_extra_env_provider(lambda: {"RUNTIME": "a"})
+
+    runtime.skill_registry.upsert(
+        SkillSpec(
+            name="env-overlay-playbook",
+            slug="env-overlay-playbook",
+            description="injects skill env for this run",
+            skill_kind=SkillKind.FLOW,
+            bound_tools=["incident.normalize"],
+            metadata={"role": "playbook", "env": ["SKILL_KEY"]},
+        )
+    )
+
+    class _EnvSpyPlanner:
+        def __init__(self) -> None:
+            self.env_during_plan: dict[str, str] | None = None
+
+        def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs):
+            self.env_during_plan = dict(runtime.mcp_server_manager.extra_env)
+            return ToolPlanResult(ok=False, provider="unit", model="planner", error="stop after spy")
+
+    planner = _EnvSpyPlanner()
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=planner,
+    )
+    runner.run_once(_case_request(preferred_skill="env-overlay-playbook"), allow_default_fallback=False)
+    assert planner.env_during_plan is not None
+    assert planner.env_during_plan.get("RUNTIME") == "a"
+    assert planner.env_during_plan.get("SKILL_KEY") == "secret"
+    after = runtime.mcp_server_manager.extra_env
+    assert "SKILL_KEY" not in after
+
+
+def test_loaded_helper_bound_tools_are_unioned_into_allow_list(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    runtime.skill_registry.upsert(
+        SkillSpec(
+            name="narrow-playbook",
+            slug="narrow-playbook",
+            description="only incident.normalize",
+            skill_kind=SkillKind.FLOW,
+            bound_tools=["incident.normalize"],
+            metadata={"role": "playbook"},
+        )
+    )
+    helper = SkillSpec(
+        name="graph-lookup",
+        slug="graph-lookup",
+        description="graph helper",
+        skill_kind=SkillKind.TOOL,
+        bound_tools=["graph.cypher"],
+        metadata={"role": "helper"},
+    )
+
+    class _GraphCypherPlanner:
+        def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs):
+            return ToolPlanResult(
+                ok=True,
+                provider="unit",
+                model="planner",
+                plan=ToolPlan(
+                    rationale="call helper-only tool",
+                    tool_calls=[
+                        ToolPlanCall(tool_name="graph.cypher", step_id="graph-1", arguments={"q": "MATCH (n) RETURN n"})
+                    ],
+                ),
+            )
+
+    tool_loop = _RecordingToolLoop()
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=_GraphCypherPlanner(),
+        tool_call_loop=tool_loop,
+    )
+    blocked = runner.run_once(
+        _case_request(preferred_skill="narrow-playbook"),
+        allow_default_fallback=False,
+    )
+    assert tool_loop.executed_tools == []
+    assert blocked.status == "failed"
+    assert blocked.metadata.get("error_code") == "SKILL_TOOL_NOT_ALLOWED"
+
+    runner.loaded_helpers = [helper]
+    allowed = runner.run_once(
+        _case_request(preferred_skill="narrow-playbook"),
+        allow_default_fallback=False,
+    )
+    assert "graph.cypher" in tool_loop.executed_tools
+    assert allowed.status == "completed"
+    assert allowed.metadata.get("error_code") is None
+
+
+def test_playbook_write_tools_reach_planner_and_omitted_notify_is_skipped(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    runtime.skill_registry.upsert(
+        SkillSpec(
+            name="notify-playbook",
+            slug="notify-playbook",
+            description="lists notify.send",
+            skill_kind=SkillKind.FLOW,
+            bound_tools=["incident.normalize", "notify.send"],
+            metadata={"role": "playbook"},
+        )
+    )
+
+    class _CapturingPlanner:
+        allow_write_tools = False
+
+        def __init__(self) -> None:
+            self.seen_tool_names: list[str] = []
+
+        def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs):
+            self.seen_tool_names = [getattr(tool, "name", str(tool)) for tool in tools]
+            return ToolPlanResult(
+                ok=True,
+                provider="unit",
+                model="planner",
+                plan=ToolPlan(
+                    rationale="omit notify",
+                    tool_calls=[
+                        ToolPlanCall(tool_name="incident.normalize", step_id="n1", arguments={})
+                    ],
+                ),
+            )
+
+    planner = _CapturingPlanner()
+    tool_loop = _RecordingToolLoop()
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=planner,
+        tool_call_loop=tool_loop,
+    )
+    result = runner.run_once(
+        _case_request(preferred_skill="notify-playbook"),
+        allow_default_fallback=False,
+    )
+    assert "notify.send" in planner.seen_tool_names
+    assert result.status == "completed"
+    assert result.metadata.get("notify_skipped") is True
+    report = runtime.report_store.get(result.case_id)
+    assert report is not None
+    assert report.metadata.get("notify_skipped") is True

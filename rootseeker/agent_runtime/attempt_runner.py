@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import os
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,7 @@ class AttemptRunner:
         )
         self.context_compactor = context_compactor or ContextCompactor()
         self.tool_planner = tool_planner or OpenAICompatibleToolPlanner.from_settings()
+        self.loaded_helpers: list[SkillSpec] = []
 
     def run_once(
         self,
@@ -91,6 +93,7 @@ class AttemptRunner:
 
         manager = self.flow_runtime.runtime.mcp_server_manager
         previous_extra = dict(manager.extra_env)
+        previous_provider = manager.extra_env_provider
         try:
             try:
                 resolution = self._resolve_playbook_env(playbook)
@@ -103,8 +106,7 @@ class AttemptRunner:
                     reason=str(exc),
                     skill_slug=playbook.name,
                 )
-            merged = {**previous_extra, **resolution.mcp_extra}
-            manager.set_extra_env(merged)
+            manager.set_run_env_overlay(resolution.mcp_extra)
             playbook_text = substitute_non_secret(
                 self._load_playbook_body(playbook),
                 resolution.substitutions,
@@ -127,7 +129,9 @@ class AttemptRunner:
                 playbook_text=playbook_text,
             )
         finally:
+            manager.set_run_env_overlay(None)
             manager.set_extra_env(previous_extra)
+            manager.set_extra_env_provider(previous_provider)
 
     def _run_llm_tool_plan(
         self,
@@ -139,14 +143,13 @@ class AttemptRunner:
         playbook: SkillSpec,
         playbook_text: str,
     ) -> AttemptResult:
-        allow_write_tools = getattr(self.tool_planner, "allow_write_tools", False)
-        allowed_tool_names = _allowed_tools_for_run(playbook)
+        allowed_tool_names = _allowed_tools_for_run(playbook, self.loaded_helpers)
         planner_tools = [
             spec
             for spec in resolve_planner_tools(
                 self.flow_runtime.runtime.tool_registry,
                 playbook,
-                allow_write_tools=allow_write_tools,
+                allow_write_tools=True,
             )
             if spec.name in allowed_tool_names
         ]
@@ -319,20 +322,20 @@ class AttemptRunner:
             CaseStatus.FAILED if failed else CaseStatus.COMPLETED,
         )
         case.updated_at = utc_now()
+        notify_skipped = _notify_skipped(allowed_tool_names, plan_result)
         self.flow_runtime.runtime.case_store.put(case)
         self.flow_runtime.runtime.evidence_store.put_pack(pack)
         report = build_case_report(case_id=case.case_id, title=case.title, pack=pack)
-        report = report.model_copy(
-            update={
-                "metadata": {
-                    **report.metadata,
-                    "agent": {
-                        "route_mode": route.mode,
-                        "tool_plan": plan_result.to_payload(),
-                    },
-                }
-            }
-        )
+        report_metadata = {
+            **report.metadata,
+            "agent": {
+                "route_mode": route.mode,
+                "tool_plan": plan_result.to_payload(),
+            },
+        }
+        if notify_skipped:
+            report_metadata["notify_skipped"] = True
+        report = report.model_copy(update={"metadata": report_metadata})
         self.flow_runtime.runtime.report_store.put(report)
 
         compacted_context = self.context_compactor.compact(
@@ -352,6 +355,7 @@ class AttemptRunner:
                 "skill_slug": playbook.name,
                 "step_count": len(case.steps),
                 "tool_plan": plan_result.to_payload(),
+                **({"notify_skipped": True} if notify_skipped else {}),
             },
         )
 
@@ -497,9 +501,21 @@ def _invoke_planner(
     return planner.plan(**filtered)
 
 
-def _allowed_tools_for_run(playbook: SkillSpec) -> set[str]:
+def _allowed_tools_for_run(
+    playbook: SkillSpec,
+    loaded_helpers: Iterable[SkillSpec] | None = None,
+) -> set[str]:
     names = {str(name).strip() for name in playbook.bound_tools if str(name).strip()}
+    for helper in loaded_helpers or []:
+        names.update(str(name).strip() for name in helper.bound_tools if str(name).strip())
     return names
+
+
+def _notify_skipped(allowed_tool_names: set[str], plan_result: ToolPlanResult) -> bool:
+    if "notify.send" not in allowed_tool_names or plan_result.plan is None:
+        return False
+    called = {call.tool_name for call in plan_result.plan.tool_calls}
+    return "notify.send" not in called
 
 
 def _env_key_list(value: Any) -> list[str]:
