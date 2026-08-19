@@ -2,7 +2,7 @@
 
 ## 1. 业务目标
 
-Skill 系统负责将 `skills/` 目录下的 Markdown + YAML 技能定义加载为内存注册表，供 Flow 编排与步骤执行消费。运维或开发者通过维护 `skills/builtin/` 中的 Flow / Tool Skill 文件，声明排查链路的步骤顺序、触发条件与工具绑定关系；运行时由 `SkillComposer` 根据 Case 入站来源与元数据选出合适的 Flow Skill，生成 `SkillExecutionPlan`（本链路只到计划产出，步骤实际执行见 Task 5）。
+Skill 系统负责将 `skills/` 下标准 `SKILL.md` 包加载为内存注册表，供默认 Agent playbook 路径消费。解析器只读 `SKILL.md`（忽略同目录 `rootseeker-skill.yaml` sidecar）；主键是 `name`（kebab-case，与目录名一致）。`SkillRegistry` 扫描 `builtin` / `custom` / `external` 三根目录并套 Admin overlay；`PlaybookResolver` 决定当前主流程。YAML 步进器 `execute_skill_flow` 已删除，默认执行见 [03-default-triage-flow.md](./03-default-triage-flow.md) 与 [09-agent-runtime.md](./09-agent-runtime.md)。
 
 Case 结案后，`SkillDraftBuilder` 可从 `CaseReport` 自动合成技能草稿；经 `SkillReviewer` 质量门禁与人工审批后，由 `SkillPublisher` 写入 `skills/generated/` 并跟踪发布状态。发布失败或需下线时，Publisher 提供 `deprecate` / `archive` 软回滚；独立的 `skill_system/rollback.py` 尚未实现。
 
@@ -12,8 +12,9 @@ Case 结案后，`SkillDraftBuilder` 可从 `CaseReport` 自动合成技能草�
 
 | 入口类型 | 路径 / 符号 | 说明 |
 | --- | --- | --- |
-| 内部（Bootstrap） | `rootseeker/bootstrap/runtime.py:create_dev_runtime` | 启动时调用 `build_registry_from_builtin_skills` 装配 `DevRuntime.skill_registry` |
-| 内部（Flow 编排） | `rootseeker/skill_runtime/flow_executor.py:execute_skill_flow` | 注入 `SkillComposer` / `SkillContentLoader` 选 Flow 与加载步骤文档（执行细节见 05 文档） |
+| 内部（Bootstrap） | `rootseeker/bootstrap/runtime.py:create_dev_runtime` | 启动时调用 `build_skill_registry` 扫描 builtin/custom/external 并套 overlay，装配 `DevRuntime.skill_registry` |
+| 内部（主流程） | `rootseeker/skill_system/playbook.py:PlaybookResolver` | 按 overlay `default_playbook` 与 `metadata.role=playbook` 选出当前主流程 |
+| 内部（默认执行） | `rootseeker/agent_runtime/attempt_runner.py:AttemptRunner` | Agent playbook 路径；**不**调用已删除的 `execute_skill_flow` |
 | 内部（草稿合成） | `rootseeker/skill_system/draft_builder.py:SkillDraftBuilder.build_from_report` | 从结案报告生成 `SkillDraft` |
 | 内部（评审） | `rootseeker/skill_system/review.py:SkillReviewer.review` | 对草稿做质量检查，产出 `SkillReview` |
 | 内部（发布） | `rootseeker/skill_system/publisher.py:SkillPublisher.publish` | 将已批准草稿写入磁盘并登记 `PublishedSkill` |
@@ -26,22 +27,22 @@ Case 结案后，`SkillDraftBuilder` 可从 `CaseReport` 自动合成技能草�
 
 ```mermaid
 flowchart LR
-  A["skills/builtin/"] --> B["discover_skill_files"]
+  A["skills/builtin|custom|external"] --> B["discover_skill_files"]
   B --> C["load_skill_from_path"]
   C --> D["SkillSpec"]
   D --> E["SkillRegistry.register"]
-  E --> F["tool_action_index"]
+  E --> F["apply_overlay"]
 ```
 
 1. `rootseeker/bootstrap/runtime.py` → `create_dev_runtime`
    - 入：`repo_root: Path`
-   - 出：调用 `build_registry_from_builtin_skills(root / "skills" / "builtin")`
+   - 出：调用 `build_skill_registry`（builtin/custom/external + overlay）
    - 下一步：`SkillRegistry` 注入 `DevRuntime`
 
-2. `rootseeker/skill_system/registry.py` → `build_registry_from_builtin_skills`
-   - 入：`builtin_skills_root: Path`
-   - 出：`SkillRegistry`（已 register 全部发现的 Skill）
-   - 下一步：遍历 `discover_skill_files` 结果
+2. `rootseeker/skill_system/registry.py` → `build_skill_registry`
+   - 入：三根目录路径与 `SkillOverlayState`
+   - 出：`SkillRegistry`（已 register 全部发现的 Skill，并 apply overlay）
+   - 下一步：对各根调用 `discover_skill_files`
 
 3. `rootseeker/skill_system/discovery.py` → `discover_skill_files`
    - 入：`builtin_skills_root`
@@ -53,10 +54,10 @@ flowchart LR
    - 出：`SkillSpec`
    - 下一步：`SkillRegistry.register`
 
-   **解析分支（sidecar 优先）：**
+   **解析规则（只读 `SKILL.md`）：**
 
-   - **有 `rootseeker-skill.yaml`**：读取 sidecar YAML 作为运行时主数据；`name` / `description` 从 SKILL.md frontmatter 补全（`setdefault`）；经 `_normalize_skill_dict` 注入 `metadata.skill_dir`、推断 `skill_kind`。
-   - **无 sidecar**：仅解析 SKILL.md frontmatter YAML 为完整 `SkillSpec`（适用于纯 frontmatter 定义的测试/简易 Skill）。
+   - 忽略同目录 `rootseeker-skill.yaml` sidecar；`name` 必须等于目录名；`slug` 与 `name` 相同。
+   - `allowed-tools`（空格分隔）写入 `bound_tools`；`metadata.role` 缺省 `helper`；`metadata.env` / `metadata.env_optional` 为字符串列表。
 
 5. `rootseeker/skill_system/parser.py` → `_split_frontmatter` / `parse_skill_document`
    - 入：SKILL.md 全文
@@ -68,21 +69,18 @@ flowchart LR
    - 出：写入 `_by_slug`；对 TOOL / TOOL_GROUP 建立 `_tool_action_index[action] → slug`
    - 下一步：消费方通过 `get` / `resolve_tool_skill` / `execution_plan` 读取
 
-### 3.2 Flow 选择（Composer 过滤）
+### 3.2 主流程选择（PlaybookResolver）
 
-1. `rootseeker/skill_runtime/flow_executor.py` → `execute_skill_flow`（选 Skill 段）
-   - 入：`CaseCreateRequest`、`SkillRegistry`、`ToolRegistry`
-   - 出：构造 `SkillComposer(registry, registered_tool_names=tool_registry.known_tools())`
-   - 下一步：`composer.compose(case_request)`
+1. `rootseeker/agent_runtime/attempt_runner.py` → `AttemptRunner.run_once`
+   - 入：`CaseCreateRequest`、`SkillRegistry`、overlay
+   - 出：调用 `PlaybookResolver.resolve`
+   - 下一步：加载 playbook `SKILL.md` body，注入非密 env，交给 LLM tool planner
 
-2. `rootseeker/skill_system/composer.py` → `SkillComposer.compose`
+2. `rootseeker/skill_system/playbook.py` → `PlaybookResolver.resolve`
    - 入：`CaseCreateRequest`
-   - 出：`SkillExecutionPlan(skill_slug, steps)`
-   - 选择优先级：
-     1. `metadata.preferred_skill` / `metadata.skill_slug` / `metadata.selected_skills[0]` 指定的 Flow slug
-     2. 按 `_case_trigger(source)` 映射 trigger（`webhook_alarm` / `replay` / `error_chat`），在 `list_by_kind(FLOW)` 中匹配 `triggers` 字段
-     3. 若配置了 `registered_tool_names`，过滤 `required_tools` 未全部就绪的 Flow；若无就绪候选则回退全量匹配列表
-     4. 兜底：`settings.skill_composer_default_flow`（默认 `flows/default-log-triage`）
+   - 出：当前已启用、有效 role 为 `playbook` 的 `SkillSpec`
+   - 选择：overlay `default_playbook`（加载时把旧 slug `flows/default-log-triage` 归一成 `default-log-triage`）；出厂主流程 `name` 为 `default-log-triage`
+   - 无可用 playbook 时 `SkillError("SKILL_DEFAULT_UNAVAILABLE")`，不回退 YAML 步进器
 
 ### 3.3 步骤文档加载（ContentLoader）
 
@@ -167,11 +165,13 @@ sequenceDiagram
 | `GeneratedSkillDraft` | `rootseeker/contracts/skill.py` | 契约层生成草稿（Pydantic）；与 `SkillDraft` dataclass 并存，当前 builder 使用后者 |
 | `CaseReport` | `rootseeker/contracts/report.py` | Draft 输入：case_id、root_cause、evidence_item_ids |
 
-**Parser 归一化规则**（`parser._normalize_skill_dict`）：
+**Parser 规则**（`parser.load_skill_from_path`）：
 
-- 顶层 `flow_plugin_id` → 移入 `metadata.flow_plugin_id`
-- 始终写入 `metadata.skill_dir`（Skill 目录绝对路径字符串）
-- 若 YAML 未显式 `skill_kind`，按路径推断：`flows/` → FLOW，`tools/` → TOOL
+- 只解析 `SKILL.md` frontmatter；忽略 sidecar
+- `name` 必须等于目录名；`slug = name`
+- `allowed-tools` → `bound_tools` / `required_tools`
+- `metadata.role` 缺省 `helper`；playbook 时 `skill_kind=FLOW`，否则 `TOOL`
+- 写入 `metadata.skill_dir`
 
 ## 5. 状态与副作用
 
@@ -183,7 +183,7 @@ sequenceDiagram
 | `SkillDraftBuilder.save_draft` | 文件系统 | 同上目录布局 |
 | `SkillContentLoader` | 无 | 只读 SKILL.md 与 references；按 char budget 截断 |
 
-不直接写入 Case / Evidence / Report / Checkpoint / Audit Store；与 Flow 执行的衔接在 `flow_executor`（Task 5）。
+不直接写入 Case / Evidence / Report / Checkpoint / Audit Store；与默认执行的衔接在 `AttemptRunner`（见 [03-default-triage-flow.md](./03-default-triage-flow.md)）。DraftBuilder / Publisher 未接入默认执行路径。
 
 ## 6. 分支与错误
 
@@ -194,19 +194,23 @@ sequenceDiagram
 | SkillSpec Pydantic 校验失败 | `parser.load_skill_from_path` | `ValueError`（含 ValidationError 链） |
 | 重复 slug | `SkillRegistry.register` | `ValueError: Duplicate skill slug` |
 | 同一 action 绑定多个 tool skill | `SkillRegistry._index_bound_tools` | `ValueError: Tool action ... already bound` |
-| 默认 Flow 缺失 | `registry.get_default_log_triage_skill` / `composer.compose` 兜底 | `ValueError` |
+| 找不到当前 playbook | `PlaybookResolver.resolve` | `SkillError("SKILL_DEFAULT_UNAVAILABLE")` |
+| 工具不在 playbook `allowed-tools` 内 | `AttemptRunner` | Case 失败 `SKILL_TOOL_NOT_ALLOWED`，不执行该调用 |
 | Report 证据或置信度不足 | `SkillDraftBuilder._meets_thresholds` | `build_from_report` 返回 `None` |
 | 评审未通过 | `SkillReviewer.review` | `ReviewStatus.NEEDS_REVISION` + issues 列表 |
 | 发布时 review 非 APPROVED 或 slug 不匹配 | `SkillPublisher.publish` | 返回 `None` |
 | Tool skill 缺 metadata.skill_dir | `SkillContentLoader._skill_dir` | `ValueError` |
-| 找不到 tool skill | `flow_executor._resolve_tool_skill`（Task 5） | `ValueError: No tool skill for action` |
+| 找不到 tool skill | （默认路径不再按 YAML `tool_skill_slug` 解析步骤） | Agent 只执行 playbook `allowed-tools` 内的 MCP 工具 |
 
 ## 7. 相关测试
 
 | 测试文件 | 覆盖点 |
 | --- | --- |
-| `tests/unit/skill_system/test_skill_registry.py` | builtin 发现加载、`get_default_log_triage_skill`、frontmatter/sidecar 解析、`parse_skill_document` |
-| `tests/unit/skill_system/test_skill_driven_flow.py` | registry 同时加载 flow+tool、`resolve_tool_skill("code.search")`、Composer 默认 Flow 选择、ContentLoader body/references |
+| `tests/unit/skill_system/test_skill_registry.py` | builtin 发现加载、`get_default_log_triage_skill`、`SKILL.md` frontmatter 解析、`parse_skill_document` |
+| `tests/unit/skill_system/test_skill_parser.py` | 标准 frontmatter、`name`=目录名、忽略 sidecar |
+| `tests/unit/skill_system/test_skill_registry_roots.py` | 三根目录扫描与 overlay |
+| `tests/unit/skill_system/test_playbook_resolver.py` | 主流程指针、enable/disable、builtin 保护 |
+| `tests/unit/skill_system/test_skill_driven_flow.py` | registry 加载 helper、`resolve_tool_skill`、ContentLoader body/references |
 | `tests/unit/contracts/test_skill_contracts.py` | `SkillSpec` / `SkillExecutionPlan` / `GeneratedSkillDraft` 契约序列化 |
 
 **未覆盖（代码存在但无单测）：** `SkillDraftBuilder`、`SkillReviewer`、`SkillPublisher` 全链路。
@@ -216,8 +220,8 @@ sequenceDiagram
 | 文档 | 关系 |
 | --- | --- |
 | [01-bootstrap-wiring.md](./01-bootstrap-wiring.md) | `create_dev_runtime` 装配 `skill_registry` 的时机与依赖 |
-| [03-default-triage-flow.md](./03-default-triage-flow.md) | 默认排查业务链路；消费 `flows/default-log-triage` |
-| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | `execute_skill_flow` 步骤执行、参数解析、checkpoint（本文件边界之外） |
+| [03-default-triage-flow.md](./03-default-triage-flow.md) | 默认排查业务链路；消费 playbook `default-log-triage` |
+| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | YAML 步进器已删除；默认路径为 Agent playbook |
 | [06-plugin-system.md](./06-plugin-system.md) | Flow Skill `metadata.flow_plugin_id` 与 plugin manifest 的对应 |
 | [07-mcp-plane.md](./07-mcp-plane.md) | Tool Skill `bound_tools` / step `action` 与 MCP ToolRegistry 的注册关系 |
 
@@ -227,71 +231,33 @@ sequenceDiagram
 
 ```
 skills/builtin/
-├── flows/
-│   └── default-log-triage/
-│       ├── SKILL.md                 # Codex 风格 frontmatter（name, description）+ 人类可读说明
-│       └── rootseeker-skill.yaml    # 运行时主数据：slug, steps, triggers, required_tools, flow_plugin_id
-└── tools/
-    └── {tool-name}/
-        ├── SKILL.md                 # 工具 Skill 说明（LLM 读 body 生成参数）
-        ├── rootseeker-skill.yaml    # slug, skill_kind: tool, bound_tools, metadata.reference
-        └── references/
-            └── guide.md             # 可选参考文档，由 ContentLoader 注入 prompt
+├── default-log-triage/
+│   └── SKILL.md                 # 标准 frontmatter（name, description, allowed-tools, metadata.role=playbook）+ playbook 正文
+├── incident-normalize/
+│   └── SKILL.md                 # helper；allowed-tools 绑定 MCP 工具
+└── {helper-name}/
+    ├── SKILL.md
+    └── references/              # 可选，由 ContentLoader 按需读入
 ```
 
-每个 Skill 目录必须含 `SKILL.md`；生产 builtin Skill 均配有 `rootseeker-skill.yaml` sidecar。`discover_skill_files` 只认 `SKILL.md` 文件名（常量 `SKILL_FILENAME`）。
+每个 Skill 目录必须含 `SKILL.md`；builtin 为扁平标准包，**无** `rootseeker-skill.yaml` sidecar，也无 `flows/` / `tools/` 前缀。`discover_skill_files` 只认 `SKILL.md` 文件名（常量 `SKILL_FILENAME`）。
 
-## 附录 B：Builtin Flow ↔ Tool Skill 映射
+## 附录 B：出厂 playbook 与 helper
 
-唯一 Flow Skill：`flows/default-log-triage`（14 步，`flow_plugin_id: builtin.default_log_triage_flow`）。
+出厂主流程：`default-log-triage`（`metadata.role: playbook`）。正文给出 14 步**推荐顺序**（给 Agent 读，不是 YAML 步进器）。`allowed-tools` 含 `incident.normalize`、`catalog.*`、`log.*`、`trace.get_chain`、`index.get_status`、`repo.list`、`code.*`、`graph.*`、`notify.send`。
 
-| Flow step_id | action | tool_skill_slug |
-| --- | --- | --- |
-| normalize-incident | incident.normalize | tools/incident-normalize |
-| resolve-service | catalog.resolve_service | tools/catalog-resolve-service |
-| resolve-log-sources | catalog.get_log_sources | tools/catalog-log-sources |
-| query-logs-trace | log.query_by_trace_id | tools/log-query-trace |
-| query-logs-template | log.query_by_template | tools/log-query-template |
-| trace-chain | trace.get_chain | tools/trace-chain |
-| index-status | index.get_status | tools/index-repo-context |
-| repo-list | repo.list | tools/index-repo-context |
-| code-search | code.search | tools/code-lookup |
-| code-read | code.read | tools/code-lookup |
-| graph-impact | graph.impact | tools/graph-lookup |
-| graph-context | graph.context | tools/graph-lookup |
-| find-callers | code.find_callers | tools/code-lookup |
-| notify | notify.send | tools/notify-send（defer_until: after_report） |
+Helper 目录名即 `name`（如 `incident-normalize`、`code-lookup`），不再使用 `tools/` 前缀。
 
-**Tool Skill → bound_tools 索引：**
-
-| tool_skill_slug | bound_tools（registry 索引） |
-| --- | --- |
-| tools/incident-normalize | incident.normalize |
-| tools/catalog-resolve-service | catalog.resolve_service |
-| tools/catalog-log-sources | catalog.get_log_sources |
-| tools/log-query-trace | log.query_by_trace_id |
-| tools/log-query-template | log.query_by_template |
-| tools/trace-chain | trace.get_chain |
-| tools/index-repo-context | index.get_status, repo.list |
-| tools/code-lookup | code.search, code.read, code.find_callers |
-| tools/graph-lookup | （sidecar 使用 `tools:` 字段而非 `bound_tools:`，见下方说明） |
-| tools/notify-send | notify.send |
-
-Flow 步骤均显式设置 `tool_skill_slug`，运行时优先 `registry.get(slug)`，其次才 `resolve_tool_skill(action)`。因此 graph-lookup 虽 sidecar 字段名不一致，Flow 执行不受影响；但 `resolve_tool_skill("graph.impact")` 等可能返回 `None`。
-
-## 附录 C：Frontmatter / YAML 解析链小结
+## 附录 C：Frontmatter 解析链小结
 
 ```
 SKILL.md
   └─ _split_frontmatter → yaml_text + body
-       ├─ [无 sidecar] yaml_text → SkillSpec（全字段在 frontmatter）
-       └─ [有 rootseeker-skill.yaml]
-            ├─ sidecar YAML → 主 spec dict
-            ├─ frontmatter.name/description → setdefault 补全
-            └─ _normalize_skill_dict(skill_dir) → SkillSpec
-                 ├─ flow_plugin_id → metadata
-                 ├─ metadata.skill_dir = 目录路径
-                 └─ infer skill_kind from path (flows|tools)
+       └─ frontmatter → SkillSpec
+            ├─ name 必须等于目录名；slug = name
+            ├─ allowed-tools → bound_tools
+            ├─ metadata.role 缺省 helper
+            └─ 忽略同目录 rootseeker-skill.yaml
 ```
 
-`load_skill_body(path)` 单独提取 Markdown body（去掉 frontmatter），供 ContentLoader 注入 LLM prompt。
+`load_skill_body(path)` 单独提取 Markdown body（去掉 frontmatter），供 playbook / helper 按需注入 planner。

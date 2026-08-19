@@ -10,7 +10,7 @@ RootSeeker V2 在本地开发、冒烟测试与多个应用进程（API / Admin 
 
 **成功时产出：** `DefaultFlowRunResult`（含 `CaseRecord`、`EvidencePack`、`CaseReport`），且三者已通过 `case_store.put` / `evidence_store.put_pack` / `report_store.put` 写入运行时 Store。
 
-**失败时落到哪里：** Flow 执行异常在 `execute_default_log_triage_flow` / `execute_skill_flow` 层抛出；Store 写入仅在 Flow 成功返回后进行；缺插件/能力时 `_validate_default_flow_registration` 直接 `ValueError`；HTTP 适配器缺 URL 时 `build_internal_adapter_from_settings` fail-fast。
+**失败时落到哪里：** Agent/planner 失败时 Case 带错误码（如 `SKILL_PLANNER_FAILED`），**不会**调用已删除的 `execute_skill_flow`；HTTP 适配器缺 URL 时 `build_internal_adapter_from_settings` fail-fast。
 
 ---
 
@@ -137,51 +137,40 @@ flowchart TD
 sequenceDiagram
     participant Caller as 调用方 API/Admin/Gateway/FlowExecutor
     participant DR as DevRuntime
-    participant Runner as execute_default_log_triage_flow
-    participant Skill as execute_skill_flow
+    participant AR as AttemptRunner
     participant GW as McpGateway
     participant CS as case_store
     participant ES as evidence_store
     participant RS as report_store
 
     Caller->>DR: run_default_flow_from_case_request(CaseCreateRequest)
-    DR->>Runner: execute_default_log_triage_flow(...)
-    Runner->>Runner: _validate_default_flow_registration
-    Runner->>Skill: execute_skill_flow(...)
-    Skill->>GW: invoke (各 step 工具)
-    Skill-->>Runner: SkillFlowResult
-    Runner-->>DR: DefaultFlowRunResult
-    DR->>CS: put(result.case)
-    DR->>ES: put_pack(result.evidence_pack)
-    DR->>RS: put(result.report)
+    DR->>AR: run_agent_from_case_request
+    AR->>AR: PlaybookResolver + planner
+    AR->>GW: invoke (allowed-tools)
+    AR-->>DR: AgentRunResult
+    DR->>CS: get/put(case)
+    DR->>ES: get_pack/put_pack
+    DR->>RS: get/put(report)
     DR-->>Caller: DefaultFlowRunResult
 ```
 
-#### 逐步明细（Flow）
+#### 逐步明细（默认 Agent playbook）
 
 1. 调用方 → `DevRuntime.run_default_flow_from_case_request`
-   - 入：`CaseCreateRequest`；可选 `start_from_step_index`、`prior_step_outputs`、`prior_case_id`（checkpoint 恢复）
+   - 入：`CaseCreateRequest`
    - 出：`DefaultFlowRunResult`
-   - 下一步：`execute_default_log_triage_flow`
+   - 下一步：`run_agent_from_case_request` → `AttemptRunner`
 
-2. `plugins/builtin/default_log_triage_flow/runner.py` → `execute_default_log_triage_flow`
-   - 入：case_request、skill_registry、plugin_registry、gateway、tool_registry、恢复参数
-   - 先调用 `_validate_default_flow_registration` 确认 `DEFAULT_FLOW_PLUGIN_ID` 与 `DEFAULT_FLOW_CAPABILITY_ID` 已注册
-   - 出：包装后的 `DefaultFlowRunResult`
-   - 下一步：`execute_skill_flow`（`rootseeker/skill_runtime/flow_executor.py`）
+2. `rootseeker/agent_runtime/attempt_runner.py` → `AttemptRunner.run_once`
+   - 入：case_request、skill_registry、overlay
+   - 出：Case / Evidence / Report 已由 Agent 写入 Store
+   - **不**调用 `execute_skill_flow`
 
-3. `rootseeker/skill_runtime/flow_executor.py` → `execute_skill_flow`
-   - 入：同上 + 从 skill YAML 解析 step
-   - 出：含 case / evidence / report / tool_results 的结果对象
-   - 下一步：返回 runner，最终回到 `DevRuntime`
+3. `DevRuntime.run_default_flow_from_case_request`（读 Store 并适配）
+   - 从 `case_store` / `evidence_store` / `report_store` 读取 Agent 产物
+   - 包装为 `DefaultFlowRunResult`
 
-4. `DevRuntime.run_default_flow_from_case_request`（写 Store）
-   - `self.case_store.put(result.case)`
-   - `self.evidence_store.put_pack(result.evidence_pack)`
-   - `self.report_store.put(result.report)`
-   - **注意：** checkpoint 不在此方法内写入；`FlowRuntime.run_default` 或 API webhook  handler 会额外 `checkpoints.save`
-
-5. **Payload 快捷路径** → `run_default_flow_from_payload`
+4. **Payload 快捷路径** → `run_default_flow_from_payload`
    - `rootseeker/channel_routing/webhook_payload_to_case_create(payload)` → `CaseCreateRequest`
    - 转调 `run_default_flow_from_case_request`
 
@@ -216,7 +205,7 @@ sequenceDiagram
 | 调用方 | 文件 | 说明 |
 | --- | --- | --- |
 | `DevRuntime` 自身 | `run_default_flow_from_payload` | payload → case_request 包装 |
-| `FlowExecutor` | `flow_executor.py` | `execute_default` / `execute_from_checkpoint` |
+| `FlowExecutor` | `flow_executor.py` | `execute_default`（无 `execute_from_checkpoint`） |
 | API Webhook | `apps/api/main.py` | `POST /webhook/{channel}` 归一化后直接调用 |
 | Gateway | `gateway/methods/case_methods.py` | `case.create` 业务方法 |
 
@@ -239,8 +228,8 @@ sequenceDiagram
 | --- | --- | --- | --- | --- |
 | `repo_root` | `Path` | 仓库根，定位 builtin 资源 | `create_dev_runtime` | Admin 配置加载、路径解析 |
 | `audit_log` | `InMemoryAuditLog` | MCP 工具调用审计 | 装配时 new | Gateway、`/cases/{id}/audit` |
-| `plugin_registry` | `ManifestRegistry` | 内置 flow plugin manifest | `build_registry_from_bundled` | `execute_default_log_triage_flow` 校验 capability |
-| `skill_registry` | `SkillRegistry` | 内置 skill 定义 | `build_registry_from_builtin_skills` | `execute_skill_flow` 选 skill/step |
+| `plugin_registry` | `ManifestRegistry` | 内置 plugin manifest | `build_registry_from_bundled` | Admin / 健康检查 |
+| `skill_registry` | `SkillRegistry` | 三根目录 skill 定义 | `build_skill_registry` | PlaybookResolver / AttemptRunner |
 | `tool_registry` | `ToolRegistry` | MCP 工具 spec + handler | `register_internal_tools` | Gateway lookup |
 | `service_catalog` | `MemoryServiceCatalog` | 服务目录条目 | `register_internal_tools` 返回值；Admin 可 upsert | catalog.* 工具 |
 | `policy` | `PolicyGuard` | 写权限 / 审批策略 | `create_dev_runtime` | `McpGateway.invoke` |
@@ -262,7 +251,7 @@ sequenceDiagram
 | 类型 | 定义文件 | 关键字段 | 说明 |
 | --- | --- | --- | --- |
 | `CaseCreateRequest` | `rootseeker/contracts/case.py` | `title`, `symptom`, `service_name`, `source`, `metadata` | 所有 Flow 入口的统一输入 |
-| `DefaultFlowRunResult` | `plugins/builtin/default_log_triage_flow/runner.py` | `case`, `evidence_pack`, `report`, `tool_results`, `step_traces?` | Flow 执行产物；DevRuntime 取前三项写 Store |
+| `DefaultFlowRunResult` | `rootseeker/bootstrap/results.py` | `case`, `evidence_pack`, `report`, `tool_results`, `step_traces?` | Agent 产物适配；DevRuntime 取前三项 |
 | `CaseRecord` | `rootseeker/contracts/case.py` | `case_id`, `status`, `steps`, `selected_skills`, ... | `case_store.put` 的对象 |
 | `EvidencePack` | `rootseeker/contracts/evidence.py` | `case_id`, `items` | `evidence_store.put_pack` |
 | `CaseReport` | `rootseeker/contracts/report.py` | `case_id`, `title`, `summary`, ... | `report_store.put` |
@@ -286,7 +275,7 @@ sequenceDiagram
 
 ### 5.1 Case / Step 状态
 
-Flow 执行由 `execute_skill_flow` 驱动，逐步更新 `CaseRecord.steps[*].status`（`StepStatus`）与 `CaseRecord.status`（`CaseStatus`）。具体转移规则见 [02-contracts-state-machines.md](./02-contracts-state-machines.md) 与 [03-default-triage-flow.md](./03-default-triage-flow.md)。
+Case 执行由 `AttemptRunner` 驱动，更新 `CaseRecord.steps[*].status`（`StepStatus`）与 `CaseRecord.status`（`CaseStatus`）。具体转移规则见 [02-contracts-state-machines.md](./02-contracts-state-machines.md) 与 [03-default-triage-flow.md](./03-default-triage-flow.md)。
 
 Bootstrap 层保证：**仅在 Flow 函数正常返回后**才调用 Store 写入；中途异常不会部分写入 case/evidence/report。
 
@@ -321,7 +310,7 @@ Bootstrap 层保证：**仅在 Flow 函数正常返回后**才调用 Store 写�
 | 默认 flow plugin 未注册 | `runner.py:_validate_default_flow_registration` | `ValueError` |
 | `deny_write=True` | `PolicyGuard` | 写工具 invoke 被拒绝 |
 | `approval_required_for_write_tools=True` | `PolicyGuard` + `ApprovalStore` | 写工具可能阻塞待审批 |
-| Flow 执行异常 | `execute_skill_flow` 及下游 | 异常向上抛；Store **不**写入 |
+| Agent / planner 失败 | `AttemptRunner` | Case `failed` + 错误码；**不**调用 `execute_skill_flow` |
 | Admin 未找到 plugins 目录 | `admin/main.py:_create_admin_runtime` | 回退 `Path.cwd()` 作为 runtime_root |
 
 ---
@@ -347,10 +336,10 @@ Bootstrap 层保证：**仅在 Flow 函数正常返回后**才调用 Store 写�
 | 文档 | 关系 |
 | --- | --- |
 | [02-contracts-state-machines.md](./02-contracts-state-machines.md) | `CaseCreateRequest` / `CaseRecord` 字段与 Case/Step 状态机 |
-| [03-default-triage-flow.md](./03-default-triage-flow.md) | `execute_skill_flow` 逐步 YAML step、工具与证据细节（本篇仅到 runner 入口） |
-| [06-plugin-system.md](./06-plugin-system.md) | `build_registry_from_bundled` 与 `DEFAULT_FLOW_PLUGIN_ID` |
-| [04-skill-system.md](./04-skill-system.md) | `build_registry_from_builtin_skills` 与 default-log-triage skill |
-| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | `execute_skill_flow` 参数解析、checkpoint 恢复语义 |
+| [03-default-triage-flow.md](./03-default-triage-flow.md) | Agent playbook 默认路径、工具与证据细节 |
+| [06-plugin-system.md](./06-plugin-system.md) | `build_registry_from_bundled` 与 bundled plugin |
+| [04-skill-system.md](./04-skill-system.md) | `build_skill_registry` 与 `default-log-triage` playbook |
+| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | YAML 步进器已删除 |
 | [07-mcp-plane.md](./07-mcp-plane.md) | `ToolRegistry` / `PolicyGuard` / `McpGateway.invoke` 全链路 |
 | [16-storage.md](./16-storage.md) | 各 Store 后端读写实现细节 |
 | [12-task-runtime.md](./12-task-runtime.md) | Worker / Scheduler 如何通过 `TaskRuntime` 间接使用 DevRuntime |
@@ -376,12 +365,12 @@ return DevRuntime(...)
 `run_default_flow_from_case_request` 写 Store（节选）：
 
 ```python
-# rootseeker/bootstrap/runtime.py (约 61–74 行)
-result = execute_default_log_triage_flow(...)
-self.case_store.put(result.case)
-self.evidence_store.put_pack(result.evidence_pack)
-self.report_store.put(result.report)
-return result
+# rootseeker/bootstrap/runtime.py
+agent_result = self.run_agent_from_case_request(case_request)
+case = self.case_store.get(agent_result.case_id)
+pack = self.evidence_store.get_pack(agent_result.case_id)
+report = self.report_store.get(agent_result.case_id)
+return DefaultFlowRunResult(case=case, evidence_pack=pack, report=report, tool_results=[])
 ```
 
 `_build_storage` 三分支（节选）：

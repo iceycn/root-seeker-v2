@@ -2,15 +2,15 @@
 
 ## 1. 业务目标
 
-Agent 运行时是 RootSeeker V2 在**确定性默认排查 Flow 之上**的可选编排层：对同一 `CaseCreateRequest`，先尝试由 LLM 产出经 JSON 校验的 MCP 工具计划并执行；若规划失败或非末次尝试，则记录失败快照并重试；**仅在最后一次尝试**仍无法产出可执行计划时，降级到 `FlowRuntime.run_default`（与 [03-default-triage-flow.md](./03-default-triage-flow.md) 同路径）。
+Agent 运行时是 RootSeeker V2 **默认排查执行器**：对同一 `CaseCreateRequest`，由 LLM 产出经 JSON 校验的 MCP 工具计划并执行；规划失败则记录失败快照并重试；**末次仍失败则 Case 失败**（错误码 `SKILL_PLANNER_FAILED` 等），**不会**降级到已删除的 YAML 步进器 `execute_skill_flow`。
 
 **谁触发：** 生产入口经 `DevRuntime.run_agent_from_case_request` / `run_flow_from_payload` 统一路由；显式启用方式：`use_agent: true`（请求体/metadata）或环境变量 `ROOTSEEKER_AGENT_FLOW_ENABLED=true`。已接入：`POST /cases/run-default`、`POST /cases/run-agent`、`POST /webhook/{channel}`、Gateway `case.create`、`TaskExecutor` `CASE_RUN`（`use_agent`）、CLI `demo --use-agent`、Admin `/api/error-chat`。
 
 **解决什么问题：** 在 LLM 可用时动态选择 MCP 工具组合与依赖顺序；多次尝试间通过 `history_summary` 与上下文压缩摘要实现规划自修复；全程保留 attempt 快照、prompt 快照、工具 trace 与 audit 流式事件，便于回放与排障。
 
-**成功时产出：** `AgentRunResult`——`status=completed`，含一个或多个 `AttemptResult`；LLM 规划路径写入 `case_store` / `evidence_store` / `report_store`；默认 Flow 降级路径复用 bootstrap 写入（见 [03-default-triage-flow.md](./03-default-triage-flow.md)）。流式 API 另产出 `AgentRunEvent` 序列并最终携带完整 `AgentRunResult`。
+**成功时产出：** `AgentRunResult`——`status=completed`，含一个或多个 `AttemptResult`；写入 `case_store` / `evidence_store` / `report_store`。`run_default_flow_from_case_request` 将同一路径适配为 `DefaultFlowRunResult`。流式 API 另产出 `AgentRunEvent` 序列并最终携带完整 `AgentRunResult`。
 
-**失败时落到哪里：** 非末次 LLM 规划失败 → `AttemptResult.status=failed`（`_build_failed_planner_attempt`），触发 `agent.attempt.retrying` 后进入下一 attempt；末次仍失败 → 降级 `run_default`；若默认 Flow 步骤失败 → `AttemptResult.status=failed`，`AgentRunResult.status=failed`。Planner 在末次 attempt 且 `allow_default_fallback=False` 的边界场景下直接返回 failed attempt（当前 run_loop 仅在末次传入 `allow_default_fallback=True`）。
+**失败时落到哪里：** 非末次 LLM 规划失败 → `AttemptResult.status=failed`，触发 `agent.attempt.retrying` 后进入下一 attempt；末次仍失败 → `AgentRunResult.status=failed`（`SKILL_PLANNER_FAILED` 等）。`allow_default_fallback` 参数被忽略，即使为 `True` 也不调用旧 Flow。
 
 ---
 
@@ -26,9 +26,9 @@ Agent 运行时是 RootSeeker V2 在**确定性默认排查 Flow 之上**的可�
 | 库 API | `rootseeker/agent_runtime/runtime.py:AgentRuntime.run_payload` / `run_payload_detailed` / `run_payload_stream` | 经 `webhook_payload_to_case_create` 归一化后同上（见 [10-channel-routing.md](./10-channel-routing.md)） |
 | 内部 | `rootseeker/agent_runtime/run_loop.py:AgentRunLoop.run` / `run_stream` | 多 attempt 循环、audit 事件、最终 `AgentRunResult` 组装 |
 
-### 2.2 确定性默认 Flow 入口（不经 AgentRuntime）
+### 2.2 默认排查入口（均经 Agent playbook）
 
-以下路径**不经过** Agent 运行时，直接执行默认 YAML Flow：
+以下路径最终都走 `AttemptRunner`，**不再**执行 YAML Flow 步进器：
 
 | 入口类型 | 路径 / 符号 | 说明 |
 | --- | --- | --- |
@@ -38,10 +38,10 @@ Agent 运行时是 RootSeeker V2 在**确定性默认排查 Flow 之上**的可�
 | CLI | `apps/cli/main.py` | `run_default_flow_from_payload` |
 | Worker / Task | `rootseeker/task_runtime/task_executor.py` → `FlowRuntime.run_default` | `FLOW_*` 任务种类 |
 | FlowRuntime | `rootseeker/flow_runtime/runtime.py:FlowRuntime.run_default` | 包装 `FlowExecutor.execute_default` 并写 checkpoint |
-| Bootstrap | `rootseeker/bootstrap/runtime.py:DevRuntime.run_default_flow_from_case_request` | 底层 `execute_default_log_triage_flow` + Store 写入 |
+| Bootstrap | `rootseeker/bootstrap/runtime.py:DevRuntime.run_default_flow_from_case_request` | 转调 `run_agent_from_case_request` |
 | Gateway WS | `rootseeker/gateway/methods/case_methods.py` / `flow_methods.py` | Case 创建与 Flow 恢复 |
 
-Agent 降级路径在 `attempt_runner.py` 内调用 `FlowRuntime.run_default`，与上表 Worker/FlowRuntime 路径汇合（见 §3.4）。
+默认路径在 `attempt_runner.py` 内**不再**调用 `FlowRuntime.run_default` / `execute_skill_flow`。函数名 `run_default` 仍可包装 Agent 结果。
 
 ---
 
@@ -72,10 +72,10 @@ sequenceDiagram
       else 非末次失败
         AT-->>RL: AttemptResult(status=failed)
       else 末次失败
-        AT->>FR: run_default (fallback)
+        AT-->>RL: AttemptResult(status=failed)
       end
-    else rule_flow / llm_report_enhanced_flow
-      AT->>FR: run_default
+    else planner 不可用
+      AT-->>RL: AttemptResult(status=failed, SKILL_PLANNER_FAILED)
     end
     AT->>AT: ContextCompactor.compact
     RL->>RL: emit attempt/tool/compaction 事件
@@ -274,7 +274,7 @@ sequenceDiagram
 | --- | --- |
 | `tests/unit/agent_runtime/test_agent_runtime.py` | `run_payload` / detailed / stream；audit 事件序列；compaction；JSON plan 解析；LLM plan 执行；重试 + history；依赖失败/optional/并行批次 |
 | `tests/unit/observability/test_observability_components.py` | Agent run 后 Prometheus `agent.run.completed` 与 tool 指标 |
-| `tests/unit/flow_runtime/test_flow_runtime.py` | Agent 降级所依赖的 `FlowRuntime.run_default` 与 checkpoint |
+| `tests/unit/flow_runtime/test_flow_runtime.py` | `FlowRuntime.run_default` 包装 Agent 并写 checkpoint |
 
 ---
 
@@ -282,8 +282,8 @@ sequenceDiagram
 
 | 文档 | 关系 |
 | --- | --- |
-| [03-default-triage-flow.md](./03-default-triage-flow.md) | Agent **末次 fallback** 与生产主路径均执行同一 `execute_default_log_triage_flow`；本篇描述何时绕开 LLM 规划直接走该链 |
-| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | 降级路径下步骤执行、参数规划、checkpoint；Agent LLM 路径**不**经 `execute_skill_flow`，但工具 invoke 与 sanitize 语义一致 |
+| [03-default-triage-flow.md](./03-default-triage-flow.md) | 默认排查主链路与 Agent playbook 为同一路径 |
+| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | YAML 步进器已删除；无 Flow 降级 |
 | [07-mcp-plane.md](./07-mcp-plane.md) | `ToolCallLoop.execute_records` 与 Flow 步骤共用 `McpGateway.invoke`、PolicyGuard 与审计 |
 | [02-contracts-state-machines.md](./02-contracts-state-machines.md) | LLM 规划路径下 Case/Step 状态写入约定 |
 | [08-evidence-root-cause.md](./08-evidence-root-cause.md) | LLM 规划路径的 `append_tool_json_evidence` 与 `build_case_report` |

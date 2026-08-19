@@ -4,7 +4,7 @@
 
 默认排查 Flow 与 Agent Runtime 在执行 MCP 工具后，需要将分散的工具输出收敛为统一的 `EvidencePack`，再经 `RootCauseEngine` 做多假设根因推理，最终产出 `CaseReport` 供通知、API 查询与技能草稿合成消费。
 
-**谁触发：** Skill Flow 执行器（`execute_skill_flow`）在全部（或部分）步骤完成后调用 `build_case_report`；Agent Runtime 的 LLM 工具规划分支在工具执行结束后同样调用；Admin 调试页可单独调用 LLM 报告客户端。
+**谁触发：** `AttemptRunner` 在工具执行结束后调用 `build_case_report`；Admin 调试页可单独调用 LLM 报告客户端。YAML 步进器 `execute_skill_flow` 已删除。
 
 **成功产出：** 内存中的 `EvidencePack`（含若干 `EvidenceItem`）、`CaseReport`（含 `RootCauseConclusion`、证据 ID 列表与 metadata）；Bootstrap 路径下写入 `evidence_store` / `report_store`。
 
@@ -14,7 +14,7 @@
 
 | 入口类型 | 路径 / 符号 | 说明 |
 | --- | --- | --- |
-| 内部（Skill Flow） | `rootseeker/skill_runtime/flow_executor.py:execute_skill_flow` | 步骤循环中累积 `EvidencePack`，Flow 结束两次调用 `build_case_report` |
+| 内部（Agent playbook） | `rootseeker/agent_runtime/attempt_runner.py:AttemptRunner` | 工具执行后累积 `EvidencePack` 并调用 `build_case_report` |
 | 内部（报告构建） | `rootseeker/analysis/report_builder.py:build_case_report` | 规则分析 + 可选 LLM 增强的统一入口 |
 | 内部（根因引擎） | `rootseeker/analysis/root_cause_engine.py:RootCauseEngine.analyze` | 多假设 generate → validate → weight → convergence |
 | 内部（证据映射） | `rootseeker/skill_runtime/evidence_mapper.py:map_tool_result_to_evidence` | 将单步工具 JSON 写入 `EvidencePack` |
@@ -54,15 +54,10 @@ sequenceDiagram
   Bld->>Pack: items.append(EvidenceItem)
 ```
 
-1. `rootseeker/skill_runtime/flow_executor.py` → `execute_skill_flow`
-   - 入：`CaseCreateRequest`、Skill/Tool registry、MCP gateway
-   - 出：初始化 `EvidencePack(case_id=..., summary="default flow evidence")`
-   - 下一步：对每个步骤调用 `_run_step`，完成后调用 `build_case_report`
-
-2. `rootseeker/skill_runtime/flow_executor.py` → `_run_step`
-   - 入：`flow_step.action`、gateway 返回的 `ToolCallResult`
-   - 出：`case_step.outputs`（持久化裁剪版）；成功时调用 `map_tool_result_to_evidence`
-   - 下一步：`evidence_mapper` 或 checkpoint 恢复时对已完成步骤重放映射
+1. `rootseeker/agent_runtime/attempt_runner.py` → `AttemptRunner.run_once`
+   - 入：`CaseCreateRequest`、Skill registry、MCP gateway
+   - 出：初始化并累积 `EvidencePack`；工具成功后映射证据
+   - 下一步：工具循环结束后 `build_case_report`
 
 3. `rootseeker/skill_runtime/result_sanitize.py` → `sanitize_tool_result_for_evidence`
    - 入：MCP action、`content: dict`

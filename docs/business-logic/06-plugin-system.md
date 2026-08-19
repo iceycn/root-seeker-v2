@@ -6,7 +6,7 @@ RootSeeker V2 将「可插拔能力单元」抽象为 **Plugin**：每个 Plugin
 
 **Capability 解析** 建立「能力 ID → 所属 plugin_id」的全局索引：`capabilities` 列表索引逻辑能力（如 `flow.builtin.default_log_triage`），`mcp_tools` 列表索引 MCP 工具名（如 `catalog.resolve_service`），二者不可重复注册。运行时 MCP 工具调用仍走 `ToolRegistry` + `McpGateway`；`plugin_id` 主要写入审计 detail，供链路追踪。
 
-**Skill ↔ Flow Plugin 绑定**：Flow 类 Skill 在 `rootseeker-skill.yaml` 中声明 `flow_plugin_id`，解析后落入 `SkillSpec.metadata["flow_plugin_id"]`；对应 Flow Plugin 的 manifest 通过 `capabilities` 与 `metadata.skill_slug` 形成双向声明。内置默认流 `execute_default_log_triage_flow` 在委托 `execute_skill_flow` 前，会 fail-fast 校验 registry 中是否存在 `DEFAULT_FLOW_PLUGIN_ID` 及其 capability。
+**Skill ↔ 默认执行：** 默认排查不再经 `execute_skill_flow` 或 `execute_default_log_triage_flow`。主流程是 playbook `SKILL.md`（`AttemptRunner`）。bundled plugin `builtin.default_log_triage_flow` 仍可作为 registry 身份保留，但**不再**委托 YAML 步进器。
 
 成功时：registry 持有完整 manifest 与 capability 索引，默认流可运行且审计事件带 `plugin_id`。失败时：manifest 解析/重复注册在启动期抛 `ValueError`；默认流校验失败在运行期抛 `ValueError`，不进入步骤执行。
 
@@ -15,8 +15,8 @@ RootSeeker V2 将「可插拔能力单元」抽象为 **Plugin**：每个 Plugin
 | 入口类型 | 路径 / 符号 | 说明 |
 | --- | --- | --- |
 | Bootstrap 装配 | `rootseeker/bootstrap/runtime.py` → `create_dev_runtime` | 调用 `build_registry_from_bundled(plugins/builtin)` 构建 `DevRuntime.plugin_registry` |
-| 默认排查流 | `plugins/builtin/default_log_triage_flow/runner.py` → `execute_default_log_triage_flow` | 校验注册后委托 `execute_skill_flow` |
-| DevRuntime 封装 | `rootseeker/bootstrap/runtime.py` → `DevRuntime.run_default_flow_from_case_request` | 调用 runner 并写 case/evidence/report store |
+| 默认排查 | `rootseeker/agent_runtime/attempt_runner.py` → `AttemptRunner` | Agent playbook；不委托 `execute_skill_flow` |
+| DevRuntime 封装 | `rootseeker/bootstrap/runtime.py` → `DevRuntime.run_default_flow_from_case_request` | 转调 Agent 并适配 `DefaultFlowRunResult` |
 | Skill 解析 | `rootseeker/skill_system/parser.py` → `_normalize_skill_dict` | 将 YAML `flow_plugin_id` 写入 `SkillSpec.metadata` |
 | Admin HTTP | `apps/admin/main.py` → `GET /api/plugins` | 列出 `plugin_registry.list_plugins()` |
 | Admin HTTP | `apps/admin/main.py` → `GET /api/status` | 返回 `plugins_total` |
@@ -92,72 +92,19 @@ YAML 键名经 `_normalize_keys` 映射到 `PluginManifest` 字段：
 | `builtin.code_index` | `connector` | `connector.code_index` | `code.search`, `repo.list`, … |
 | `builtin.notify` | `channel` | `channel.notify` | `notify.send` |
 
-### 3.3 Skill `flow_plugin_id` 与 Plugin 绑定
+### 3.3 Skill 与 Plugin 的关系（默认路径）
 
-1. `skills/builtin/flows/default-log-triage/rootseeker-skill.yaml`
-   - 声明：`flow_plugin_id: builtin.default_log_triage_flow`
-   - 同文件 `slug: flows/default-log-triage` 定义步骤列表
+出厂 playbook 是 `skills/builtin/default-log-triage/SKILL.md`（`name=default-log-triage`），**无** sidecar `rootseeker-skill.yaml`。bundled plugin `builtin.default_log_triage_flow` 仍出现在 plugin registry，但默认 Case 执行走 `AttemptRunner`，不再经 `execute_skill_flow` 读取 `flow_plugin_id`。
 
-2. `rootseeker/skill_system/parser.py` → `_normalize_skill_dict`
-   - 入：sidecar YAML 字典
-   - 行为：`flow_plugin_id` 从顶层 pop，写入 `metadata["flow_plugin_id"]`
-   - 出：供 `SkillSpec.model_validate` 的字典
+`flow_plugin_id` 仍可能出现在 replay / execution trace 记录字段中，不是默认步进驱动。
 
-3. `rootseeker/skill_system/registry.py` → `build_registry_from_builtin_skills`（见 [04-skill-system.md](./04-skill-system.md)）
-   - 加载后 `get_default_log_triage_skill(registry)` 可读到 `metadata["flow_plugin_id"]`
-
-4. `plugins/builtin/default_log_triage_flow/plugin.yaml`
-   - `id: builtin.default_log_triage_flow` ↔ Skill 的 `flow_plugin_id`
-   - `capabilities: [flow.builtin.default_log_triage]` ↔ runner 中 `DEFAULT_FLOW_CAPABILITY_ID`
-   - `metadata.skill_slug: flows/default-log-triage` ↔ Skill 的 `slug`（声明性关联，runtime 未自动校验二者一致）
-
-**当前运行时绑定方式**（重要）：
-
-- `execute_skill_flow` 的 `plugin_id` 参数默认 `DEFAULT_FLOW_PLUGIN_ID`（`rootseeker/skill_runtime/flow_executor.py`），**未**从 `flow_skill.metadata["flow_plugin_id"]` 自动读取。
-- `execute_default_log_triage_flow` 同样不传递 skill metadata 中的值；常量与 Skill YAML 保持一致，由测试与 manifest 声明保证对齐。
-- `flow_plugin_id` 在 replay / execution trace 契约中作为记录字段（`ReplayRunSnapshot.flow_plugin_id`、`CaseExecutionTrace.flow_plugin_id`）。
-
-### 3.4 默认 Flow Plugin：校验注册 → 委托执行
+### 3.4 默认执行：Agent playbook
 
 1. `rootseeker/bootstrap/runtime.py` → `DevRuntime.run_default_flow_from_case_request`
-   - 入：`CaseCreateRequest`、可选 checkpoint 参数
-   - 出：`DefaultFlowRunResult`；并 `case_store` / `evidence_store` / `report_store` 持久化
-   - 下一步：`execute_default_log_triage_flow`
+   - 转调 `run_agent_from_case_request` → `AttemptRunner`
+   - **不**调用 `execute_default_log_triage_flow` / `execute_skill_flow`
 
-2. `plugins/builtin/default_log_triage_flow/runner.py` → `execute_default_log_triage_flow`
-   - 入：`case_request`, `skill_registry`, `plugin_registry`, `gateway`, `tool_registry`, 可选恢复参数
-   - 第一步：`_validate_default_flow_registration(plugin_registry)`
-   - 第二步：`execute_skill_flow(...)`（未显式传 `plugin_id`，使用默认值）
-   - 出：包装为 `DefaultFlowRunResult`（字段与 `SkillFlowRunResult` 一致）
-
-3. `plugins/builtin/default_log_triage_flow/runner.py` → `_validate_default_flow_registration`
-   - `get_plugin(DEFAULT_FLOW_PLUGIN_ID)` 必须非空，否则 `ValueError("Default flow plugin not found: ...")`
-   - `resolve_capability(DEFAULT_FLOW_CAPABILITY_ID)` 必须存在且 `cap.plugin_id == DEFAULT_FLOW_PLUGIN_ID`，否则 `ValueError("Default flow capability missing: ...")`
-   - 常量：`DEFAULT_FLOW_PLUGIN_ID` 自 `flow_executor` 导入；`DEFAULT_FLOW_CAPABILITY_ID = "flow.builtin.default_log_triage"` 定义于 runner
-
-4. `rootseeker/skill_runtime/flow_executor.py` → `execute_skill_flow`
-   - 逐步执行 flow skill 各 step（详见 [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md)）
-   - 每步 `gateway.invoke(req, plugin_id=plugin_id, actor="skill-flow-executor")`
-   - 下一步：[07-mcp-plane.md](./07-mcp-plane.md) 中的 `McpGateway.invoke`
-
-```mermaid
-sequenceDiagram
-  participant BR as Bootstrap
-  participant REG as ManifestRegistry
-  participant RUN as execute_default_log_triage_flow
-  participant VAL as _validate_default_flow_registration
-  participant EX as execute_skill_flow
-  participant GW as McpGateway
-
-  BR->>REG: build_registry_from_bundled
-  RUN->>VAL: plugin_registry
-  VAL->>REG: get_plugin(DEFAULT_FLOW_PLUGIN_ID)
-  VAL->>REG: resolve_capability(flow.builtin.default_log_triage)
-  RUN->>EX: case_request, skill_registry, gateway, ...
-  loop each step
-    EX->>GW: invoke(..., plugin_id=DEFAULT_FLOW_PLUGIN_ID)
-  end
-```
+2. Plugin registry 仍由 `create_dev_runtime` 扫描 `plugins/builtin/`；Admin `GET /api/plugins` 可列出 bundled plugin，与 playbook 执行解耦。
 
 ### 3.5 Capability 解析（查询语义）
 
@@ -209,7 +156,7 @@ sequenceDiagram
 
 ## 5. 状态与副作用
 
-本链路 **不** 直接修改 Case / Step 状态机；状态变化发生在 `execute_skill_flow` 内部（见 [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md)）。
+本链路 **不** 直接修改 Case / Step 状态机；状态变化发生在 `AttemptRunner` 内部（见 [03-default-triage-flow.md](./03-default-triage-flow.md)）。
 
 Plugin 系统自身的副作用：
 
@@ -218,7 +165,7 @@ Plugin 系统自身的副作用：
 | `build_registry_from_bundled` | 进程内 `ManifestRegistry` | 只读 manifest 文件，无写盘 |
 | `register` | `_plugins` / `_capability_index` | 纯内存；进程重启后重新扫描 |
 | `execute_default_log_triage_flow` 校验失败 | 无 | 抛异常，不写 store |
-| `execute_skill_flow` 经 gateway | `InMemoryAuditLog` | 审计 detail 可选含 `plugin_id` |
+| Agent 经 gateway | `InMemoryAuditLog` | 审计 detail 含 tool_name / case_id |
 | `run_default_flow_from_case_request` | case / evidence / report store | bootstrap 层持久化，非 plugin 模块职责 |
 
 对外 I/O：manifest 读取本地 YAML；无 MCP / HTTP 出站。Admin `GET /api/plugins` 只读 registry。
@@ -231,9 +178,7 @@ Plugin 系统自身的副作用：
 | YAML 非 mapping / Pydantic 校验失败 | `manifest.load_manifest_from_path` | `ValueError("Invalid plugin manifest: ...")` |
 | 重复 `plugin_id` | `registry.ManifestRegistry.register` | `ValueError("Duplicate plugin_id: ...")` |
 | capability 或 mcp_tool 名已被其他插件占用 | `registry._index_capability` | `ValueError("Capability or tool '...' already registered by ...")` |
-| 默认 flow 插件未注册 | `runner._validate_default_flow_registration` | `ValueError("Default flow plugin not found: builtin.default_log_triage_flow")` |
-| flow capability 缺失或归属错误 plugin | 同上 | `ValueError("Default flow capability missing: flow.builtin.default_log_triage")` |
-| 步骤工具未注册 | `flow_executor._run_step` | step/case → `FAILED`（非 plugin registry 职责） |
+| 步骤工具未注册 | `McpGateway.invoke` | `TOOL_NOT_REGISTERED`（非 plugin registry 职责） |
 | MCP 策略/审批拦截 | `McpGateway.invoke` | 返回 `APPROVAL_REQUIRED` / `POLICY_DENIED`（见 [07-mcp-plane.md](./07-mcp-plane.md)） |
 
 **未在 plugin_system 代码中找到的行为**（契约已预留）：
@@ -241,7 +186,7 @@ Plugin 系统自身的副作用：
 - 按 `enabled_by_default` 过滤插件
 - 读取 `entry_point` 动态加载 runner
 - 校验 `metadata.skill_slug` 与 Skill `slug` / `flow_plugin_id` 三角一致
-- 从 `SkillSpec.metadata["flow_plugin_id"]` 驱动 `execute_skill_flow(plugin_id=...)`
+- 从 `SkillSpec.metadata["flow_plugin_id"]` 驱动已删除的 `execute_skill_flow(plugin_id=...)`
 
 ## 7. 相关测试
 
@@ -258,9 +203,9 @@ Plugin 系统自身的副作用：
 | 文档 | 关系 |
 | --- | --- |
 | [01-bootstrap-wiring.md](./01-bootstrap-wiring.md) | `create_dev_runtime` 调用 `build_registry_from_bundled`，将 `plugin_registry` 注入 `DevRuntime` |
-| [03-default-triage-flow.md](./03-default-triage-flow.md) | 默认排查业务链；本系统的 flow plugin 是该链的执行入口包装 |
-| [04-skill-system.md](./04-skill-system.md) | Skill 发现与 `flow_plugin_id` 解析；`flows/default-log-triage` 步骤定义 |
-| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | `execute_skill_flow` 步骤循环、`plugin_id` 传入 gateway |
+| [03-default-triage-flow.md](./03-default-triage-flow.md) | 默认排查业务链（Agent playbook） |
+| [04-skill-system.md](./04-skill-system.md) | Skill 发现与 playbook `default-log-triage` |
+| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | YAML 步进器已删除 |
 | [07-mcp-plane.md](./07-mcp-plane.md) | `mcp_tools` 实际注册在 `ToolRegistry`；gateway 执行与审计 |
 | [02-contracts-state-machines.md](./02-contracts-state-machines.md) | `PluginManifest`、`PluginKind` 契约定义 |
 | [17-approval-governance-replay.md](./17-approval-governance-replay.md) | 回放快照与 trace 中的 `flow_plugin_id` 字段 |

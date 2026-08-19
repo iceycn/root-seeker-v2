@@ -10,7 +10,7 @@
 ## 如何读
 
 1. 先读本页，建立端到端地图。
-2. 再读 **[03-default-triage-flow.md](./03-default-triage-flow.md)**：默认排查主链路（告警 → 14 步 Skill → MCP → 证据 → 报告 → 通知）。
+2. 再读 **[03-default-triage-flow.md](./03-default-triage-flow.md)**：默认排查主链路（告警 → Agent playbook → MCP → 证据 → 报告）。
 3. 然后按需要下钻：
    - 工具怎么调：**[07-mcp-plane.md](./07-mcp-plane.md)**
    - 证据怎么变成根因：**[08-evidence-root-cause.md](./08-evidence-root-cause.md)**
@@ -33,8 +33,7 @@ flowchart TD
 
   subgraph core [默认排查内核]
     BOOT["create_dev_runtime"]
-    FLOW["execute_default_log_triage_flow"]
-    SKILL["execute_skill_flow 14 steps"]
+    AGENT["AttemptRunner + playbook SKILL.md"]
     MCP["McpGateway + PolicyGuard"]
     EV["EvidencePack"]
     RCA["RootCauseEngine"]
@@ -46,7 +45,6 @@ flowchart TD
     IDX["代码索引 Zoekt/Qdrant/GitNexus"]
     CAT["服务目录 + 日志平面"]
     APPR["审批 / 回放门禁"]
-    AGENT["AgentRuntime LLM 规划"]
   end
 
   API --> BOOT
@@ -54,22 +52,20 @@ flowchart TD
   ADMIN --> BOOT
   GW --> BOOT
   CRON --> BOOT
-  BOOT --> FLOW --> SKILL --> MCP
+  BOOT --> AGENT --> MCP
   MCP --> EV --> RCA --> RPT --> NTF
   MCP --> IDX
   MCP --> CAT
   MCP --> APPR
-  AGENT -.-> SKILL
 ```
 
 主链符号（从外到内）：
 
 1. `apps/api/main.py` / `apps/admin/main.py` / Gateway `case_create`
 2. `rootseeker/bootstrap/runtime.py:create_dev_runtime` / `run_default_flow_from_case_request`
-3. `plugins/builtin/default_log_triage_flow/runner.py:execute_default_log_triage_flow`
-4. `rootseeker/skill_runtime/flow_executor.py:execute_skill_flow`
-5. `rootseeker/mcp_plane` → `mcp_servers/internal` / `mcp_servers/external`
-6. `rootseeker/analysis` → `CaseReport` → `notify.send`
+3. `rootseeker/agent_runtime/attempt_runner.py:AttemptRunner`（当前 playbook `SKILL.md`）
+4. `rootseeker/mcp_plane` → `mcp_servers/internal` / `mcp_servers/external`
+5. `rootseeker/analysis` → `CaseReport` → 可选 `notify.send`
 
 ---
 
@@ -79,13 +75,13 @@ flowchart TD
 | --- | --- | --- |
 | [01-bootstrap-wiring.md](./01-bootstrap-wiring.md) | `create_dev_runtime`、`DevRuntime`、`ROOTSEEKER_STORAGE_BACKEND` | 运行时怎么装配 |
 | [02-contracts-state-machines.md](./02-contracts-state-machines.md) | `rootseeker/contracts/`、`validate_*_transition` | 类型词典与状态机 |
-| [03-default-triage-flow.md](./03-default-triage-flow.md) | `/cases/run-default`、webhook、error-chat、14 步 YAML | **主链路（必读）** |
+| [03-default-triage-flow.md](./03-default-triage-flow.md) | `/cases/run-default`、webhook、error-chat、Agent playbook | **主链路（必读）** |
 | [04-skill-system.md](./04-skill-system.md) | Skill 发现/解析/注册、草稿评审发布 | Skill 资产怎么进运行时 |
-| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | `execute_skill_flow`、checkpoint、`resume_status` | 步骤引擎与断点恢复 |
+| [05-skill-runtime-flow-executor.md](./05-skill-runtime-flow-executor.md) | YAML 步进器已删除 | 默认路径为 Agent playbook |
 | [06-plugin-system.md](./06-plugin-system.md) | manifest、capability、`flow_plugin_id` | 插件如何声明能力 |
 | [07-mcp-plane.md](./07-mcp-plane.md) | `McpGateway`、PolicyGuard、内外部 adapter | 工具调用平面 |
 | [08-evidence-root-cause.md](./08-evidence-root-cause.md) | `EvidencePack`、`RootCauseEngine`、LLM 报告 | 证据与根因 |
-| [09-agent-runtime.md](./09-agent-runtime.md) | `AgentRunLoop`、LLM tool plan、compaction | LLM 规划旁路（库级） |
+| [09-agent-runtime.md](./09-agent-runtime.md) | `AgentRunLoop`、LLM tool plan、compaction | 默认执行器（AttemptRunner） |
 | [10-channel-routing.md](./10-channel-routing.md) | inbound 归一化、出站飞书/钉钉等、`notify.send` | 告警进、通知出 |
 | [11-gateway-control-plane.md](./11-gateway-control-plane.md) | `/gateway/ws`、case/flow/skill/tool/approval 方法 | 控制面协议 |
 | [12-task-runtime.md](./12-task-runtime.md) | `CASE_RUN` / `CRON` / `REPLAY` / `FLOW_*` | 异步任务统一执行 |
@@ -107,7 +103,7 @@ flowchart TD
 | 告警 Webhook 进系统 | [10](./10-channel-routing.md) | 03 → 08 |
 | 看某一步工具实际打到哪 | [03](./03-default-triage-flow.md) 步骤表 | [07](./07-mcp-plane.md) |
 | 仓库同步 / 代码搜不到 | [14](./14-code-index.md) | [13](./13-cron-scheduler.md) |
-| Flow 中途失败要续跑 | [05](./05-skill-runtime-flow-executor.md) | [12](./12-task-runtime.md) |
+| Flow 中途失败要续跑 | [05](./05-skill-runtime-flow-executor.md)（按步 resume 已删除） | [09](./09-agent-runtime.md) |
 | 写工具被拦住要审批 | [17](./17-approval-governance-replay.md) | [07](./07-mcp-plane.md)、[11](./11-gateway-control-plane.md) |
 | 换 sqlite/mysql | [16](./16-storage.md) | [01](./01-bootstrap-wiring.md) |
 
@@ -119,7 +115,7 @@ flowchart TD
 
 | 原差距 | 当前状态 |
 | --- | --- |
-| `flow_plugin_id` 未消费 | 已接入 `execute_skill_flow` |
+| `flow_plugin_id` 未消费 | 步进器已删除；默认路径不再读取该字段驱动 YAML 步骤 |
 | `SkillPublisher` 未注册 registry | 已修复 |
 | `stable_stagger_seconds` 未接入 tick | 已接入 `CronScheduler.tick` |
 | Gateway 鉴权/限流未注入 API | 已通过 `build_gateway_server` 按设置注入 |

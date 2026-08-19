@@ -31,35 +31,28 @@
 2. `rootseeker/flow_runtime/flow_executor.py` → `FlowExecutor.execute_default`
    - 入：`CaseCreateRequest`
    - 出：调用 `DevRuntime.run_default_flow_from_case_request`，再 `build_execution_trace` 组装 `ExecutionTrace`
-3. `rootseeker/skill_runtime/flow_executor.py` → `execute_skill_flow`
-   - 入：`CaseCreateRequest`、Skill/Tool registry、MCP gateway
-   - 出：`SkillFlowRunResult(case: CaseRecord, evidence_pack, report, ...)`
-   - **Case 创建时**直接设 `status=CaseStatus.RUNNING`；**Step** 按 skill 步骤实例化为 `StepStatus.PENDING`
-4. `rootseeker/skill_runtime/flow_executor.py` → `_run_step`
-   - 入：`CaseStep`、`ToolCallRequest`
-   - 出：`case_step.status` 在 `RUNNING` → `COMPLETED` / `FAILED`；失败时 `case.status = FAILED`
-5. `rootseeker/agent_runtime/attempt_runner.py` → LLM 工具规划分支
-   - 入：已存在的 `CaseRecord` 与 `ToolCallRequest` 列表
-   - 出：逐步写 `StepStatus.SKIPPED/COMPLETED/FAILED`，汇总 `CaseStatus.COMPLETED/FAILED` 并 `case_store.put`
+3. `rootseeker/agent_runtime/attempt_runner.py` → `AttemptRunner.run_once`
+   - 入：`CaseCreateRequest`、Skill registry、MCP gateway
+   - 出：`CaseRecord` / `EvidencePack` / `CaseReport` 写入 Store
+   - **Case 创建时**设 `status=CaseStatus.RUNNING`；工具调用对应 `CaseStep`
 
 ```mermaid
 flowchart LR
   API["CaseCreateRequest"] --> FR["FlowRuntime.run_default"]
   FR --> FE["FlowExecutor.execute_default"]
-  FE --> SF["execute_skill_flow"]
-  SF --> RS["_run_step / gateway.invoke"]
-  RS --> OUT["CaseRecord + EvidencePack + CaseReport"]
-  AR["attempt_runner LLM 分支"] --> OUT
+  FE --> AR["AttemptRunner"]
+  AR --> GW["gateway.invoke"]
+  GW --> OUT["CaseRecord + EvidencePack + CaseReport"]
 ```
 
 **状态校验调用点（grep 结果）：**
 
 | 符号 | 生产代码调用 | 测试调用 |
 | --- | --- | --- |
-| `validate_case_transition` | `skill_runtime/flow_executor.py`、`agent_runtime/attempt_runner.py` | `tests/unit/contracts/test_t1_io_and_state_machine.py` |
+| `validate_case_transition` | `agent_runtime/attempt_runner.py` | `tests/unit/contracts/test_t1_io_and_state_machine.py` |
 | `validate_step_transition` | 同上 | 同上 |
 
-校验函数已通过 `rootseeker/contracts/__init__.py` 公开导出；`skill_runtime/flow_executor.py` 与 `agent_runtime/attempt_runner.py` 在状态变更前调用 `validate_*_transition`。
+校验函数已通过 `rootseeker/contracts/__init__.py` 公开导出；`agent_runtime/attempt_runner.py` 在状态变更前调用 `validate_*_transition`。
 
 ## 4. 关键数据结构
 
@@ -71,7 +64,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | `CaseStatus` | 顶层 Case 枚举：`pending/planned/running/waiting_approval/completed/failed` | 总控 / flow 执行器 | Store、API 响应、状态机 |
 | `StepStatus` | 步骤枚举：`pending/running/completed/failed/skipped` | 执行引擎 / 审批引擎 | `CaseStep`、执行 trace |
-| `CaseCreateRequest` | 创建 Case 入参：title、symptom、service_name、source、metadata | 通道/API/webhook | `FlowRuntime`、`execute_skill_flow` |
+| `CaseCreateRequest` | 创建 Case 入参：title、symptom、service_name、source、metadata | 通道/API/webhook | `FlowRuntime`、`AttemptRunner` |
 | `CaseStep` | 单步：step_id、name、skill_name、action、status、tool_name、inputs/outputs、requires_approval | Skill 定义展开 | 执行引擎、checkpoint |
 | `CaseRecord` | 完整 Case：case_id、字段镜像 request、status、selected_skills、steps、时间戳 | flow 执行器 | case_store、报告 |
 | `CasePlanSnapshot` | 计划快照：selected_skill、planned_steps | Skill composer（规划阶段） | 审计 / 回放对比 |
@@ -318,7 +311,7 @@ stateDiagram-v2
 | --- | --- |
 | [`docs/architecture/state-machines.md`](../architecture/state-machines.md) | Case/Step 状态语义与责任边界的架构级说明；与 `state_machine.py` 表一致 |
 | [`01-bootstrap-wiring.md`](01-bootstrap-wiring.md) | DevRuntime 如何装配 Store 与 registry，为契约消费提供运行时上下文 |
-| [`03-default-triage-flow.md`](03-default-triage-flow.md) | 默认排查主链路：`CaseCreateRequest` → `execute_skill_flow` 逐步展开 |
+| [`03-default-triage-flow.md`](03-default-triage-flow.md) | 默认排查主链路：`CaseCreateRequest` → `AttemptRunner` |
 | [`05-skill-runtime-flow-executor.md`](05-skill-runtime-flow-executor.md) | Step 执行、参数规划、checkpoint 恢复对 `CaseStep` 状态的实际写入 |
 | [`09-agent-runtime.md`](09-agent-runtime.md) | LLM 工具规划路径对 Case/Step 状态的写入 |
 | [`12-task-runtime.md`](12-task-runtime.md) | `TaskRecord` / `TaskStatus` 异步任务状态（与 Case 状态机独立） |

@@ -62,11 +62,11 @@
    - 入：`CaseCreateRequest`
    - 出：`DefaultFlowRunResult`（case / evidence_pack / report）
    - 副作用：写入 `case_store`、`evidence_store`、`report_store`
-   - 下一步：`plugins/builtin/default_log_triage_flow/runner.py` → `execute_default_log_triage_flow`
+   - 下一步：`run_agent_from_case_request` → `AttemptRunner`
 
-7. `plugins/builtin/default_log_triage_flow/runner.py` → `execute_default_log_triage_flow`
-   - 入：case_request + gateway + skill_registry 等
-   - 出：完整排查结果（含 `notify.send` 工具调用，见 §3.3）
+7. `rootseeker/agent_runtime/attempt_runner.py` → `AttemptRunner.run_once`
+   - 入：case_request + playbook + gateway
+   - 出：完整排查结果（planner 可能调用 `notify.send`，见 §3.3）
    - 下一步：`handle_webhook` 保存 checkpoint 并返回 `WebhookResponse`
 
 8. `apps/api/main.py` → `handle_webhook`（收尾）
@@ -81,7 +81,7 @@ sequenceDiagram
     participant In as ingest_channel_message
     participant Norm as normalize_inbound
     participant RT as DevRuntime
-    participant Flow as execute_default_log_triage_flow
+    participant AR as AttemptRunner
     participant GW as McpGateway notify.send
 
     Ext->>API: POST /webhook/{channel} JSON
@@ -90,9 +90,9 @@ sequenceDiagram
     Norm-->>In: NormalizedInboundMessage
     In-->>API: NormalizedInboundMessage
     API->>RT: CaseCreateRequest
-    RT->>Flow: run_default_flow_from_case_request
-    Flow->>GW: notify.send (after_report)
-    Flow-->>RT: DefaultFlowRunResult
+    RT->>AR: run_default_flow_from_case_request
+    AR->>GW: notify.send（若 planner 调用）
+    AR-->>RT: Agent / DefaultFlowRunResult
     RT-->>API: case + report
     API-->>Ext: WebhookResponse case_id flow_run_id
 ```
@@ -109,9 +109,9 @@ sequenceDiagram
 
 ### 3.3 出站：notify.send → 渠道适配器
 
-1. `skills/builtin/flows/default-log-triage/rootseeker-skill.yaml`（step `notify`）
-   - 入：Flow 上下文；`defer_until: after_report`
-   - 出：调用 `notify.send`（绑定 `tools/notify-send`）
+1. `skills/builtin/default-log-triage/SKILL.md`（playbook 正文约定报告后再 `notify.send`）
+   - 入：Agent playbook 上下文；引擎不强制 `defer_until`
+   - 出：若 planner 调用 `notify.send`（绑定 helper `notify-send`）
 
 2. `rootseeker/skill_runtime/rule_step_argument_resolver.py` → `build_notify_args`
    - 入：`CaseCreateRequest`、`CaseReport`
@@ -218,7 +218,7 @@ flowchart LR
 - `CaseCreateRequest` — `rootseeker/contracts/case.py`
   - `title`、`symptom`、`service_name`、`source`、`metadata`
   - 填充：`handle_webhook` / `webhook_payload_to_case_create`
-  - 消费：`run_default_flow_from_case_request`、`execute_skill_flow`
+  - 消费：`run_default_flow_from_case_request`、`AttemptRunner`
 
 ### 路由 / 出站
 
