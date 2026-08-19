@@ -58,5 +58,52 @@ uv run python -m pytest tests/unit/skill_system/test_skill_env_resolver.py -q --
 
 ## Concerns
 
-- `require=False` path not covered by brief tests; behavior implemented per spec but untested here
-- Optional keys with values are included in `mcp_extra` when resolved but do not affect `missing` list
+- Addressed in Review Fix: `require=False` and overlapping declared+optional keys are now tested; `missing` excludes `optional_keys`.
+
+## Review Fix (Important)
+
+**Date:** 2026-08-19  
+**Status:** DONE (review findings)
+
+### Findings addressed
+
+1. Keys in both `declared_keys` and `optional_keys` are optional: `missing` excludes `optional_keys`, so a missing overlap does not raise `SKILL_ENV_MISSING`.
+2. Tests added:
+   - `test_overlapping_declared_optional_missing_does_not_raise`
+   - `test_mcp_scope_item_is_ignored`
+   - `test_require_false_records_missing_without_raising`
+
+### TDD — RED
+
+```
+uv run python -m pytest tests/unit/skill_system/test_skill_env_resolver.py -q --tb=short
+```
+
+```
+....F..                                                                  [100%]
+================================== FAILURES ===================================
+__________ test_overlapping_declared_optional_missing_does_not_raise __________
+tests\unit\skill_system\test_skill_env_resolver.py:53: in test_overlapping_declared_optional_missing_does_not_raise
+    result = resolve_skill_env(
+rootseeker\skill_system\env_resolver.py:87: in resolve_skill_env
+    raise SkillError(
+E   rootseeker.skill_system.errors.SkillError: Missing required env keys: OVERLAP
+=========================== short test summary info ===========================
+FAILED tests/unit/skill_system/test_skill_env_resolver.py::test_overlapping_declared_optional_missing_does_not_raise
+```
+
+(`test_mcp_scope_item_is_ignored` and `test_require_false_records_missing_without_raising` already passed.)
+
+### TDD — GREEN
+
+`missing` now: `[key for key in declared_keys if key not in mcp_extra and key not in set(optional_keys)]`
+
+```
+uv run python -m pytest tests/unit/skill_system/test_skill_env_resolver.py -q --tb=short
+```
+
+```
+.......                                                                  [100%]
+```
+
+Exit code 0 (7 passed).

@@ -47,3 +47,37 @@ def test_missing_required_raises() -> None:
             admin_items=[],
         )
     assert exc.value.code == "SKILL_ENV_MISSING"
+
+
+def test_overlapping_declared_optional_missing_does_not_raise() -> None:
+    result = resolve_skill_env(
+        declared_keys=["OVERLAP"],
+        optional_keys=["OVERLAP"],
+        process_env={},
+        admin_items=[],
+    )
+    assert "OVERLAP" not in result.missing
+    assert result.mcp_extra == {}
+
+
+def test_mcp_scope_item_is_ignored() -> None:
+    result = resolve_skill_env(
+        declared_keys=[],
+        optional_keys=["FOO"],
+        process_env={},
+        admin_items=[{"key": "FOO", "value": "from-mcp", "scope": "mcp", "secret": False}],
+    )
+    assert result.mcp_extra == {}
+    assert "FOO" not in result.substitutions
+
+
+def test_require_false_records_missing_without_raising() -> None:
+    result = resolve_skill_env(
+        declared_keys=["NEED"],
+        optional_keys=[],
+        process_env={},
+        admin_items=[],
+        require=False,
+    )
+    assert result.missing == ["NEED"]
+    assert result.mcp_extra == {}

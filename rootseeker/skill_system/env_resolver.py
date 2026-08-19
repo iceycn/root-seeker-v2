@@ -81,7 +81,10 @@ def resolve_skill_env(
             if not is_secret:
                 substitutions[key] = value
 
-    missing = [key for key in declared_keys if key not in mcp_extra]
+    optional_set = set(optional_keys)
+    missing = [
+        key for key in declared_keys if key not in mcp_extra and key not in optional_set
+    ]
 
     if missing and require:
         raise SkillError(
