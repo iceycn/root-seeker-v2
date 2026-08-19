@@ -38,7 +38,7 @@ def test_api_run_default_flow_and_query_report() -> None:
     skills = client.get("/skills")
     assert skills.status_code == 200
     slugs = {x["slug"] for x in skills.json()["items"]}
-    assert "flows/default-log-triage" in slugs
+    assert "default-log-triage" in slugs
 
     run = client.post(
         "/cases/run-default",

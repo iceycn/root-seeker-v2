@@ -35,7 +35,7 @@ class McpGatewayEvidenceExpander:
         case_id: str,
         trace_id: str | None = None,
         service_name: str | None = None,
-        skill_name: str = "flows/default-log-triage",
+        skill_name: str = "default-log-triage",
     ) -> None:
         self._gateway = gateway
         self._case_id = case_id

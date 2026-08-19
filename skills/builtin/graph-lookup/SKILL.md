@@ -1,6 +1,9 @@
 ---
-name: Graph lookup
+name: graph-lookup
 description: "查询 GitNexus 代码知识图谱。"
+allowed-tools: graph.impact graph.context graph.query graph.cypher graph.trace graph.list_repos graph.detect_changes
+metadata:
+  role: helper
 ---
 
 # Graph lookup

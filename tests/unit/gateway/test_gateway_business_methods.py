@@ -134,7 +134,7 @@ def test_gateway_skill_list() -> None:
     assert "items" in result
     assert result["total"] >= 1
     slugs = [s["slug"] for s in result["items"]]
-    assert "flows/default-log-triage" in slugs
+    assert "default-log-triage" in slugs
 
 
 def test_gateway_skill_get() -> None:
@@ -142,10 +142,10 @@ def test_gateway_skill_get() -> None:
     runtime = create_dev_runtime(_repo_root())
     server = GatewayServer(runtime=runtime)
 
-    result = server.methods.invoke("skill.get", {"slug": "flows/default-log-triage"})
+    result = server.methods.invoke("skill.get", {"slug": "default-log-triage"})
 
     assert result.get("found") is True
-    assert result.get("skill", {}).get("slug") == "flows/default-log-triage"
+    assert result.get("skill", {}).get("slug") == "default-log-triage"
 
 
 def test_gateway_tool_list() -> None:

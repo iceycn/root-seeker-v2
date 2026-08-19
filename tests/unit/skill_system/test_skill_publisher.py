@@ -10,9 +10,9 @@ def test_skill_publisher_upserts_into_registry(tmp_path: Path) -> None:
     registry = SkillRegistry()
     publisher = SkillPublisher(target_dir=tmp_path / "generated", registry=registry)
     draft = SkillDraft(
-        slug="tools/generated-test",
+        slug="generated-test",
         version="1.0.0",
-        name="Generated Test",
+        name="generated-test",
         description="test skill",
         triggers=[],
         required_tools=["notify.send"],
@@ -30,4 +30,4 @@ def test_skill_publisher_upserts_into_registry(tmp_path: Path) -> None:
     published = publisher.publish(draft, review)
     assert published is not None
     assert registry.get(draft.slug) is not None
-    assert registry.get(draft.slug).name == "Generated Test"
+    assert registry.get(draft.slug).name == "generated-test"

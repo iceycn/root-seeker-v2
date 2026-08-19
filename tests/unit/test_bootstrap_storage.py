@@ -156,7 +156,7 @@ def test_sqlite_replay_history_store_persists_across_instances(tmp_path: Path) -
         replay_id="rp-test-1",
         run_id="run-1",
         case_id="case-1",
-        skill_name="flows/default-log-triage",
+        skill_name="default-log-triage",
         flow_plugin_id="builtin.default_log_triage_flow",
         passed=True,
         metrics={"duration_ms": 12.0},

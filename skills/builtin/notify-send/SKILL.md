@@ -1,6 +1,9 @@
 ---
-name: Notify send
+name: notify-send
 description: "在报告生成后发送排查结果通知。"
+allowed-tools: notify.send
+metadata:
+  role: helper
 ---
 
 # Notify send

@@ -17,7 +17,7 @@ __all__ = [
     "get_default_log_triage_skill",
 ]
 
-DEFAULT_FLOW_SKILL_SLUG = "flows/default-log-triage"
+DEFAULT_FLOW_SKILL_SLUG = "default-log-triage"
 DEFAULT_BUILTIN_SKILL_SLUG = DEFAULT_FLOW_SKILL_SLUG
 
 

@@ -1,6 +1,9 @@
 ---
-name: Trace chain
+name: trace-chain
 description: "获取分布式 trace 链路证据。"
+allowed-tools: trace.get_chain
+metadata:
+  role: helper
 ---
 
 # Trace chain

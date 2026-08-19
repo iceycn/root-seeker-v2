@@ -110,7 +110,7 @@ class FlowRuntime:
         ]
 
     def _current_flow_step_ids(self) -> list[str]:
-        skill = self.runtime.skill_registry.get("flows/default-log-triage")
+        skill = self.runtime.skill_registry.get("default-log-triage")
         if skill is None:
             return []
         return [step.step_id for step in skill.steps]

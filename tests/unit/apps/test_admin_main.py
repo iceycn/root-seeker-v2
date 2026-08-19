@@ -56,15 +56,15 @@ def test_admin_health_status_and_page(tmp_path: Path) -> None:
 def test_admin_builtin_skill_content_returns_standard_skill_md() -> None:
     client = TestClient(create_app(_repo_root()))
 
-    response = client.get("/api/skills/flows/default-log-triage/content")
+    response = client.get("/api/skills/default-log-triage/content")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["skill_md"].startswith("---\nname: Default log triage\n")
+    assert data["skill_md"].startswith("---\nname: default-log-triage\n")
     assert "rootseeker-skill-spec" not in data["skill_md"]
     assert '"slug"' not in data["skill_md"]
-    assert data["runtime_spec"]["slug"] == "flows/default-log-triage"
-    assert "flows/default-log-triage" in data["rootseeker_skill_yaml"]
+    assert data["runtime_spec"]["slug"] == "default-log-triage"
+    assert data["rootseeker_skill_yaml"] == ""
     assert "tool_parameters" in data
     assert len(data["tool_parameters"]) > 0
     first_tool = data["tool_parameters"][0]
@@ -641,7 +641,7 @@ def test_build_llm_error_chat_payload_stays_under_kimi_limit() -> None:
             model_dump=lambda mode="json": {
                 "case_id": "case-huge",
                 "title": "huge case",
-                "selected_skills": ["flows/default-log-triage"],
+                "selected_skills": ["default-log-triage"],
                 "symptom": huge,
                 "steps": steps,
             }
@@ -681,7 +681,7 @@ def test_build_llm_error_chat_payload_hard_truncates_when_still_over_limit() -> 
             model_dump=lambda mode="json": {
                 "case_id": "case-hard",
                 "title": "hard truncate",
-                "selected_skills": ["flows/default-log-triage"],
+                "selected_skills": ["default-log-triage"],
                 "symptom": huge,
                 "steps": [],
             }

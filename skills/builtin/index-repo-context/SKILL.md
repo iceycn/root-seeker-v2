@@ -1,6 +1,9 @@
 ---
-name: Index and repo context
+name: index-repo-context
 description: "检查代码索引状态并列出已注册仓库。"
+allowed-tools: index.get_status repo.list
+metadata:
+  role: helper
 ---
 
 # Index and repo context

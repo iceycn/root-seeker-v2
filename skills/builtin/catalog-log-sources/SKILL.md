@@ -1,6 +1,9 @@
 ---
-name: Catalog log sources
+name: catalog-log-sources
 description: "解析服务对应的日志源列表。"
+allowed-tools: catalog.get_log_sources
+metadata:
+  role: helper
 ---
 
 # Catalog log sources

@@ -160,7 +160,7 @@ def test_gateway_with_http_adapter_invokes_all_non_incident_tools(
         req = ToolCallRequest(
             case_id="c",
             step_id="s",
-            skill_name="flows/default-log-triage",
+            skill_name="default-log-triage",
             tool_name=tool_name,
             arguments=arguments,
         )

@@ -1,6 +1,9 @@
 ---
-name: Incident normalize
+name: incident-normalize
 description: "将原始告警载荷规整为统一事件字段，供后续排查步骤使用。"
+allowed-tools: incident.normalize
+metadata:
+  role: helper
 ---
 
 # Incident normalize

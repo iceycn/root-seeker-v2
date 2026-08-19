@@ -71,7 +71,7 @@ class RootSeekerSettings(BaseSettings):
     skill_llm_argument_planning_enabled: bool = True
     skill_llm_argument_fallback_enabled: bool = True
     skill_context_max_chars: int = 12000
-    skill_composer_default_flow: str = "flows/default-log-triage"
+    skill_composer_default_flow: str = "default-log-triage"
 
     # Approval policy orchestration. Off by default to keep local demo flows frictionless.
     approval_required_for_write_tools: bool = False

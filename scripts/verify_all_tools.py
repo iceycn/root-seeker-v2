@@ -28,7 +28,7 @@ def invoke(runtime, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]
     req = ToolCallRequest(
         case_id="tool-verify",
         step_id="s1",
-        skill_name="flows/default-log-triage",
+        skill_name="default-log-triage",
         tool_name=tool_name,
         arguments=arguments,
     )

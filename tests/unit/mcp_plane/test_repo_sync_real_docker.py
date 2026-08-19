@@ -191,7 +191,7 @@ def _invoke(gateway: McpGateway, tool_name: str, arguments: dict):
         ToolCallRequest(
             case_id="real-sync",
             step_id="s1",
-            skill_name="flows/default-log-triage",
+            skill_name="default-log-triage",
             tool_name=tool_name,
             arguments=arguments,
         ),

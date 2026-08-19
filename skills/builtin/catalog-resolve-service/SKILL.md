@@ -1,6 +1,9 @@
 ---
-name: Catalog resolve service
+name: catalog-resolve-service
 description: "将告警服务名映射到服务目录条目。"
+allowed-tools: catalog.resolve_service
+metadata:
+  role: helper
 ---
 
 # Catalog resolve service

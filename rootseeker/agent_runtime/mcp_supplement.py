@@ -59,7 +59,7 @@ def run_external_mcp_supplement(
         request = ToolCallRequest(
             case_id=flow_case_id,
             step_id=call.step_id,
-            skill_name=skill.slug if skill is not None else "flows/default-log-triage",
+            skill_name=skill.slug if skill is not None else "default-log-triage",
             tool_name=call.tool_name,
             arguments=dict(call.arguments),
         )

@@ -1,6 +1,9 @@
 ---
-name: Code lookup
+name: code-lookup
 description: "搜索并读取与故障相关的代码片段。"
+allowed-tools: code.search code.read code.find_callers
+metadata:
+  role: helper
 ---
 
 # Code lookup

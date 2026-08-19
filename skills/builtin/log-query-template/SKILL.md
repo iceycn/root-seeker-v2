@@ -1,6 +1,9 @@
 ---
-name: Log query by template
+name: log-query-template
 description: "按默认错误模板查询日志作为兜底证据。"
+allowed-tools: log.query_by_template
+metadata:
+  role: helper
 ---
 
 # Log query by template

@@ -1,17 +1,15 @@
 from pathlib import Path
 
-import pytest
-
 from rootseeker.contracts.case import CaseCreateRequest
-from rootseeker.contracts.skill import SkillKind
+from rootseeker.contracts.skill import SkillStepDefinition
+from rootseeker.skill_runtime.llm_step_argument_planner import parse_step_argument_content
+from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumentResolver
 from rootseeker.skill_system.composer import SkillComposer
 from rootseeker.skill_system.content_loader import SkillContentLoader
 from rootseeker.skill_system.registry import (
     DEFAULT_FLOW_SKILL_SLUG,
     build_registry_from_builtin_skills,
 )
-from rootseeker.skill_runtime.llm_step_argument_planner import parse_step_argument_content
-from rootseeker.skill_runtime.rule_step_argument_resolver import RuleStepArgumentResolver
 
 
 def _repo_root() -> Path:
@@ -22,12 +20,14 @@ def test_registry_loads_flow_and_tool_skills() -> None:
     registry = build_registry_from_builtin_skills(_repo_root() / "skills" / "builtin")
     flow = registry.get(DEFAULT_FLOW_SKILL_SLUG)
     assert flow is not None
-    assert flow.skill_kind == SkillKind.FLOW
-    assert len(flow.steps) == 14
-    assert registry.get("base/default-log-triage") is None
-    tool = registry.resolve_tool_skill("code.search")
+    assert flow.name == "default-log-triage"
+    assert flow.metadata.get("role") == "playbook"
+    assert flow.steps == []
+    assert "incident.normalize" in flow.bound_tools
+    tool = registry.get("code-lookup")
     assert tool is not None
-    assert tool.slug == "tools/code-lookup"
+    assert tool.slug == "code-lookup"
+    assert "code.search" in tool.bound_tools
 
 
 def test_composer_selects_default_flow() -> None:
@@ -39,6 +39,7 @@ def test_composer_selects_default_flow() -> None:
             symptom="s",
             service_name="svc",
             source="aliyun-webhook",
+            metadata={"preferred_skill": DEFAULT_FLOW_SKILL_SLUG},
         )
     )
     assert plan.skill_slug == DEFAULT_FLOW_SKILL_SLUG
@@ -48,9 +49,14 @@ def test_content_loader_includes_skill_body() -> None:
     registry = build_registry_from_builtin_skills(_repo_root() / "skills" / "builtin")
     flow = registry.get(DEFAULT_FLOW_SKILL_SLUG)
     assert flow is not None
-    step = flow.steps[0]
-    tool_skill = registry.get(step.tool_skill_slug)
+    tool_skill = registry.get("incident-normalize")
     assert tool_skill is not None
+    step = SkillStepDefinition(
+        step_id="normalize-incident",
+        name="Normalize incident input",
+        action="incident.normalize",
+        tool_skill_slug="incident-normalize",
+    )
     loader = SkillContentLoader()
     ctx = loader.load_step_context(flow_skill=flow, step=step, tool_skill=tool_skill)
     assert "incident.normalize" in ctx.to_prompt_text()

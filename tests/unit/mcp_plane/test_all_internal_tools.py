@@ -266,7 +266,7 @@ def _invoke(gateway: McpGateway, tool_name: str, arguments: dict[str, Any]):
     req = ToolCallRequest(
         case_id="case-tool-ut",
         step_id="step-1",
-        skill_name="flows/default-log-triage",
+        skill_name="default-log-triage",
         tool_name=tool_name,
         arguments=arguments,
     )

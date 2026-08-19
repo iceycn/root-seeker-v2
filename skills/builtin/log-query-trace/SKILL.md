@@ -1,6 +1,9 @@
 ---
-name: Log query by trace
+name: log-query-trace
 description: "按 trace id 查询日志证据。"
+allowed-tools: log.query_by_trace_id
+metadata:
+  role: helper
 ---
 
 # Log query by trace

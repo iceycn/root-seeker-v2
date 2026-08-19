@@ -24,7 +24,7 @@ def test_default_flow_closed_loop_from_alert_payload() -> None:
     result = runtime.run_default_flow_from_payload(payload)
 
     assert result.case.status == CaseStatus.COMPLETED
-    assert result.case.selected_skills == ["flows/default-log-triage"]
+    assert result.case.selected_skills == ["default-log-triage"]
     assert result.case.steps
     assert all(step.status == StepStatus.COMPLETED for step in result.case.steps)
     assert result.tool_results
@@ -75,7 +75,7 @@ def test_default_flow_closed_loop_from_alert_payload() -> None:
 
     audit_events = runtime.audit_log.list_events(case_id=result.case.case_id)
     assert audit_events
-    assert all(evt.detail.get("skill_name") == "flows/default-log-triage" for evt in audit_events)
+    assert all(evt.detail.get("skill_name") == "default-log-triage" for evt in audit_events)
     assert all(evt.detail.get("plugin_id") == "builtin.default_log_triage_flow" for evt in audit_events)
 
 
