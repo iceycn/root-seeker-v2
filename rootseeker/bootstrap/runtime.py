@@ -11,7 +11,6 @@ from mcp_servers.internal.adapters import InternalToolAdapter
 from mcp_servers.internal.handlers import register_internal_tools
 from plugins.builtin.default_log_triage_flow import (
     DefaultFlowRunResult,
-    execute_default_log_triage_flow,
 )
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.code_index.repo_sync import RepoSyncService
@@ -37,7 +36,7 @@ from rootseeker.plugin_system import ManifestRegistry, build_registry_from_bundl
 from rootseeker.policies import ApprovalStore, WebhookApprovalEventSink
 from rootseeker.replay.store import ReplayStore
 from rootseeker.service_catalog import MemoryServiceCatalog
-from rootseeker.skill_system import SkillRegistry, build_registry_from_builtin_skills
+from rootseeker.skill_system.registry import SkillRegistry, build_skill_registry
 from rootseeker.storage.mcp_servers import build_mcp_server_store
 from rootseeker.storage.memory import InMemoryCaseStore, InMemoryEvidenceStore, InMemoryReportStore
 from rootseeker.storage.mysql import MysqlCaseStore, MysqlEvidenceStore, MysqlReportStore
@@ -161,55 +160,44 @@ class DevRuntime:
         prior_case_id: str | None = None,
         publish_completion: bool = True,
     ) -> DefaultFlowRunResult:
-        result = execute_default_log_triage_flow(
-            case_request=case_request,
-            skill_registry=self.skill_registry,
-            plugin_registry=self.plugin_registry,
-            gateway=self.gateway,
-            tool_registry=self.tool_registry,
-            start_from_step_index=start_from_step_index,
-            prior_step_outputs=prior_step_outputs,
-            prior_case_id=prior_case_id,
-        )
-        skill_slug = (
-            result.case.selected_skills[0]
-            if result.case.selected_skills
-            else RootSeekerSettings().skill_composer_default_flow
-        )
-        flow_skill = self.skill_registry.get(skill_slug)
-        step_outputs = {
-            step.step_id: dict(step.outputs)
-            for step in result.case.steps
-            if step.outputs
-        }
-        from rootseeker.agent_runtime.mcp_supplement import run_external_mcp_supplement
+        del start_from_step_index, prior_step_outputs, prior_case_id, publish_completion
+        agent_result = self.run_agent_from_case_request(case_request)
+        case = self.case_store.get(agent_result.case_id)
+        pack = self.evidence_store.get_pack(agent_result.case_id)
+        report = self.report_store.get(agent_result.case_id)
+        if case is None:
+            from rootseeker.contracts.case import CaseRecord, CaseStatus
 
-        supplement_results = run_external_mcp_supplement(
-            case_request=case_request,
-            flow_case_id=result.case.case_id,
-            evidence_pack=result.evidence_pack,
-            step_outputs=step_outputs,
-            skill=flow_skill,
-            gateway=self.gateway,
-            tool_registry=self.tool_registry,
+            case = CaseRecord(
+                case_id=agent_result.case_id,
+                title=case_request.title,
+                symptom=case_request.symptom,
+                service_name=case_request.service_name,
+                source=case_request.source,
+                status=CaseStatus.FAILED,
+                metadata={"error_code": "SKILL_PLANNER_FAILED"},
+            )
+            self.case_store.put(case)
+        if pack is None:
+            from rootseeker.contracts.evidence import EvidencePack
+
+            pack = EvidencePack(case_id=agent_result.case_id, summary=agent_result.status)
+            self.evidence_store.put_pack(pack)
+        if report is None:
+            from rootseeker.analysis import build_case_report
+
+            report = build_case_report(
+                case_id=agent_result.case_id,
+                title=case.title,
+                pack=pack,
+            )
+            self.report_store.put(report)
+        return DefaultFlowRunResult(
+            case=case,
+            evidence_pack=pack,
+            report=report,
+            tool_results=[],
         )
-        if supplement_results:
-            result.tool_results.extend(supplement_results)
-            result.evidence_pack.summary = (
-                f"{result.evidence_pack.summary}; external MCP tools: {len(supplement_results)}"
-            )
-        self.case_store.put(result.case)
-        self.evidence_store.put_pack(result.evidence_pack)
-        self.report_store.put(result.report)
-        if publish_completion:
-            self.publish_case_completed(
-                result.case.case_id,
-                result.case.status.value,
-                service_name=result.case.service_name,
-                source=result.case.source,
-                evidence_count=len(result.evidence_pack.items),
-            )
-        return result
 
     def _resolve_use_agent_from_payload(
         self,
@@ -269,7 +257,12 @@ def create_dev_runtime(
             mcp_extra_env_provider = default_provider
     audit = InMemoryAuditLog()
     plugins = build_registry_from_bundled(root / "plugins" / "builtin")
-    skills = build_registry_from_builtin_skills(root / "skills" / "builtin")
+    skills = build_skill_registry(
+        builtin_root=root / "skills" / "builtin",
+        custom_root=root / "skills" / "custom",
+        external_root=root / "skills" / "external",
+        overlay=None,
+    )
     tools = ToolRegistry()
     settings = RootSeekerSettings()
     adapter = internal_adapter or build_internal_adapter_from_settings(

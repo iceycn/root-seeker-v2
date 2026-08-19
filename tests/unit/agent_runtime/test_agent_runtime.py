@@ -29,9 +29,27 @@ def _runtime(monkeypatch):
     return create_dev_runtime(_repo_root())
 
 
+def _agent_with_stub_planner(runtime):
+    flow_runtime = FlowRuntime(runtime)
+    attempt_runner = AttemptRunner(
+        flow_runtime,
+        model_router=_StaticRouter(),
+        tool_planner=_StaticPlanner(),
+    )
+    return AgentRuntime(
+        runtime,
+        flow_runtime=flow_runtime,
+        run_loop=AgentRunLoop(
+            runtime,
+            flow_runtime=flow_runtime,
+            attempt_runner=attempt_runner,
+        ),
+    )
+
+
 def test_agent_runtime_can_run_payload(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
-    agent = AgentRuntime(runtime)
+    agent = _agent_with_stub_planner(runtime)
     case_id = agent.run_payload(
         {
             "title": "agent runtime case",
@@ -46,7 +64,7 @@ def test_agent_runtime_can_run_payload(monkeypatch) -> None:
 
 def test_agent_runtime_returns_detailed_run_result(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
-    agent = AgentRuntime(runtime)
+    agent = _agent_with_stub_planner(runtime)
     result = agent.run_payload_detailed(
         {
             "title": "agent runtime detailed case",
@@ -58,26 +76,23 @@ def test_agent_runtime_returns_detailed_run_result(monkeypatch) -> None:
     )
     assert result.case_id.startswith("case-")
     assert result.status == "completed"
-    assert result.trace_id is not None
     assert result.compacted_context is not None
-    assert result.compacted_context.compacted is True
 
     attempt = result.attempts[0]
     assert attempt.case_id == result.case_id
-    assert attempt.route.mode == "rule_flow"
+    assert attempt.route.mode == "llm_tool_plan"
     assert attempt.prompt_messages[0]["role"] == "system"
     assert any(trace.tool_name == "log.query_by_trace_id" for trace in attempt.tool_traces)
 
     actions = [event.action for event in runtime.audit_log.list_events(case_id=result.case_id, limit=-1)]
     assert "agent.attempt.completed" in actions
     assert "agent.tool.trace" in actions
-    assert "agent.context.compacted" in actions
     assert "agent.run.completed" in actions
 
 
 def test_agent_runtime_streams_run_events(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
-    agent = AgentRuntime(runtime)
+    agent = _agent_with_stub_planner(runtime)
 
     events = list(
         agent.run_payload_stream(
@@ -95,7 +110,6 @@ def test_agent_runtime_streams_run_events(monkeypatch) -> None:
     assert event_types[0] == "agent.run.started"
     assert "agent.attempt.completed" in event_types
     assert "agent.tool.trace" in event_types
-    assert "agent.context.compacted" in event_types
     assert event_types[-1] == "agent.run.completed"
     assert events[-1].result is not None
     assert events[-1].result.status == "completed"

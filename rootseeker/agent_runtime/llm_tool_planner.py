@@ -20,6 +20,9 @@ class LlmToolPlanner(Protocol):
         case_request: CaseCreateRequest,
         tools: list[ToolSpec],
         history_summary: str | None = None,
+        playbook_text: str = "",
+        skill_catalog: list[dict[str, str]] | None = None,
+        allowed_tool_names: set[str] | None = None,
     ) -> ToolPlanResult: ...
 
 
@@ -60,6 +63,9 @@ class OpenAICompatibleToolPlanner:
         case_request: CaseCreateRequest,
         tools: list[ToolSpec],
         history_summary: str | None = None,
+        playbook_text: str = "",
+        skill_catalog: list[dict[str, str]] | None = None,
+        allowed_tool_names: set[str] | None = None,
     ) -> ToolPlanResult:
         allowed_tools = _allowed_tools(tools, allow_write_tools=self.allow_write_tools)
         messages = build_tool_planner_messages(
@@ -67,6 +73,9 @@ class OpenAICompatibleToolPlanner:
             tools=allowed_tools,
             max_tool_calls=self.max_tool_calls,
             history_summary=history_summary,
+            playbook_text=playbook_text,
+            skill_catalog=skill_catalog,
+            allowed_tool_names=allowed_tool_names,
         )
         result = self._client.complete(messages)
         if not result.ok:
@@ -79,6 +88,8 @@ class OpenAICompatibleToolPlanner:
                 error=result.error or result.reason or "llm planner failed",
             )
         allowed_names = {tool.name for tool in allowed_tools}
+        if allowed_tool_names is not None:
+            allowed_names = {name for name in allowed_names if name in allowed_tool_names}
         plan = parse_tool_plan_content(
             result.content,
             allowed_tools=allowed_names,
@@ -110,10 +121,17 @@ def build_tool_planner_messages(
     tools: list[ToolSpec],
     max_tool_calls: int,
     history_summary: str | None = None,
+    playbook_text: str = "",
+    skill_catalog: list[dict[str, str]] | None = None,
+    allowed_tool_names: set[str] | None = None,
 ) -> list[dict[str, str]]:
+    if allowed_tool_names is not None:
+        tools = [tool for tool in tools if tool.name in allowed_tool_names]
     payload = {
         "case": case_request.model_dump(mode="json"),
         "max_tool_calls": max_tool_calls,
+        "playbook": playbook_text,
+        "skill_catalog": list(skill_catalog or []),
         "available_tools": [
             {
                 "name": tool.name,
@@ -139,6 +157,8 @@ def build_tool_planner_messages(
             "final_answer": "optional string",
         },
     }
+    if allowed_tool_names is not None:
+        payload["allowed_tool_names"] = sorted(allowed_tool_names)
     if history_summary:
         payload["prior_attempt_feedback"] = history_summary
     return [

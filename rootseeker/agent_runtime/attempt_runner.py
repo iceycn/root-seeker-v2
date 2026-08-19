@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import inspect
+import os
+from pathlib import Path
+from typing import Any
+
 from rootseeker.analysis import build_case_report
 from rootseeker.contracts.case import (
     CaseCreateRequest,
@@ -8,19 +13,23 @@ from rootseeker.contracts.case import (
     CaseStep,
     StepStatus,
 )
-from rootseeker.contracts.state_machine import validate_case_transition, validate_step_transition
 from rootseeker.contracts.common import new_id, utc_now
 from rootseeker.contracts.evidence import EvidencePack, EvidenceType
+from rootseeker.contracts.skill import SkillSpec
+from rootseeker.contracts.state_machine import validate_case_transition, validate_step_transition
 from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.evidence import append_tool_json_evidence
 from rootseeker.flow_runtime import FlowRuntime
-from rootseeker.mcp_plane.tool_resolution import resolve_planner_tools
-from rootseeker.skill_system.composer import SkillComposer
 from rootseeker.infra_core import RootSeekerSettings
+from rootseeker.mcp_plane.tool_resolution import resolve_planner_tools
 from rootseeker.skill_runtime.result_sanitize import (
     sanitize_tool_result_for_evidence,
     sanitize_tool_result_for_persistence,
 )
+from rootseeker.skill_system.env_resolver import resolve_skill_env, substitute_non_secret
+from rootseeker.skill_system.errors import SkillError
+from rootseeker.skill_system.parser import load_skill_body
+from rootseeker.skill_system.playbook import PlaybookResolver
 
 from .context_compactor import ContextCompactor
 from .history_builder import build_attempt_history_summary
@@ -61,54 +70,64 @@ class AttemptRunner:
         case_request: CaseCreateRequest,
         *,
         prior_attempts: list[AttemptResult] | None = None,
-        allow_default_fallback: bool = True,
+        allow_default_fallback: bool = False,
     ) -> AttemptResult:
+        del allow_default_fallback
         history_summary = build_attempt_history_summary(prior_attempts or [])
         prompt_messages = self.prompt_builder.build_messages(
             case_request, history_summary=history_summary
         )
         route = self.model_router.select_route(case_request)
-        if route.mode == "llm_tool_plan" and self.tool_planner is not None:
-            planned_attempt = self._run_llm_tool_plan(
+        try:
+            playbook = self._resolve_playbook(case_request)
+        except SkillError as exc:
+            return self._fail_attempt(
+                case_request=case_request,
+                prompt_messages=prompt_messages,
+                route=route,
+                error_code=exc.code,
+                reason=str(exc),
+            )
+
+        manager = self.flow_runtime.runtime.mcp_server_manager
+        previous_extra = dict(manager.extra_env)
+        try:
+            try:
+                resolution = self._resolve_playbook_env(playbook)
+            except SkillError as exc:
+                return self._fail_attempt(
+                    case_request=case_request,
+                    prompt_messages=prompt_messages,
+                    route=route,
+                    error_code=exc.code,
+                    reason=str(exc),
+                    skill_slug=playbook.name,
+                )
+            merged = {**previous_extra, **resolution.mcp_extra}
+            manager.set_extra_env(merged)
+            playbook_text = substitute_non_secret(
+                self._load_playbook_body(playbook),
+                resolution.substitutions,
+            )
+            if self.tool_planner is None:
+                return self._fail_attempt(
+                    case_request=case_request,
+                    prompt_messages=prompt_messages,
+                    route=route,
+                    error_code="SKILL_PLANNER_FAILED",
+                    reason="llm planner is not configured",
+                    skill_slug=playbook.name,
+                )
+            return self._run_llm_tool_plan(
                 case_request=case_request,
                 prompt_messages=prompt_messages,
                 route=route,
                 history_summary=history_summary,
-                return_failed_plan=not allow_default_fallback,
+                playbook=playbook,
+                playbook_text=playbook_text,
             )
-            if planned_attempt is not None:
-                return planned_attempt
-            if not allow_default_fallback:
-                return _build_failed_planner_attempt(
-                    case_request=case_request,
-                    prompt_messages=prompt_messages,
-                    route=route,
-                    reason="llm planner did not produce executable tool calls",
-                )
-
-        flow_result = self.flow_runtime.run_default(case_request, publish_completion=False)
-        tool_traces = self.tool_call_loop.from_flow_result(flow_result)
-        compacted_context = self.context_compactor.compact(
-            prompt_messages=prompt_messages,
-            tool_traces=tool_traces,
-        )
-        status = _status_from_flow_result(flow_result)
-        return AttemptResult(
-            attempt_id=new_id("attempt-"),
-            case_id=flow_result.case_id,
-            status=status,
-            prompt_messages=prompt_messages,
-            route=route,
-            tool_traces=tool_traces,
-            compacted_context=compacted_context,
-            flow_run_id=flow_result.trace.execution_id,
-            metadata={
-                "flow_id": flow_result.trace.flow_id,
-                "skill_slug": flow_result.trace.skill_slug,
-                "step_count": len(flow_result.trace.steps),
-                "fallback": route.mode == "llm_tool_plan",
-            },
-        )
+        finally:
+            manager.set_extra_env(previous_extra)
 
     def _run_llm_tool_plan(
         self,
@@ -117,32 +136,56 @@ class AttemptRunner:
         prompt_messages: list[dict[str, str]],
         route,
         history_summary: str | None,
-        return_failed_plan: bool,
-    ) -> AttemptResult | None:
-        skill = self._resolve_flow_skill(case_request)
+        playbook: SkillSpec,
+        playbook_text: str,
+    ) -> AttemptResult:
         allow_write_tools = getattr(self.tool_planner, "allow_write_tools", False)
-        planner_tools = resolve_planner_tools(
-            self.flow_runtime.runtime.tool_registry,
-            skill,
-            allow_write_tools=allow_write_tools,
-        )
-        plan_result = self.tool_planner.plan(
+        allowed_tool_names = _allowed_tools_for_run(playbook)
+        planner_tools = [
+            spec
+            for spec in resolve_planner_tools(
+                self.flow_runtime.runtime.tool_registry,
+                playbook,
+                allow_write_tools=allow_write_tools,
+            )
+            if spec.name in allowed_tool_names
+        ]
+        plan_result = _invoke_planner(
+            self.tool_planner,
             case_request=case_request,
             tools=planner_tools,
             history_summary=history_summary,
+            playbook_text=playbook_text,
+            skill_catalog=self._skill_catalog(),
+            allowed_tool_names=allowed_tool_names,
         )
         if not plan_result.ok or plan_result.plan is None:
-            if not return_failed_plan:
-                return None
-            return _build_failed_planner_attempt(
+            return self._fail_attempt(
                 case_request=case_request,
                 prompt_messages=prompt_messages,
                 route=route,
+                error_code="SKILL_PLANNER_FAILED",
                 reason=plan_result.error or "llm planner returned no plan",
                 plan_result=plan_result,
+                skill_slug=playbook.name,
+            )
+        disallowed = [
+            call.tool_name
+            for call in plan_result.plan.tool_calls
+            if call.tool_name not in allowed_tool_names
+        ]
+        if disallowed:
+            return self._fail_attempt(
+                case_request=case_request,
+                prompt_messages=prompt_messages,
+                route=route,
+                error_code="SKILL_TOOL_NOT_ALLOWED",
+                reason=f"tool not allowed: {', '.join(disallowed)}",
+                plan_result=plan_result,
+                skill_slug=playbook.name,
             )
 
-        case = _build_case_from_plan(case_request, plan_result)
+        case = _build_case_from_plan(case_request, plan_result, skill_slug=playbook.name)
         requests = [
             ToolCallRequest(
                 case_id=case.case_id,
@@ -306,64 +349,187 @@ class AttemptRunner:
             compacted_context=compacted_context,
             flow_run_id=None,
             metadata={
-                "skill_slug": "agent/llm-tool-plan",
+                "skill_slug": playbook.name,
                 "step_count": len(case.steps),
                 "tool_plan": plan_result.to_payload(),
             },
         )
 
-    def _resolve_flow_skill(self, case_request: CaseCreateRequest):
-        composer = SkillComposer(
-            self.flow_runtime.runtime.skill_registry,
-            registered_tool_names=self.flow_runtime.runtime.tool_registry.known_tools(),
+    def _resolve_playbook(self, case_request: CaseCreateRequest) -> SkillSpec:
+        resolver = PlaybookResolver(self.flow_runtime.runtime.skill_registry, overlay=None)
+        return resolver.resolve(case_request)
+
+    def _resolve_playbook_env(self, playbook: SkillSpec):
+        declared_keys = _env_key_list(playbook.metadata.get("env"))
+        optional_keys = _env_key_list(
+            playbook.metadata.get("optional_env") or playbook.metadata.get("env_optional")
         )
-        plan = composer.compose(case_request)
-        return self.flow_runtime.runtime.skill_registry.get(plan.skill_slug)
+        return resolve_skill_env(
+            declared_keys=declared_keys,
+            optional_keys=optional_keys,
+            process_env={key: str(value) for key, value in os.environ.items()},
+            admin_items=_load_admin_env_items(self.flow_runtime.runtime.repo_root),
+            require=True,
+        )
+
+    def _load_playbook_body(self, playbook: SkillSpec) -> str:
+        skill_dir = playbook.metadata.get("skill_dir")
+        if not skill_dir:
+            return ""
+        path = Path(str(skill_dir)) / "SKILL.md"
+        if not path.is_file():
+            return ""
+        return load_skill_body(path)
+
+    def _skill_catalog(self) -> list[dict[str, str]]:
+        catalog: list[dict[str, str]] = []
+        for spec in self.flow_runtime.runtime.skill_registry.list_skills():
+            if spec.metadata.get("enabled", True) is False:
+                continue
+            catalog.append({"name": spec.name, "description": spec.description or ""})
+        return catalog
+
+    def _fail_attempt(
+        self,
+        *,
+        case_request: CaseCreateRequest,
+        prompt_messages: list[dict[str, str]],
+        route,
+        error_code: str,
+        reason: str,
+        plan_result: ToolPlanResult | None = None,
+        skill_slug: str | None = None,
+    ) -> AttemptResult:
+        case_id = new_id("case-")
+        self._persist_failed_case(
+            case_request=case_request,
+            case_id=case_id,
+            error_code=error_code,
+            reason=reason,
+            skill_slug=skill_slug,
+        )
+        payload = (
+            plan_result.to_payload() if plan_result is not None else {"ok": False, "error": reason}
+        )
+        if "error" not in payload:
+            payload["error"] = reason
+        return AttemptResult(
+            attempt_id=new_id("attempt-"),
+            case_id=case_id,
+            status="failed",
+            prompt_messages=prompt_messages,
+            route=route,
+            tool_traces=[],
+            compacted_context=None,
+            flow_run_id=None,
+            metadata={
+                "skill_slug": skill_slug or "agent/llm-tool-plan",
+                "step_count": 0,
+                "tool_plan": payload,
+                "case_title": case_request.title,
+                "error_code": error_code,
+            },
+        )
+
+    def _persist_failed_case(
+        self,
+        *,
+        case_request: CaseCreateRequest,
+        case_id: str,
+        error_code: str,
+        reason: str,
+        skill_slug: str | None,
+    ) -> None:
+        case = CaseRecord(
+            case_id=case_id,
+            title=case_request.title,
+            symptom=case_request.symptom,
+            service_name=case_request.service_name,
+            source=case_request.source,
+            status=CaseStatus.FAILED,
+            selected_skills=[skill_slug] if skill_slug else [],
+            metadata={
+                **case_request.metadata,
+                "error_code": error_code,
+                "error": reason,
+            },
+        )
+        pack = EvidencePack(case_id=case_id, summary=reason)
+        report = build_case_report(case_id=case_id, title=case_request.title, pack=pack)
+        report = report.model_copy(
+            update={"metadata": {**report.metadata, "error_code": error_code}}
+        )
+        runtime = self.flow_runtime.runtime
+        runtime.case_store.put(case)
+        runtime.evidence_store.put_pack(pack)
+        runtime.report_store.put(report)
 
 
-def _status_from_flow_result(flow_result) -> str:
-    if any(step.status == StepStatus.FAILED for step in flow_result.trace.steps):
-        return "failed"
-    return "completed"
-
-
-def _build_failed_planner_attempt(
+def _invoke_planner(
+    planner,
     *,
     case_request: CaseCreateRequest,
-    prompt_messages: list[dict[str, str]],
-    route,
-    reason: str,
-    plan_result: ToolPlanResult | None = None,
-) -> AttemptResult:
-    payload = (
-        plan_result.to_payload() if plan_result is not None else {"ok": False, "error": reason}
-    )
-    if "error" not in payload:
-        payload["error"] = reason
-    return AttemptResult(
-        attempt_id=new_id("attempt-"),
-        case_id=new_id("case-"),
-        status="failed",
-        prompt_messages=prompt_messages,
-        route=route,
-        tool_traces=[],
-        compacted_context=None,
-        flow_run_id=None,
-        metadata={
-            "skill_slug": "agent/llm-tool-plan",
-            "step_count": 0,
-            "tool_plan": payload,
-            "case_title": case_request.title,
-        },
-    )
+    tools,
+    history_summary: str | None,
+    playbook_text: str,
+    skill_catalog: list[dict[str, str]],
+    allowed_tool_names: set[str],
+) -> ToolPlanResult:
+    kwargs: dict[str, Any] = {
+        "case_request": case_request,
+        "tools": tools,
+        "history_summary": history_summary,
+        "playbook_text": playbook_text,
+        "skill_catalog": skill_catalog,
+        "allowed_tool_names": allowed_tool_names,
+    }
+    try:
+        parameters = inspect.signature(planner.plan).parameters
+    except (TypeError, ValueError):
+        return planner.plan(
+            case_request=case_request,
+            tools=tools,
+            history_summary=history_summary,
+        )
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return planner.plan(**kwargs)
+    filtered = {key: value for key, value in kwargs.items() if key in parameters}
+    return planner.plan(**filtered)
+
+
+def _allowed_tools_for_run(playbook: SkillSpec) -> set[str]:
+    names = {str(name).strip() for name in playbook.bound_tools if str(name).strip()}
+    return names
+
+
+def _env_key_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [part for part in value.split() if part]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _load_admin_env_items(repo_root: Path) -> list[dict[str, Any]]:
+    try:
+        from apps.admin.config_store import build_admin_config_store
+
+        store = build_admin_config_store(repo_root)
+        return store.list_env_vars()
+    except Exception:
+        return []
 
 
 def _build_case_from_plan(
-    case_request: CaseCreateRequest, plan_result: ToolPlanResult
+    case_request: CaseCreateRequest,
+    plan_result: ToolPlanResult,
+    *,
+    skill_slug: str,
 ) -> CaseRecord:
     assert plan_result.plan is not None
     case_id = new_id("case-")
-    skill_slug = "agent/llm-tool-plan"
     steps = [
         CaseStep(
             step_id=call.step_id,
