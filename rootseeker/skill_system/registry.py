@@ -27,26 +27,29 @@ class SkillRegistry:
         self._tool_action_index: dict[str, str] = {}
 
     def register(self, spec: SkillSpec) -> None:
-        if spec.slug in self._by_slug:
-            raise ValueError(f"Duplicate skill slug: {spec.slug}")
-        self._by_slug[spec.slug] = spec
-        self._index_bound_tools(spec)
+        key = normalize_skill_name(spec.slug)
+        if key in self._by_slug:
+            raise ValueError(f"Duplicate skill slug: {key}")
+        self._by_slug[key] = spec
+        self._index_bound_tools(spec, key)
 
     def upsert(self, spec: SkillSpec) -> None:
-        existing = self._by_slug.pop(spec.slug, None)
+        key = normalize_skill_name(spec.slug)
+        existing = self._by_slug.pop(key, None)
         if existing is not None:
             for action in existing.bound_tools:
-                if self._tool_action_index.get(action) == spec.slug:
+                if self._tool_action_index.get(action) == key:
                     self._tool_action_index.pop(action, None)
-        self._by_slug[spec.slug] = spec
-        self._index_bound_tools(spec)
+        self._by_slug[key] = spec
+        self._index_bound_tools(spec, key)
 
     def unregister(self, slug: str) -> bool:
-        spec = self._by_slug.pop(slug, None)
+        key = normalize_skill_name(slug)
+        spec = self._by_slug.pop(key, None)
         if spec is None:
             return False
         for action in spec.bound_tools:
-            if self._tool_action_index.get(action) == slug:
+            if self._tool_action_index.get(action) == key:
                 self._tool_action_index.pop(action, None)
         return True
 
@@ -71,17 +74,17 @@ class SkillRegistry:
             return None
         return SkillExecutionPlan(skill_slug=spec.slug, steps=list(spec.steps))
 
-    def _index_bound_tools(self, spec: SkillSpec) -> None:
+    def _index_bound_tools(self, spec: SkillSpec, key: str) -> None:
         if spec.skill_kind not in {SkillKind.TOOL, SkillKind.TOOL_GROUP}:
             return
         for action in spec.bound_tools:
             existing = self._tool_action_index.get(action)
-            if existing is not None and existing != spec.slug:
+            if existing is not None and existing != key:
                 raise ValueError(
                     f"Tool action {action!r} already bound to skill {existing!r}, "
-                    f"cannot bind to {spec.slug!r}"
+                    f"cannot bind to {key!r}"
                 )
-            self._tool_action_index[action] = spec.slug
+            self._tool_action_index[action] = key
 
 
 def build_skill_registry(
