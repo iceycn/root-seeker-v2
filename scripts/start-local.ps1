@@ -64,6 +64,17 @@ if (-not (Test-Path $python)) {
     $python = "python"
 }
 
+$adminWeb = Join-Path (Get-Location) "apps\admin-web"
+if (Test-Path (Join-Path $adminWeb "package.json")) {
+    Write-Host "Building admin-web..."
+    Push-Location $adminWeb
+    try {
+        npm run build
+    } finally {
+        Pop-Location
+    }
+}
+
 Start-Process -FilePath $python -ArgumentList @(
     "-m", "uvicorn", "apps.api.main:app", "--host", "127.0.0.1", "--port", "8000"
 ) -WorkingDirectory (Get-Location) -WindowStyle Hidden

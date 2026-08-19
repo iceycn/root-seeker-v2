@@ -6,9 +6,11 @@ import pytest
 
 from rootseeker.skill_system.errors import SkillError
 from rootseeker.skill_system.installer import (
+    detect_install_source,
     install_from_directory,
     install_from_git,
     install_from_zip,
+    normalize_git_source,
 )
 
 
@@ -57,3 +59,11 @@ def test_install_from_git_clone_failure_raises(tmp_path: Path, monkeypatch: pyte
             existing_names=set(),
         )
     assert exc.value.code == "SKILL_INVALID_PACKAGE"
+
+
+def test_detect_owner_repo_is_git() -> None:
+    assert detect_install_source("owner/hello-skill") == "git"
+    assert normalize_git_source("owner/hello-skill") == "https://github.com/owner/hello-skill.git"
+    assert normalize_git_source("https://github.com/owner/hello-skill.git") == (
+        "https://github.com/owner/hello-skill.git"
+    )

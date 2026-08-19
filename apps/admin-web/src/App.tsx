@@ -794,7 +794,7 @@ function App() {
     overview: { title: '总览状态', desc: '系统健康、索引、服务目录和运行时资源概览。' },
     semantic: { title: '语义搜索', desc: '使用 Qdrant 在已索引代码块里做语义搜索。' },
     errorChat: { title: '错误排查助手', desc: '提交错误信息、日志或现象，形成可追踪的排查历史。' },
-    skills: { title: 'Skills 管理', desc: 'Flow Skill 编排排查链路；Tool Skill 描述各工具如何取参与协作。' },
+    skills: { title: 'Skills 管理', desc: '系统 playbook 是主排查流程；helper 描述各工具如何协作。用户 Skills 可从本地路径、Git URL 或 owner/repo 安装。' },
     plugins: { title: 'Plugins / Tools', desc: '查看已加载插件和 MCP 工具注册情况。' },
     mcpServers: {
       title: 'MCP 协议',
@@ -1801,16 +1801,16 @@ function App() {
     if (active === 'skills') {
       const systemSkills = skills.filter((skill) => skill.source_kind === 'builtin')
       const userSkills = skills.filter((skill) => skill.source_kind !== 'builtin')
-      const flowSkills = systemSkills.filter((skill) => skill.skill_kind === 'flow' || (skill.steps?.length ?? 0) > 0)
-      const toolSkills = systemSkills.filter((skill) => skill.skill_kind === 'tool' || skill.skill_kind === 'tool_group')
-      const kindLabel = (kind?: string) => ({ flow: 'Flow', tool: 'Tool', tool_group: 'Tool 组' }[kind || ''] || kind || '-')
+      const playbookSkills = systemSkills.filter((skill) => (skill.role || '') === 'playbook')
+      const helperSkills = systemSkills.filter((skill) => (skill.role || 'helper') !== 'playbook')
+      const roleLabel = (role?: string) => (role === 'playbook' ? '排查流程' : '辅助')
       const renderSkillDetails = (record: SkillRecord) => (
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
           <Typography.Paragraph style={{ marginBottom: 0 }}>{record.description || '暂无描述'}</Typography.Paragraph>
           <Space wrap>
             {(record.tags || []).map((tag) => <Tag key={tag}>{tag}</Tag>)}
           </Space>
-          <Typography.Text type="secondary">类型：{kindLabel(record.skill_kind)} · 角色：{record.role || '-'}</Typography.Text>
+          <Typography.Text type="secondary">角色：{roleLabel(record.role)}</Typography.Text>
           <Typography.Text type="secondary">状态：{record.enabled === false ? '已禁用' : '启用'}{record.is_default ? ' · 当前默认 playbook' : ''}</Typography.Text>
           <Typography.Text type="secondary">Allowed tools：{(record['allowed-tools'] as string[] | undefined || record.bound_tools || []).join(', ') || '-'}</Typography.Text>
           <Typography.Text type="secondary">Env keys：{(record.env || []).join(', ') || '-'}</Typography.Text>
@@ -1834,15 +1834,12 @@ function App() {
           ) : null}
         </Space>
       )
-      const skillColumns = (readOnly: boolean) => [
-        { title: 'Slug', dataIndex: 'slug' },
-        { title: '名称', dataIndex: 'name' },
-        { title: '类型', render: (_: unknown, record: SkillRecord) => kindLabel(record.skill_kind) },
+      const skillColumns = () => [
+        { title: 'Name', dataIndex: 'name' },
+        { title: '角色', render: (_: unknown, record: SkillRecord) => roleLabel(record.role) },
         { title: '版本', dataIndex: 'version' },
-        { title: '步骤/工具', render: (_: unknown, record: SkillRecord) => (
-          record.skill_kind === 'flow' || (record.steps?.length ?? 0) > 0
-            ? (record.steps?.length ?? 0)
-            : (record.bound_tools || []).join(', ')
+        { title: '工具', render: (_: unknown, record: SkillRecord) => (
+          (record['allowed-tools'] as string[] | undefined || record.bound_tools || []).join(', ') || '-'
         ) },
         {
           title: '操作',
@@ -1867,29 +1864,29 @@ function App() {
           <Tabs
             items={[
               {
-                key: 'flow',
-                label: `Flow Skills (${flowSkills.length})`,
+                key: 'playbook',
+                label: `排查流程 (${playbookSkills.length})`,
                 children: (
                   <Card bordered={false}>
                     <Table
-                      rowKey="slug"
-                      dataSource={flowSkills}
+                      rowKey="name"
+                      dataSource={playbookSkills}
                       expandable={{ expandedRowRender: renderSkillDetails }}
-                      columns={skillColumns(true)}
+                      columns={skillColumns()}
                     />
                   </Card>
                 ),
               },
               {
-                key: 'tool',
-                label: `Tool Skills (${toolSkills.length})`,
+                key: 'helper',
+                label: `辅助 Skills (${helperSkills.length})`,
                 children: (
                   <Card bordered={false}>
                     <Table
-                      rowKey="slug"
-                      dataSource={toolSkills}
+                      rowKey="name"
+                      dataSource={helperSkills}
                       expandable={{ expandedRowRender: renderSkillDetails }}
-                      columns={skillColumns(true)}
+                      columns={skillColumns()}
                     />
                   </Card>
                 ),
@@ -1901,8 +1898,8 @@ function App() {
                   <Space direction="vertical" size={16} style={{ width: '100%' }}>
                     <Card title="安装 Skill" bordered={false}>
                       <Form form={skillForm} layout="inline">
-                        <Form.Item name="source" rules={[{ required: true, message: '请填写本地路径或 Git URL' }]}>
-                          <Input placeholder="本地路径或 Git URL" style={{ width: 360 }} />
+                        <Form.Item name="source" rules={[{ required: true, message: '请填写本地路径、Git URL 或 owner/repo' }]}>
+                          <Input placeholder="本地路径、Git URL 或 owner/repo" style={{ width: 360 }} />
                         </Form.Item>
                         <Form.Item name="overwrite" valuePropName="checked">
                           <Checkbox>覆盖已有</Checkbox>
@@ -1912,10 +1909,10 @@ function App() {
                     </Card>
                     <Card bordered={false}>
                       <Table
-                        rowKey="slug"
+                        rowKey="name"
                         dataSource={userSkills}
                         expandable={{ expandedRowRender: renderSkillDetails }}
-                        columns={skillColumns(false)}
+                        columns={skillColumns()}
                       />
                     </Card>
                   </Space>

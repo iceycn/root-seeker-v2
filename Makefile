@@ -21,6 +21,7 @@ api:
 	$(UVICORN) apps.api.main:app --reload --host $(HOST) --port $(PORT)
 
 admin:
+	cd apps/admin-web && npm run build
 	$(UVICORN) apps.admin.main:app --reload --host $(HOST) --port 8010
 
 demo:

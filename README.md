@@ -45,14 +45,14 @@
 - **告别「通灵」式 Debug**：不再对着报错堆栈瞎猜，结合代码检索定位到具体文件与行号。
 - **全息现场还原**：自动拉取关联日志与 Trace 上下文（API 入参、SQL、RPC 等）。
 - **懂你的私有代码**：Zoekt 词法检索 + Qdrant 语义搜索 + GitNexus 知识图谱，覆盖精确匹配与业务意图。
-- **可编排、可审计**：内置 Skill Flow 经 MCP Gateway 调用工具，策略守卫与审计贯穿全程。
+- **可编排、可审计**：标准 Agent Skills（playbook + helper）经 MCP Gateway 调用工具，策略守卫与审计贯穿全程。
 - **可运维**：Admin 控制台管理仓库同步、定时任务、错误排查助手与索引状态。
 
 ---
 
 ## 核心特性
 
-- **Skill 驱动流程**：内置 `default-log-triage`，按步骤经 MCP Gateway 调用工具，可编排、可断点恢复。
+- **Skill 驱动流程**：内置 playbook `default-log-triage`，由 Agent 阅读 `SKILL.md` 后经 MCP Gateway 调用工具。
 - **MCP 工具平面**：统一内外部工具调用，含策略守卫、审批与审计。
 - **证据与根因**：证据归集、多假设推理；规则引擎 + 可选 LLM 增强报告。
 - **三引擎代码索引**：Zoekt（词法）+ Qdrant（语义）+ GitNexus（图谱），均支持容器内远程索引。
@@ -71,9 +71,9 @@
 
 ```mermaid
 flowchart LR
-  A[告警/Case] --> B[Skill Flow]
-  B --> C[Step]
-  C --> D[Plugin Capability]
+  A[告警/Case] --> B[Playbook SKILL.md]
+  B --> C[AttemptRunner]
+  C --> D[MCP Gateway]
   D --> E[MCP ToolCall]
   E --> F[Evidence]
   F --> G[RootCauseEngine]
@@ -82,7 +82,7 @@ flowchart LR
 ```
 
 1. **接入**：Webhook / SLS / Prometheus 等归一化为 Case。
-2. **编排**：Skill 按步骤调度 Plugin Capability，经 MCP Gateway 调用工具。
+2. **编排**：当前主流程 playbook 注入 Agent；模型经 MCP Gateway 调用允许的工具。
 3. **证据**：日志、链路、代码检索与图谱结果归集为 Evidence。
 4. **根因**：RootCauseEngine 多假设推理；可选 LLM 增强报告文案。
 5. **触达**：推送通知，并可在 Admin 中回放与审计。

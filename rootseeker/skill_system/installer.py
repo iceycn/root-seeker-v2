@@ -13,11 +13,30 @@ from rootseeker.skill_system.parser import load_skill_from_path
 
 __all__ = [
     "detect_install_source",
+    "normalize_git_source",
     "install_from_directory",
     "install_from_git",
     "install_from_source",
     "install_from_zip",
 ]
+
+
+def normalize_git_source(source: str) -> str:
+    text = str(source or "").strip()
+    if _looks_like_github_owner_repo(text):
+        return f"https://github.com/{text}.git"
+    return text
+
+
+def _looks_like_github_owner_repo(text: str) -> bool:
+    if "://" in text or text.startswith("git@") or "\\" in text:
+        return False
+    parts = text.split("/")
+    if len(parts) != 2:
+        return False
+    owner, repo = parts
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+    return bool(owner) and bool(repo) and set(owner) <= allowed and set(repo) <= allowed
 
 
 def detect_install_source(source: str) -> str:
@@ -36,6 +55,8 @@ def detect_install_source(source: str) -> str:
         scheme = text.split("://", 1)[0].lower()
         if scheme in {"http", "https", "git", "ssh"}:
             return "git"
+    if _looks_like_github_owner_repo(text):
+        return "git"
     if path.exists():
         return "directory"
     raise SkillError("SKILL_INVALID_PACKAGE", f"cannot determine install source: {source}")
@@ -119,7 +140,8 @@ def install_from_git(
     tmp_path = Path(tmp)
     try:
         try:
-            subprocess.run(["git", "clone", "--depth", "1", url, tmp], check=True)
+            clone_url = normalize_git_source(url)
+            subprocess.run(["git", "clone", "--depth", "1", clone_url, tmp], check=True)
         except (OSError, subprocess.CalledProcessError) as exc:
             raise SkillError("SKILL_INVALID_PACKAGE", f"git clone failed: {url}") from exc
         return install_from_directory(
