@@ -62,6 +62,7 @@ uv run python -m pytest tests/unit/skill_system/test_skill_env_resolver.py -q --
 
 ## Review Fix (Important)
 
+**Commit:** `4a938bc` — fix(skill): treat overlapping declared env keys as optional  
 **Date:** 2026-08-19  
 **Status:** DONE (review findings)
 
