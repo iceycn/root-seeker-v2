@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from rootseeker.contracts.skill import SkillKind
 from rootseeker.skill_system import (
     DEFAULT_BUILTIN_SKILL_SLUG,
     build_registry_from_builtin_skills,
@@ -42,6 +43,20 @@ def test_builtin_default_playbook_is_standard_package() -> None:
     assert spec.steps == []
     assert not (root / "skills" / "builtin" / "default-log-triage" / "rootseeker-skill.yaml").exists()
     assert DEFAULT_FLOW_SKILL_SLUG == "default-log-triage"
+
+
+def test_builtin_helper_is_tool_and_playbook_is_flow() -> None:
+    root = _repo_root()
+    registry = build_skill_registry(
+        builtin_root=root / "skills" / "builtin",
+        custom_root=root / "skills" / "custom",
+        external_root=root / "skills" / "external",
+        overlay=None,
+    )
+    helper = registry.get("code-lookup")
+    playbook = registry.get("default-log-triage")
+    assert helper.skill_kind == SkillKind.TOOL
+    assert playbook.skill_kind == SkillKind.FLOW
 
 
 def test_parse_skill_document_minimal() -> None:

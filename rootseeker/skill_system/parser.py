@@ -114,6 +114,7 @@ def load_skill_from_path(path: Path, *, source_kind: SkillSourceKind | None = No
         name=name,
         slug=name,
         description=str(data.get("description") or ""),
+        skill_kind=SkillKind.FLOW if meta.get("role") == "playbook" else SkillKind.TOOL,
         bound_tools=allowed,
         required_tools=list(allowed),
         source_kind=source_kind or SkillSourceKind.BUILTIN,
