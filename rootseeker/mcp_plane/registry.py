@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from rootseeker.contracts.tool import ToolSpec
+from rootseeker.contracts.tool import ToolScope, ToolSpec
 
 __all__ = ["ToolHandler", "ToolRegistry"]
 
@@ -39,3 +39,18 @@ class ToolRegistry:
 
     def known_tools(self) -> frozenset[str]:
         return frozenset(self._specs.keys())
+
+    def unregister(self, tool_name: str) -> bool:
+        if tool_name not in self._specs:
+            return False
+        del self._specs[tool_name]
+        self._handlers.pop(tool_name, None)
+        return True
+
+    def unregister_by_server(self, server_name: str) -> list[str]:
+        removed: list[str] = []
+        for name, spec in list(self._specs.items()):
+            if spec.server_name == server_name and spec.scope == ToolScope.EXTERNAL:
+                if self.unregister(name):
+                    removed.append(name)
+        return removed

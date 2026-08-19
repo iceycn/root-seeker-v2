@@ -368,6 +368,19 @@ class AdminConfigStore:
     def list_env_vars(self) -> list[dict[str, Any]]:
         return list(self.load().get("env_vars", []))
 
+    def mcp_runtime_env(self) -> dict[str, str]:
+        """Env vars injected into MCP stdio processes (scopes runtime/mcp).
+
+        Uses a raw read so API/bootstrap can load env without creating config.json.
+        """
+        from rootseeker.mcp_plane.process_env import env_from_admin_items
+
+        data = self._load_raw() or {}
+        items = data.get("env_vars") or []
+        if not isinstance(items, list):
+            return {}
+        return env_from_admin_items([item for item in items if isinstance(item, dict)])
+
     def upsert_env_var(
         self, key: str, value: str, *, secret: bool = False, scope: str = "runtime"
     ) -> None:

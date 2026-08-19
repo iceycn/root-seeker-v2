@@ -25,6 +25,8 @@ required_tools:
   - notify.send
 source_kind: builtin
 version: 3.1.0
+metadata:
+  allow_external_mcp: true
 flow_plugin_id: builtin.default_log_triage_flow
 steps:
   - step_id: normalize-incident

@@ -14,9 +14,14 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from apps.admin.config_store import ALLOWED_CRON_HANDLERS, AdminConfigStore, build_admin_config_store
+from apps.admin.config_store import (
+    ALLOWED_CRON_HANDLERS,
+    AdminConfigStore,
+    build_admin_config_store,
+)
 from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
 from apps.scheduler.main import run_job_now
+from rootseeker.agent_runtime.result import AgentRunResult
 from rootseeker.analysis.call_chain import (
     extract_call_chain_summary,
     extract_exception_summary,
@@ -24,8 +29,12 @@ from rootseeker.analysis.call_chain import (
 )
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
 from rootseeker.analysis.service_identity import resolve_service_name
-from rootseeker.agent_runtime.result import AgentRunResult
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
+from rootseeker.channel_routing.models import OutboundTarget
+from rootseeker.channel_routing.outbound import (
+    get_production_channel_registry,
+    send_outbound_notification,
+)
 from rootseeker.code_index.git_auth import GitCredentials
 from rootseeker.code_index.repo_sync import RepoSyncService
 from rootseeker.code_index.repo_tools import set_repo_sync_service
@@ -43,9 +52,14 @@ from rootseeker.infra_core.openai_compat import (
     resolve_mimo_base_url,
     test_openai_compatible_connection,
 )
+from rootseeker.mcp_plane.server_manager import discover_stdio_tools
+from rootseeker.mcp_plane.tool_resolution import list_external_tool_specs, skill_allows_external_mcp
 from rootseeker.skill_system.parser import ROOTSEEKER_SKILL_SPEC_FILENAME
-from rootseeker.channel_routing.models import OutboundTarget
-from rootseeker.channel_routing.outbound import get_production_channel_registry, send_outbound_notification
+from rootseeker.storage.mcp_servers import (
+    ALLOWED_MCP_TRANSPORTS,
+    build_mcp_server_store,
+    mask_mcp_server_for_api,
+)
 from rootseeker.storage.notification_channels import (
     ALLOWED_CHANNEL_TYPES,
     NotificationChannelStore,
@@ -412,6 +426,28 @@ class AdminNotificationChannelSettingsRequest(BaseModel):
     broadcast_enabled: bool | None = None
 
 
+class AdminMcpServerRequest(BaseModel):
+    name: str = Field(min_length=1)
+    transport: str = "stdio"
+    command: str = Field(min_length=1)
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str = ""
+    enabled: bool = True
+    timeout_seconds: float = 120.0
+
+
+class AdminMcpServerUpdateRequest(BaseModel):
+    name: str | None = None
+    transport: str | None = None
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    cwd: str | None = None
+    enabled: bool | None = None
+    timeout_seconds: float | None = None
+
+
 class AdminCronJobCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     handler: str = Field(min_length=1)
@@ -535,6 +571,8 @@ def _create_admin_runtime(config_root: Path, store: AdminConfigStore) -> DevRunt
         runtime_root,
         repo_sync_service=repo_sync_service,
         node_role="admin",
+        mcp_extra_env=store.mcp_runtime_env(),
+        mcp_extra_env_provider=store.mcp_runtime_env,
     )
     return runtime, repo_sync_service
 
@@ -555,6 +593,73 @@ def _load_admin_config(
 
 def _notification_channel_store(config_root: Path) -> NotificationChannelStore:
     return build_notification_channel_store(config_root)
+
+
+def _mcp_server_store(config_root: Path):
+    return build_mcp_server_store(config_root)
+
+
+def _reload_mcp_servers(runtime: DevRuntime, config_root: Path) -> list[dict[str, Any]]:
+    store = _mcp_server_store(config_root)
+    return runtime.mcp_server_manager.reload_from_store(
+        store,
+        runtime.tool_registry,
+        runtime.external_client,
+    )
+
+
+_mcp_discovery_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mcp-discovery")
+
+
+def _run_mcp_server_discovery(server_id: str, config_root: Path, runtime: DevRuntime) -> None:
+    store = _mcp_server_store(config_root)
+    server = store.get_server(server_id)
+    if server is None:
+        return
+    discovering = dict(server)
+    discovering["discovery_status"] = "discovering"
+    discovering["last_error"] = ""
+    store.upsert_server(discovering)
+    try:
+        tools = discover_stdio_tools(server, extra_env=runtime.mcp_server_manager.extra_env)
+        payload = dict(store.get_server(server_id) or server)
+        payload["tools"] = tools
+        payload["last_sync_at"] = utc_now().isoformat()
+        payload["last_error"] = ""
+        payload["discovery_status"] = "ready"
+        store.upsert_server(payload)
+        _reload_mcp_servers(runtime, config_root)
+    except Exception as exc:
+        payload = dict(store.get_server(server_id) or server)
+        payload["discovery_status"] = "failed"
+        payload["last_error"] = str(exc)
+        store.upsert_server(payload)
+
+
+def _schedule_mcp_server_discovery(server_id: str, config_root: Path, runtime: DevRuntime) -> None:
+    _mcp_discovery_executor.submit(_run_mcp_server_discovery, server_id, config_root, runtime)
+
+
+def _merge_mcp_env(
+    updates: dict[str, str] | None,
+    existing: dict[str, Any] | None,
+) -> dict[str, str]:
+    if updates is None:
+        prior = existing or {}
+        env = prior.get("env")
+        return {str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {}
+    merged: dict[str, str] = {}
+    prior_env = (existing or {}).get("env")
+    prior_map = (
+        {str(k): str(v) for k, v in prior_env.items()} if isinstance(prior_env, dict) else {}
+    )
+    for key, value in updates.items():
+        text = str(value or "")
+        if text == "******" and key in prior_map:
+            merged[str(key)] = prior_map[key]
+        else:
+            merged[str(key)] = text
+    return merged
 
 
 def _migrate_legacy_notification_callbacks(config_root: Path, store: AdminConfigStore) -> None:
@@ -646,9 +751,26 @@ def _tool_parameters_for_actions(runtime: DevRuntime, actions: list[str]) -> lis
 
 def _skill_tool_parameters(runtime: DevRuntime, skill: SkillSpec) -> list[dict[str, Any]]:
     if skill.bound_tools:
-        return _tool_parameters_for_actions(runtime, list(skill.bound_tools))
-    actions = [step.action for step in skill.steps if step.action]
-    return _tool_parameters_for_actions(runtime, actions)
+        docs = _tool_parameters_for_actions(runtime, list(skill.bound_tools))
+    else:
+        actions = [step.action for step in skill.steps if step.action]
+        docs = _tool_parameters_for_actions(runtime, actions)
+    if skill_allows_external_mcp(skill):
+        seen = {doc.get("tool_name") for doc in docs}
+        for spec in list_external_tool_specs(runtime.tool_registry):
+            if spec.name in seen:
+                continue
+            seen.add(spec.name)
+            docs.append(
+                {
+                    "tool_name": spec.name,
+                    "description": spec.description,
+                    "parameters_schema": dict(spec.parameters_schema or {}),
+                    "registered": True,
+                    "scope": "external",
+                }
+            )
+    return docs
 
 
 def _join_url(base_url: str, path: str) -> str:
@@ -1618,6 +1740,7 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     @app.get("/skills")
     @app.get("/repos")
     @app.get("/catalog")
+    @app.get("/mcp-servers")
     @app.get("/plugins")
     @app.get("/notification-channels")
     @app.get("/semantic-search")
@@ -1680,11 +1803,13 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
     @app.post("/api/env-vars")
     def upsert_env_var(req: AdminEnvVarRequest) -> dict[str, Any]:
         store.upsert_env_var(req.key, req.value, secret=req.secret, scope=req.scope)
+        runtime.mcp_server_manager.set_extra_env(store.mcp_runtime_env())
         return {"ok": True, "item": req.model_dump(mode="json")}
 
     @app.delete("/api/env-vars/{key}")
     def delete_env_var(key: str) -> dict[str, Any]:
         store.delete_env_var(key)
+        runtime.mcp_server_manager.set_extra_env(store.mcp_runtime_env())
         return {"ok": True, "key": key}
 
     @app.get("/api/ai-providers")
@@ -1863,6 +1988,135 @@ def create_app(repo_root: Path | None = None) -> FastAPI:
         patch = req.model_dump(mode="json", exclude_unset=True)
         settings = channel_store.update_settings(patch)
         return {"ok": True, "settings": settings}
+
+    @app.get("/api/mcp-servers")
+    def list_mcp_servers() -> dict[str, Any]:
+        store = _mcp_server_store(config_root)
+        items = [mask_mcp_server_for_api(item) for item in store.list_servers()]
+        tools_total = sum(int(item.get("tools_count") or 0) for item in items)
+        return {"items": items, "total": len(items), "tools_total": tools_total}
+
+    @app.post("/api/mcp-servers")
+    def create_mcp_server(req: AdminMcpServerRequest) -> dict[str, Any]:
+        if req.transport not in ALLOWED_MCP_TRANSPORTS:
+            raise HTTPException(status_code=400, detail=f"unsupported transport: {req.transport}")
+        store = _mcp_server_store(config_root)
+        payload = req.model_dump(mode="json")
+        try:
+            payload["tools"] = []
+            payload["discovery_status"] = "discovering"
+            payload["last_error"] = ""
+            saved = store.upsert_server(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _schedule_mcp_server_discovery(str(saved["server_id"]), config_root, runtime)
+        masked = mask_mcp_server_for_api(saved)
+        return {
+            "ok": True,
+            "async": True,
+            "server": masked,
+            "tools_count": int(masked.get("tools_count") or 0),
+        }
+
+    @app.put("/api/mcp-servers/{server_id}")
+    def update_mcp_server(server_id: str, req: AdminMcpServerUpdateRequest) -> dict[str, Any]:
+        store = _mcp_server_store(config_root)
+        existing = store.get_server(server_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {server_id}")
+        payload = dict(existing)
+        updates = req.model_dump(mode="json", exclude_unset=True)
+        if "transport" in updates and updates["transport"] not in ALLOWED_MCP_TRANSPORTS:
+            raise HTTPException(status_code=400, detail=f"unsupported transport: {updates['transport']}")
+        if "env" in updates:
+            updates["env"] = _merge_mcp_env(updates.get("env"), existing)
+        payload.update(updates)
+        rediscover = any(
+            key in updates for key in ("command", "args", "env", "cwd", "transport", "timeout_seconds")
+        )
+        try:
+            if rediscover:
+                payload["tools"] = []
+                payload["discovery_status"] = "discovering"
+                payload["last_error"] = ""
+            saved = store.upsert_server(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if rediscover:
+            _schedule_mcp_server_discovery(server_id, config_root, runtime)
+        else:
+            _reload_mcp_servers(runtime, config_root)
+        masked = mask_mcp_server_for_api(saved)
+        return {
+            "ok": True,
+            "async": rediscover,
+            "server": masked,
+            "tools_count": int(masked.get("tools_count") or 0),
+        }
+
+    @app.delete("/api/mcp-servers/{server_id}")
+    def delete_mcp_server(server_id: str) -> dict[str, Any]:
+        store = _mcp_server_store(config_root)
+        if store.get_server(server_id) is None:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {server_id}")
+        store.delete_server(server_id)
+        _reload_mcp_servers(runtime, config_root)
+        return {"ok": True, "server_id": server_id}
+
+    @app.post("/api/mcp-servers/{server_id}/test")
+    def test_mcp_server(server_id: str) -> dict[str, Any]:
+        store = _mcp_server_store(config_root)
+        server = store.get_server(server_id)
+        if server is None:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {server_id}")
+        try:
+            result = runtime.mcp_server_manager.test_server(server)
+            return {"ok": True, **result}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/mcp-servers/{server_id}/sync-tools")
+    def sync_mcp_server_tools(server_id: str) -> dict[str, Any]:
+        store = _mcp_server_store(config_root)
+        server = store.get_server(server_id)
+        if server is None:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {server_id}")
+        payload = dict(server)
+        payload["discovery_status"] = "discovering"
+        payload["last_error"] = ""
+        saved = store.upsert_server(payload)
+        _schedule_mcp_server_discovery(server_id, config_root, runtime)
+        masked = mask_mcp_server_for_api(saved)
+        return {
+            "ok": True,
+            "async": True,
+            "server": masked,
+            "tools_count": int(masked.get("tools_count") or 0),
+        }
+
+    @app.post("/api/mcp-servers/{server_id}/invoke")
+    def invoke_mcp_server_tool(
+        server_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        tool_name = str(body.get("tool_name") or "").strip()
+        arguments = body.get("arguments") or {}
+        if not tool_name:
+            raise HTTPException(status_code=400, detail="tool_name is required")
+        if not isinstance(arguments, dict):
+            raise HTTPException(status_code=400, detail="arguments must be an object")
+        registered_name = tool_name
+        if not registered_name.startswith("ext."):
+            registered_name = f"ext.{server_id}.{tool_name}"
+        req = ToolCallRequest(
+            case_id=ADMIN_CASE_ID,
+            step_id=ADMIN_STEP_ID,
+            skill_name=ADMIN_SKILL,
+            tool_name=registered_name,
+            arguments=dict(arguments),
+        )
+        result = runtime.gateway.invoke(req, actor="admin", plugin_id="admin.mcp")
+        return result.model_dump(mode="json")
 
     def _cron_state_store() -> CronStateStore:
         return build_cron_state_store(config_root)

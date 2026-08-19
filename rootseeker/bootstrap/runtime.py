@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import socket
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,19 +17,33 @@ from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.code_index.repo_sync import RepoSyncService
 from rootseeker.config import build_internal_adapter_from_settings
 from rootseeker.contracts.case import CaseCreateRequest
-from rootseeker.infra_core import EventBus, ExecApprovalGuard, NetworkGuard, PresenceRegistry, RootSeekerSettings
-from rootseeker.mcp_plane import McpGateway, PolicyGuard, ToolRegistry
+from rootseeker.infra_core import (
+    EventBus,
+    ExecApprovalGuard,
+    NetworkGuard,
+    PresenceRegistry,
+    RootSeekerSettings,
+)
+from rootseeker.mcp_plane import (
+    McpExternalClient,
+    McpGateway,
+    McpServerManager,
+    PolicyGuard,
+    ToolRegistry,
+)
+from rootseeker.mcp_plane.server_manager import register_mcp_servers_from_store
 from rootseeker.observability.audit import InMemoryAuditLog
 from rootseeker.plugin_system import ManifestRegistry, build_registry_from_bundled
 from rootseeker.policies import ApprovalStore, WebhookApprovalEventSink
 from rootseeker.replay.store import ReplayStore
+from rootseeker.service_catalog import MemoryServiceCatalog
 from rootseeker.skill_system import SkillRegistry, build_registry_from_builtin_skills
+from rootseeker.storage.mcp_servers import build_mcp_server_store
 from rootseeker.storage.memory import InMemoryCaseStore, InMemoryEvidenceStore, InMemoryReportStore
 from rootseeker.storage.mysql import MysqlCaseStore, MysqlEvidenceStore, MysqlReportStore
 from rootseeker.storage.mysql_checkpoint import MysqlCheckpointStore
 from rootseeker.storage.mysql_conn import mysql_config_from_settings
 from rootseeker.storage.sqlite import SqliteCaseStore, SqliteEvidenceStore, SqliteReportStore
-from rootseeker.service_catalog import MemoryServiceCatalog
 from rootseeker.storage.sqlite_checkpoint import SqliteCheckpointStore
 
 if TYPE_CHECKING:
@@ -48,6 +63,8 @@ class DevRuntime:
     service_catalog: MemoryServiceCatalog
     policy: PolicyGuard
     gateway: McpGateway
+    external_client: McpExternalClient
+    mcp_server_manager: McpServerManager
     case_store: InMemoryCaseStore | SqliteCaseStore | MysqlCaseStore
     evidence_store: InMemoryEvidenceStore | SqliteEvidenceStore | MysqlEvidenceStore
     report_store: InMemoryReportStore | SqliteReportStore | MysqlReportStore
@@ -154,6 +171,33 @@ class DevRuntime:
             prior_step_outputs=prior_step_outputs,
             prior_case_id=prior_case_id,
         )
+        skill_slug = (
+            result.case.selected_skills[0]
+            if result.case.selected_skills
+            else RootSeekerSettings().skill_composer_default_flow
+        )
+        flow_skill = self.skill_registry.get(skill_slug)
+        step_outputs = {
+            step.step_id: dict(step.outputs)
+            for step in result.case.steps
+            if step.outputs
+        }
+        from rootseeker.agent_runtime.mcp_supplement import run_external_mcp_supplement
+
+        supplement_results = run_external_mcp_supplement(
+            case_request=case_request,
+            flow_case_id=result.case.case_id,
+            evidence_pack=result.evidence_pack,
+            step_outputs=step_outputs,
+            skill=flow_skill,
+            gateway=self.gateway,
+            tool_registry=self.tool_registry,
+        )
+        if supplement_results:
+            result.tool_results.extend(supplement_results)
+            result.evidence_pack.summary = (
+                f"{result.evidence_pack.summary}; external MCP tools: {len(supplement_results)}"
+            )
         self.case_store.put(result.case)
         self.evidence_store.put_pack(result.evidence_pack)
         self.report_store.put(result.report)
@@ -213,10 +257,16 @@ def create_dev_runtime(
     internal_adapter: InternalToolAdapter | None = None,
     repo_sync_service: RepoSyncService | None = None,
     node_role: str | None = None,
+    mcp_extra_env: dict[str, str] | None = None,
+    mcp_extra_env_provider: Callable[[], dict[str, str]] | None = None,
 ) -> DevRuntime:
     """Wire bundled plugins, builtin skills, internal tools, and gateway (dev/smoke)."""
 
     root = repo_root if repo_root is not None else Path.cwd()
+    if mcp_extra_env is None:
+        mcp_extra_env, default_provider = _load_admin_mcp_env(root)
+        if mcp_extra_env_provider is None:
+            mcp_extra_env_provider = default_provider
     audit = InMemoryAuditLog()
     plugins = build_registry_from_bundled(root / "plugins" / "builtin")
     skills = build_registry_from_builtin_skills(root / "skills" / "builtin")
@@ -246,7 +296,19 @@ def create_dev_runtime(
         approval_store=approval_store,
         require_approval_for_write=settings.approval_required_for_write_tools,
     )
-    gateway = McpGateway(tools, policy, audit)
+    external_client = McpExternalClient()
+    gateway = McpGateway(tools, policy, audit, external_client=external_client)
+    mcp_server_manager = McpServerManager(
+        extra_env=mcp_extra_env,
+        extra_env_provider=mcp_extra_env_provider,
+    )
+    mcp_store = build_mcp_server_store(root)
+    register_mcp_servers_from_store(
+        mcp_store,
+        tools,
+        external_client,
+        manager=mcp_server_manager,
+    )
     case_store, evidence_store, report_store, flow_checkpoint_store = _build_storage(root, settings)
     replay_store = _build_replay_store(root, settings)
     event_bus = EventBus()
@@ -261,6 +323,8 @@ def create_dev_runtime(
         service_catalog=mem_cat,
         policy=policy,
         gateway=gateway,
+        external_client=external_client,
+        mcp_server_manager=mcp_server_manager,
         case_store=case_store,
         evidence_store=evidence_store,
         report_store=report_store,
@@ -344,3 +408,23 @@ def _build_replay_store(repo_root: Path, settings: RootSeekerSettings) -> Replay
 
 def _parse_allow_patterns(raw: str) -> list[str]:
     return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _load_admin_mcp_env(
+    repo_root: Path,
+) -> tuple[dict[str, str], Callable[[], dict[str, str]] | None]:
+    """Load advanced-settings env vars for MCP subprocesses.
+
+    Lazy-imports AdminConfigStore so bootstrap does not import apps at module load.
+    """
+    try:
+        from apps.admin.config_store import build_admin_config_store
+    except ImportError:
+        return {}, None
+
+    try:
+        store = build_admin_config_store(repo_root)
+    except Exception:
+        return {}, None
+
+    return store.mcp_runtime_env(), store.mcp_runtime_env

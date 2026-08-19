@@ -13,6 +13,27 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def test_upsert_env_var_injects_runtime_scope_into_mcp_manager(tmp_path: Path) -> None:
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    result = client.post(
+        "/api/env-vars",
+        json={"key": "MCP_TEST_TOKEN", "value": "secret-from-advanced", "secret": True, "scope": "runtime"},
+    )
+    assert result.status_code == 200
+    extra_env = app.state.runtime.mcp_server_manager.extra_env
+    assert extra_env["MCP_TEST_TOKEN"] == "secret-from-advanced"
+
+    skill_only = client.post(
+        "/api/env-vars",
+        json={"key": "SKILL_ONLY_TOKEN", "value": "not-for-mcp", "scope": "skill"},
+    )
+    assert skill_only.status_code == 200
+    extra_env = app.state.runtime.mcp_server_manager.extra_env
+    assert "SKILL_ONLY_TOKEN" not in extra_env
+    assert extra_env["MCP_TEST_TOKEN"] == "secret-from-advanced"
+
+
 def test_admin_health_status_and_page(tmp_path: Path) -> None:
     client = TestClient(create_app(tmp_path))
 

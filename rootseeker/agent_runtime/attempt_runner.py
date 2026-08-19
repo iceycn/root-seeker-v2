@@ -14,6 +14,8 @@ from rootseeker.contracts.evidence import EvidencePack, EvidenceType
 from rootseeker.contracts.tool import ToolCallRequest
 from rootseeker.evidence import append_tool_json_evidence
 from rootseeker.flow_runtime import FlowRuntime
+from rootseeker.mcp_plane.tool_resolution import resolve_planner_tools
+from rootseeker.skill_system.composer import SkillComposer
 from rootseeker.infra_core import RootSeekerSettings
 from rootseeker.skill_runtime.result_sanitize import (
     sanitize_tool_result_for_evidence,
@@ -117,9 +119,16 @@ class AttemptRunner:
         history_summary: str | None,
         return_failed_plan: bool,
     ) -> AttemptResult | None:
+        skill = self._resolve_flow_skill(case_request)
+        allow_write_tools = getattr(self.tool_planner, "allow_write_tools", False)
+        planner_tools = resolve_planner_tools(
+            self.flow_runtime.runtime.tool_registry,
+            skill,
+            allow_write_tools=allow_write_tools,
+        )
         plan_result = self.tool_planner.plan(
             case_request=case_request,
-            tools=self.flow_runtime.runtime.tool_registry.list_specs(),
+            tools=planner_tools,
             history_summary=history_summary,
         )
         if not plan_result.ok or plan_result.plan is None:
@@ -302,6 +311,14 @@ class AttemptRunner:
                 "tool_plan": plan_result.to_payload(),
             },
         )
+
+    def _resolve_flow_skill(self, case_request: CaseCreateRequest):
+        composer = SkillComposer(
+            self.flow_runtime.runtime.skill_registry,
+            registered_tool_names=self.flow_runtime.runtime.tool_registry.known_tools(),
+        )
+        plan = composer.compose(case_request)
+        return self.flow_runtime.runtime.skill_registry.get(plan.skill_slug)
 
 
 def _status_from_flow_result(flow_result) -> str:

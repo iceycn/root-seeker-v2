@@ -170,3 +170,25 @@ def test_sqlite_replay_history_store_persists_across_instances(tmp_path: Path) -
 
     assert second.get_case("rp-test-1") is not None
     assert len(second.get_runs("rp-test-1")) == 1
+
+
+def test_create_dev_runtime_loads_admin_advanced_settings_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from apps.admin.config_store import AdminConfigStore
+
+    config_path = tmp_path / "admin-config.json"
+    store = AdminConfigStore(config_path)
+    store.upsert_env_var("BOOTSTRAP_MCP_KEY", "from-advanced", scope="runtime")
+    store.upsert_env_var("BOOTSTRAP_SKILL_KEY", "skill-only", scope="skill")
+    monkeypatch.setenv("ROOTSEEKER_ADMIN_CONFIG_PATH", str(config_path))
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+
+    runtime = create_dev_runtime(_repo_root())
+    try:
+        extra = runtime.mcp_server_manager.extra_env
+        assert extra["BOOTSTRAP_MCP_KEY"] == "from-advanced"
+        assert "BOOTSTRAP_SKILL_KEY" not in extra
+    finally:
+        runtime.mcp_server_manager._close_all_sessions()

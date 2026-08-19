@@ -193,6 +193,25 @@ type NotificationChannelRecord = ApiRecord & {
   sort_order?: number
 }
 
+type McpServerRecord = ApiRecord & {
+  server_id: string
+  name: string
+  transport?: string
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  cwd?: string
+  enabled?: boolean
+  tools?: ApiRecord[]
+  timeout_seconds?: number
+  last_sync_at?: string
+  last_error?: string
+  has_env?: boolean
+  tools_count?: number
+  tool_names?: string[]
+  discovery_status?: 'pending' | 'discovering' | 'ready' | 'failed'
+}
+
 type CronJobState = {
   status?: string
   next_run_at?: string | null
@@ -283,9 +302,31 @@ const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     ...init,
   })
   const text = await response.text()
-  const data = text ? JSON.parse(text) : null
-  if (!response.ok) throw new Error(data?.detail || text || response.statusText)
-  return data as T
+  let data: { detail?: unknown } | null = null
+  if (text) {
+    try {
+      data = JSON.parse(text)
+    } catch {
+      data = null
+    }
+  }
+  if (!response.ok) {
+    const detail = data?.detail
+    let message = text || response.statusText
+    if (typeof detail === 'string') {
+      message = detail
+    } else if (Array.isArray(detail)) {
+      message = detail
+        .map((item) => {
+          if (typeof item === 'string') return item
+          if (item && typeof item === 'object' && 'msg' in item) return String((item as { msg?: string }).msg)
+          return JSON.stringify(item)
+        })
+        .join('; ')
+    }
+    throw new Error(message)
+  }
+  return (data ?? null) as T
 }
 
 const maskKey = (key?: string) => {
@@ -443,6 +484,195 @@ const repoRemoteDefaultBaseUrl: Record<string, string> = {
   generic: '',
 }
 
+const MCP_SERVER_JSON_TEMPLATE = {
+  plantuml: {
+    command: 'npx',
+    args: ['-y', 'plantuml-mcp-server'],
+    env: {
+      PLANTUML_SERVER_URL: 'https://www.plantuml.com/plantuml',
+    },
+  },
+}
+
+const MCP_SERVER_JSON_EMPTY = {
+  name: 'my-server',
+  transport: 'stdio',
+  command: '',
+  args: [],
+  env: {},
+  timeout_seconds: 120,
+}
+
+type McpServerPayload = {
+  name: string
+  transport: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd: string
+  enabled: boolean
+  timeout_seconds: number
+}
+
+const isMcpServerBlock = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value && typeof value === 'object' && typeof (value as Record<string, unknown>).command === 'string')
+
+const normalizeMcpServerBlock = (name: string, block: Record<string, unknown>): McpServerPayload => {
+  const command = String(block.command || '').trim()
+  if (!command) {
+    throw new Error('command 必填')
+  }
+  const args = Array.isArray(block.args) ? block.args.map((item) => String(item)) : []
+  const envSource = block.env
+  const env: Record<string, string> = {}
+  if (envSource && typeof envSource === 'object') {
+    for (const [key, value] of Object.entries(envSource as Record<string, unknown>)) {
+      env[String(key)] = String(value ?? '')
+    }
+  }
+  return {
+    name: String(block.name || name).trim(),
+    transport: String(block.transport || 'stdio'),
+    command,
+    args,
+    env,
+    cwd: String(block.cwd || ''),
+    enabled: block.enabled !== false,
+    timeout_seconds: Number(block.timeout_seconds || 120),
+  }
+}
+
+const normalizeMcpServerConfig = (parsed: unknown): McpServerPayload => {
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('JSON 必须是对象')
+  }
+  const root = parsed as Record<string, unknown>
+
+  if (root.mcpServers && typeof root.mcpServers === 'object') {
+    const servers = root.mcpServers as Record<string, unknown>
+    const keys = Object.keys(servers)
+    if (keys.length !== 1) {
+      throw new Error('mcpServers 中请只包含一个 Server，或分多次添加')
+    }
+    const name = keys[0]
+    const block = servers[name]
+    if (!isMcpServerBlock(block)) {
+      throw new Error(`无法解析 mcpServers.${name}`)
+    }
+    return normalizeMcpServerBlock(name, block)
+  }
+
+  const keys = Object.keys(root)
+  if (keys.length === 1 && !isMcpServerBlock(root)) {
+    const name = keys[0]
+    const block = root[name]
+    if (isMcpServerBlock(block)) {
+      return normalizeMcpServerBlock(name, block)
+    }
+  }
+
+  if (typeof (root as { name?: unknown }).name === 'string' || isMcpServerBlock(root)) {
+    const name =
+      typeof (root as { name?: unknown }).name === 'string'
+        ? String((root as { name: string }).name)
+        : 'mcp-server'
+    return normalizeMcpServerBlock(name, root)
+  }
+
+  throw new Error('无法识别的 MCP JSON 格式')
+}
+
+const mcpServerRecordToJson = (record: McpServerRecord) =>
+  JSON.stringify(
+    {
+      name: record.name,
+      transport: record.transport || 'stdio',
+      command: record.command,
+      args: record.args || [],
+      env: record.env || {},
+      cwd: record.cwd || '',
+      enabled: record.enabled !== false,
+      timeout_seconds: record.timeout_seconds || 120,
+    },
+    null,
+    2,
+  )
+
+const getMcpServerToolNames = (record: McpServerRecord) =>
+  record.tool_names ||
+  (record.tools || []).map((tool) => String(tool.name || '')).filter(Boolean)
+
+const renderMcpServerToolsTooltip = (record: McpServerRecord) => {
+  const tools = (record.tools || []) as ApiRecord[]
+  const names = getMcpServerToolNames(record)
+  if (!names.length) {
+    return '暂无可用工具，请点击「同步工具」'
+  }
+  if (tools.length) {
+    return (
+      <div style={{ maxWidth: 420 }}>
+        {tools.map((tool) => {
+          const name = String(tool.name || '')
+          if (!name) return null
+          const description = String(tool.description || '').trim()
+          return (
+            <div key={name} style={{ marginBottom: 6 }}>
+              <Typography.Text strong style={{ color: '#fff' }}>{name}</Typography.Text>
+              {description ? (
+                <Typography.Text style={{ color: 'rgba(255,255,255,0.85)' }}> — {description}</Typography.Text>
+              ) : null}
+              <br />
+              <Typography.Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 12 }}>
+                ext.{record.server_id}.{name}
+              </Typography.Text>
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+  return names.join('、')
+}
+
+const renderAllMcpToolsTooltip = (servers: McpServerRecord[]) => {
+  const sections = servers
+    .map((server) => {
+      const names = getMcpServerToolNames(server)
+      if (!names.length) return null
+      return { name: server.name, names }
+    })
+    .filter(Boolean) as { name: string; names: string[] }[]
+  if (!sections.length) {
+    return '暂无可用工具'
+  }
+  return (
+    <div style={{ maxWidth: 420 }}>
+      {sections.map((section) => (
+        <div key={section.name} style={{ marginBottom: 8 }}>
+          <Typography.Text strong style={{ color: '#fff' }}>{section.name}</Typography.Text>
+          <Typography.Text style={{ color: 'rgba(255,255,255,0.85)' }}>
+            ：{section.names.join('、')}
+          </Typography.Text>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const mcpDiscoveryStatusMeta = (record: McpServerRecord) => {
+  const status = record.discovery_status || ((record.tools_count ?? (record.tools || []).length) > 0 ? 'ready' : 'pending')
+  switch (status) {
+    case 'discovering':
+      return { color: 'processing' as const, text: '发现中' }
+    case 'ready':
+      return { color: 'success' as const, text: '已接入' }
+    case 'failed':
+      return { color: 'error' as const, text: '接入失败' }
+    default:
+      return { color: 'default' as const, text: '待发现' }
+  }
+}
+
 const pathToView: Record<string, string> = {
   '/': 'models',
   '/admin': 'models',
@@ -452,6 +682,7 @@ const pathToView: Record<string, string> = {
   '/repos': 'repos',
   '/catalog': 'catalog',
   '/plugins': 'plugins',
+  '/mcp-servers': 'mcpServers',
   '/notification-channels': 'notificationChannels',
   '/schedules': 'schedules',
   '/semantic-search': 'semantic',
@@ -466,6 +697,7 @@ const viewToPath: Record<string, string> = {
   repos: '/repos',
   catalog: '/catalog',
   plugins: '/plugins',
+  mcpServers: '/mcp-servers',
   notificationChannels: '/notification-channels',
   schedules: '/schedules',
   semantic: '/semantic-search',
@@ -494,6 +726,8 @@ function App() {
   const [selectedRemoteRepoKeys, setSelectedRemoteRepoKeys] = useState<string[]>([])
   const [catalogItems, setCatalogItems] = useState<CatalogRecord[]>([])
   const [notificationChannels, setNotificationChannels] = useState<NotificationChannelRecord[]>([])
+  const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([])
+  const [mcpToolsTotal, setMcpToolsTotal] = useState(0)
   const [broadcastEnabled, setBroadcastEnabled] = useState(true)
   const [cronJobs, setCronJobs] = useState<CronJobRecord[]>([])
   const [cronHandlers, setCronHandlers] = useState<string[]>([])
@@ -525,6 +759,10 @@ function App() {
   const [channelForm] = Form.useForm()
   const [channelModalOpen, setChannelModalOpen] = useState(false)
   const [editingChannel, setEditingChannel] = useState<NotificationChannelRecord | null>(null)
+  const [mcpServerModalOpen, setMcpServerModalOpen] = useState(false)
+  const [editingMcpServer, setEditingMcpServer] = useState<McpServerRecord | null>(null)
+  const [mcpServerJsonText, setMcpServerJsonText] = useState('')
+  const [mcpServerSaving, setMcpServerSaving] = useState(false)
   const [cronForm] = Form.useForm()
   const [skillForm] = Form.useForm()
   const [semanticForm] = Form.useForm()
@@ -553,6 +791,10 @@ function App() {
     errorChat: { title: '错误排查助手', desc: '提交错误信息、日志或现象，形成可追踪的排查历史。' },
     skills: { title: 'Skills 管理', desc: 'Flow Skill 编排排查链路；Tool Skill 描述各工具如何取参与协作。' },
     plugins: { title: 'Plugins / Tools', desc: '查看已加载插件和 MCP 工具注册情况。' },
+    mcpServers: {
+      title: 'MCP 协议',
+      desc: '粘贴 Cursor / Claude 风格的 MCP JSON（如 plantuml 配置），保存后自动发现工具并注册到 McpGateway。',
+    },
     repos: { title: 'Repo 管理', desc: '注册仓库、同步代码并触发 Zoekt/Qdrant 索引。' },
     catalog: { title: 'Service Catalog', desc: '配置 service_name 到仓库、日志源、负责人等信息的映射。' },
     models: { title: '大语言模型', desc: '系统会根据用户内容智能选择最合适的模型，您也可以切换默认模型。' },
@@ -604,6 +846,14 @@ function App() {
       }).catch((e) => apiMessage.error(String(e)))
     }
     if (active === 'catalog') api<{ items: CatalogRecord[] }>('/api/catalog').then((d) => setCatalogItems(d.items || [])).catch((e) => apiMessage.error(String(e)))
+    if (active === 'mcpServers') {
+      api<{ items: McpServerRecord[]; tools_total?: number }>('/api/mcp-servers')
+        .then((d) => {
+          setMcpServers(d.items || [])
+          setMcpToolsTotal(Number(d.tools_total || 0))
+        })
+        .catch((e) => apiMessage.error(String(e)))
+    }
     if (active === 'notificationChannels') {
       api<{ items: NotificationChannelRecord[] }>('/api/notification-channels')
         .then((d) => setNotificationChannels(d.items || []))
@@ -959,6 +1209,131 @@ function App() {
     await refreshNotificationChannels()
   }
 
+  const refreshMcpServers = async () => {
+    const data = await api<{ items: McpServerRecord[]; tools_total?: number }>('/api/mcp-servers')
+    setMcpServers(data.items || [])
+    setMcpToolsTotal(Number(data.tools_total || 0))
+  }
+
+  useEffect(() => {
+    if (active !== 'mcpServers') return
+    const hasDiscovering = mcpServers.some((item) => item.discovery_status === 'discovering')
+    if (!hasDiscovering) return
+    const timer = window.setInterval(() => {
+      refreshMcpServers().catch((error) => apiMessage.error(String(error)))
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [active, mcpServers, apiMessage])
+
+  const openMcpServerModal = (record?: McpServerRecord) => {
+    if (record) {
+      setEditingMcpServer(record)
+      setMcpServerJsonText(mcpServerRecordToJson(record))
+    } else {
+      setEditingMcpServer(null)
+      setMcpServerJsonText(JSON.stringify(MCP_SERVER_JSON_EMPTY, null, 2))
+    }
+    setMcpServerModalOpen(true)
+  }
+
+  const saveMcpServer = async () => {
+    setMcpServerSaving(true)
+    try {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(mcpServerJsonText)
+      } catch {
+        apiMessage.error('JSON 格式错误，请检查语法')
+        return
+      }
+      let payload: McpServerPayload
+      try {
+        payload = normalizeMcpServerConfig(parsed)
+      } catch (error) {
+        apiMessage.error(String(error))
+        return
+      }
+      if (payload.command.toLowerCase() === 'npx' && !payload.args.includes('-y')) {
+        payload.args = ['-y', ...payload.args]
+      }
+      if (editingMcpServer?.server_id) {
+        const data = await api<{ ok: boolean; async?: boolean }>(
+          `/api/mcp-servers/${encodeURIComponent(editingMcpServer.server_id)}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+          },
+        )
+        apiMessage.success(
+          data.async ? 'MCP Server 已更新，正在后台发现工具（可在列表查看状态）' : 'MCP Server 已更新',
+        )
+      } else {
+        await api<{ ok: boolean }>('/api/mcp-servers', { method: 'POST', body: JSON.stringify(payload) })
+        apiMessage.success('MCP Server 已添加，正在后台发现工具（可在列表查看状态）')
+      }
+      setMcpServerModalOpen(false)
+      setEditingMcpServer(null)
+      setMcpServerJsonText('')
+      await refreshMcpServers()
+      if (active === 'plugins') {
+        const toolsData = await api<{ items: ToolRecord[] }>('/api/tools')
+        setTools(toolsData.items || [])
+      }
+    } catch (error) {
+      apiMessage.error(`保存失败：${String(error)}`)
+      throw error
+    } finally {
+      setMcpServerSaving(false)
+    }
+  }
+
+  const testMcpServer = async (serverId: string) => {
+    const data = await api<{ ok: boolean; tools?: ApiRecord[]; probe?: ApiRecord }>(
+      `/api/mcp-servers/${encodeURIComponent(serverId)}/test`,
+      { method: 'POST' },
+    )
+    const names = (data.tools || [])
+      .map((tool) => String(tool.name || ''))
+      .filter(Boolean)
+    const count = names.length
+    apiMessage.success(
+      count > 0
+        ? `连接成功，发现 ${count} 个工具：${names.join(', ')}`
+        : '连接成功，但未发现可用工具',
+    )
+  }
+
+  const syncMcpServerTools = async (serverId: string) => {
+    await api<{ ok: boolean }>(
+      `/api/mcp-servers/${encodeURIComponent(serverId)}/sync-tools`,
+      { method: 'POST' },
+    )
+    apiMessage.success('已提交后台同步，请在列表查看状态')
+    await refreshMcpServers()
+  }
+
+  const deleteMcpServer = async (serverId: string) => {
+    await api(`/api/mcp-servers/${encodeURIComponent(serverId)}`, { method: 'DELETE' })
+    apiMessage.success('MCP Server 已删除')
+    if (editingMcpServer?.server_id === serverId) {
+      setMcpServerModalOpen(false)
+      setEditingMcpServer(null)
+      setMcpServerJsonText('')
+    } else if (!mcpServerModalOpen) {
+      setEditingMcpServer(null)
+      setMcpServerJsonText('')
+    }
+    await refreshMcpServers()
+  }
+
+  const toggleMcpServer = async (record: McpServerRecord, enabled: boolean) => {
+    await api(`/api/mcp-servers/${encodeURIComponent(record.server_id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    })
+    await refreshMcpServers()
+  }
+
   const updateBroadcastEnabled = async (enabled: boolean) => {
     await api('/api/notification-channel-settings', {
       method: 'PUT',
@@ -1248,6 +1623,7 @@ function App() {
     { key: 'agent', label: '智能体', type: 'group' },
     { key: 'skills', icon: <ExperimentOutlined />, label: 'Skills 管理' },
     { key: 'plugins', icon: <ApiOutlined />, label: 'Plugins / Tools' },
+    { key: 'mcpServers', icon: <ApiOutlined />, label: 'MCP 协议' },
     { key: 'repos', icon: <FolderOpenOutlined />, label: 'Repo 管理' },
     { key: 'catalog', icon: <HeartOutlined />, label: 'Service Catalog' },
     { key: 'settings', label: '设置', type: 'group' },
@@ -1933,6 +2309,205 @@ function App() {
         </Space>
       )
     }
+    if (active === 'mcpServers') {
+      const enabledCount = mcpServers.filter((item) => item.enabled !== false).length
+      return (
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Space size={16}>
+              <Typography.Text type="secondary">
+                已启用 {enabledCount} / 共 {mcpServers.length} 个 Server
+              </Typography.Text>
+              <Tooltip title={renderAllMcpToolsTooltip(mcpServers)} placement="bottom">
+                <Badge
+                  count={mcpToolsTotal}
+                  overflowCount={999}
+                  color={mcpToolsTotal > 0 ? '#52c41a' : '#d9d9d9'}
+                  showZero
+                >
+                  <Tag color={mcpToolsTotal > 0 ? 'success' : 'default'} style={{ cursor: 'help' }}>
+                    可用工具 {mcpToolsTotal}
+                  </Tag>
+                </Badge>
+              </Tooltip>
+            </Space>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openMcpServerModal()}>
+              添加 MCP Server
+            </Button>
+          </div>
+          <Card bordered={false}>
+            <Table
+              rowKey="server_id"
+              dataSource={mcpServers}
+              expandable={{
+                expandedRowRender: (record: McpServerRecord) => (
+                  <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Typography.Text type="secondary">
+                      命令：{record.command} {Array.isArray(record.args) ? record.args.join(' ') : ''}
+                    </Typography.Text>
+                    {record.last_sync_at ? (
+                      <Typography.Text type="secondary">最近同步：{record.last_sync_at}</Typography.Text>
+                    ) : null}
+                    {record.last_error ? (
+                      <Typography.Text type="danger">最近错误：{record.last_error}</Typography.Text>
+                    ) : null}
+                    <Table
+                      size="small"
+                      rowKey="name"
+                      dataSource={(record.tools || []) as ApiRecord[]}
+                      pagination={false}
+                      columns={[
+                        { title: '工具名', dataIndex: 'name' },
+                        { title: '描述', dataIndex: 'description', ellipsis: true },
+                        {
+                          title: '注册名',
+                          render: (_: unknown, tool: ApiRecord) => `ext.${record.server_id}.${tool.name}`,
+                        },
+                      ]}
+                    />
+                  </Space>
+                ),
+              }}
+              columns={[
+                { title: '名称', dataIndex: 'name' },
+                { title: '传输', dataIndex: 'transport', width: 90 },
+                { title: '命令', dataIndex: 'command', ellipsis: true, render: renderEllipsisCell },
+                {
+                  title: '状态',
+                  width: 110,
+                  render: (_: unknown, record: McpServerRecord) => {
+                    const meta = mcpDiscoveryStatusMeta(record)
+                    const tag = (
+                      <Tag color={meta.color}>
+                        {record.discovery_status === 'discovering' ? (
+                          <Space size={4}>
+                            <Spin size="small" />
+                            {meta.text}
+                          </Space>
+                        ) : (
+                          meta.text
+                        )}
+                      </Tag>
+                    )
+                    if (record.discovery_status === 'failed' && record.last_error) {
+                      return (
+                        <Tooltip title={record.last_error} placement="topLeft">
+                          {tag}
+                        </Tooltip>
+                      )
+                    }
+                    if (record.discovery_status === 'discovering') {
+                      return (
+                        <Tooltip title="正在连接 MCP Server，首次 npx 可能需等待下载" placement="topLeft">
+                          {tag}
+                        </Tooltip>
+                      )
+                    }
+                    return tag
+                  },
+                },
+                {
+                  title: '可用工具',
+                  width: 110,
+                  render: (_: unknown, record: McpServerRecord) => {
+                    const count = Number(record.tools_count ?? (record.tools || []).length)
+                    return (
+                      <Tag color={count > 0 ? 'success' : record.last_error ? 'error' : 'default'}>
+                        {count} 个
+                      </Tag>
+                    )
+                  },
+                },
+                {
+                  title: '工具列表',
+                  ellipsis: true,
+                  render: (_: unknown, record: McpServerRecord) => {
+                    const names = getMcpServerToolNames(record)
+                    if (!names.length) {
+                      return <Typography.Text type="secondary">暂无，点击「同步工具」</Typography.Text>
+                    }
+                    const visible = names.slice(0, 6)
+                    const overflow = names.length - visible.length
+                    const content = (
+                      <Space size={[4, 4]} wrap>
+                        {visible.map((name) => (
+                          <Tag key={name}>{name}</Tag>
+                        ))}
+                        {overflow > 0 ? <Tag style={{ cursor: 'help' }}>+{overflow}</Tag> : null}
+                      </Space>
+                    )
+                    return (
+                      <Tooltip title={renderMcpServerToolsTooltip(record)} placement="topLeft">
+                        <span style={{ cursor: 'help' }}>{content}</span>
+                      </Tooltip>
+                    )
+                  },
+                },
+                {
+                  title: '启用',
+                  width: 90,
+                  render: (_: unknown, record: McpServerRecord) => (
+                    <Switch
+                      checked={record.enabled !== false}
+                      onChange={(checked) => toggleMcpServer(record, checked)}
+                    />
+                  ),
+                },
+                {
+                  title: '操作',
+                  width: 280,
+                  render: (_: unknown, record: McpServerRecord) => (
+                    <Space>
+                      <Button onClick={() => testMcpServer(record.server_id)}>测试</Button>
+                      <Button onClick={() => syncMcpServerTools(record.server_id)}>同步工具</Button>
+                      <Button icon={<EditOutlined />} onClick={() => openMcpServerModal(record)}>编辑</Button>
+                      <Button danger onClick={() => deleteMcpServer(record.server_id)}>删除</Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+          <Modal
+            title={editingMcpServer ? `编辑 MCP Server：${editingMcpServer.name}` : '添加 MCP Server'}
+            open={mcpServerModalOpen}
+            destroyOnHidden
+            onCancel={() => {
+              setMcpServerModalOpen(false)
+              setEditingMcpServer(null)
+              setMcpServerJsonText('')
+            }}
+            onOk={() => saveMcpServer()}
+            okText="保存并发现工具"
+            cancelText="取消"
+            width={800}
+            confirmLoading={mcpServerSaving}
+            okButtonProps={{ disabled: mcpServerSaving }}
+          >
+            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Typography.Text type="secondary">
+                支持 Cursor 单条、mcpServers 块或 RootSeeker 格式。使用 npx 时建议 args 包含 -y（会自动补全），避免首次安装卡住。
+              </Typography.Text>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  type="link"
+                  onClick={() => setMcpServerJsonText(JSON.stringify(MCP_SERVER_JSON_TEMPLATE, null, 2))}
+                >
+                  填入 PlantUML 示例
+                </Button>
+              </div>
+              <Input.TextArea
+                value={mcpServerJsonText}
+                onChange={(e) => setMcpServerJsonText(e.target.value)}
+                rows={16}
+                style={{ fontFamily: 'Consolas, Monaco, monospace' }}
+                placeholder='{"plantuml":{"command":"npx","args":["plantuml-mcp-server"],"env":{...}}}'
+              />
+            </Space>
+          </Modal>
+        </Space>
+      )
+    }
     if (active === 'notificationChannels') {
       const enabledCount = notificationChannels.filter((item) => item.enabled !== false).length
       return (
@@ -2202,7 +2777,7 @@ function App() {
                 children: (
                   <Space direction="vertical" size={16} style={{ width: '100%' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Typography.Text type="secondary">这些变量会写入管理端配置，并作为 Skill / MCP 运行时配置来源。更新模块暂不包含。</Typography.Text>
+                      <Typography.Text type="secondary">作用域为 runtime / mcp 的变量会注入 MCP 子进程环境；skill 仅给 Skill 使用。MCP Server JSON 里的 env 优先级更高。更新后已连接的 MCP 会话会重启以加载新变量。</Typography.Text>
                       <Button type="primary" onClick={() => openEnvModal()}>添加变量</Button>
                     </div>
                     <Table rowKey="key" dataSource={envVars} columns={[

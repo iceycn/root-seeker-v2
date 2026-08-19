@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from rootseeker.agent_runtime.result import AgentRunResult
 from plugins.builtin.default_log_triage_flow import DefaultFlowRunResult
+from apps.admin.config_store import build_admin_config_store
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
 from rootseeker.channel_routing import (
     ChannelMessage,
@@ -314,7 +315,14 @@ def _build_default_api_response(
 def create_app(repo_root: Path | None = None) -> FastAPI:
     app = FastAPI(title="RootSeeker API", version="0.1.0")
 
-    runtime = create_dev_runtime(repo_root or Path.cwd(), node_role="api")
+    repo_root = Path(repo_root or Path.cwd())
+    admin_store = build_admin_config_store(repo_root)
+    runtime = create_dev_runtime(
+        repo_root,
+        node_role="api",
+        mcp_extra_env=admin_store.mcp_runtime_env(),
+        mcp_extra_env_provider=admin_store.mcp_runtime_env,
+    )
     flow_runtime = FlowRuntime(runtime)
 
     # WebSocket Gateway (must be created before routes that flush broadcasts)
