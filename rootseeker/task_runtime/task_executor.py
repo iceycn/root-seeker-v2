@@ -40,13 +40,13 @@ class TaskExecutor:
                 task.result_ref = agent_result.case_id
                 task.payload["runner"] = "agent"
                 task.payload["attempt_count"] = len(agent_result.attempts)
-                task.status = TaskStatus.COMPLETED
+                task.status = _task_status_for_run(agent_result.status)
                 self._store.save(task)
                 return
             res = self._flow_runtime.run_default(req)
             task.result_ref = res.case_id
             task.payload["flow_run_id"] = res.trace.execution_id
-            task.status = TaskStatus.COMPLETED
+            task.status = _task_status_for_run(res.status)
             self._store.save(task)
             return
         if task.kind in {TaskKind.CRON, TaskKind.REPLAY}:
@@ -70,3 +70,7 @@ class TaskExecutor:
         task.status = TaskStatus.FAILED
         task.error = {"reason": f"unsupported kind: {task.kind.value}"}
         self._store.save(task)
+
+
+def _task_status_for_run(status: str) -> TaskStatus:
+    return TaskStatus.COMPLETED if status == "completed" else TaskStatus.FAILED

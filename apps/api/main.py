@@ -503,8 +503,9 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
         if isinstance(flow_result, AgentRunResult):
             flow_run_id = _agent_flow_run_id(flow_result)
             await gateway_ws_bridge.flush_broadcasts()
+            ok = flow_result.status == "completed"
             return WebhookResponse(
-                ok=True,
+                ok=ok,
                 case_id=flow_result.case_id,
                 flow_run_id=flow_run_id,
                 runner="agent",
@@ -512,6 +513,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
             )
 
         result = flow_result
+        status = result.case.status.value
         trace = build_execution_trace(
             case_id=result.case.case_id,
             skill_slug=result.case.selected_skills[0] if result.case.selected_skills else "unknown",
@@ -526,7 +528,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
                 "case_id": result.case.case_id,
                 "flow_id": trace.flow_id,
                 "skill_slug": trace.skill_slug,
-                "status": "completed",
+                "status": status,
                 "next_step_index": len(trace.steps),
                 "steps": [
                     {
@@ -545,7 +547,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
 
         await gateway_ws_bridge.flush_broadcasts()
         return WebhookResponse(
-            ok=True,
+            ok=status == "completed",
             case_id=result.case.case_id,
             flow_run_id=trace.execution_id,
             runner="default_flow",

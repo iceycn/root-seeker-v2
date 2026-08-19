@@ -1465,6 +1465,16 @@ function App() {
     await refreshSkills()
   }
 
+  const setSkillRole = async (record: SkillRecord, role: 'playbook' | 'helper') => {
+    const name = record.name || record.slug
+    await api(`/api/skills/${encodeURIComponent(name)}/role`, {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    })
+    apiMessage.success(role === 'playbook' ? `已标为排查流程：${name}` : `已标为 helper：${name}`)
+    await refreshSkills()
+  }
+
   const disableSkill = async (record: SkillRecord) => {
     const name = record.name || record.slug
     await api(`/api/skills/${encodeURIComponent(name)}/disable`, { method: 'POST' })
@@ -1841,7 +1851,9 @@ function App() {
               <Button icon={<EyeOutlined />} onClick={() => openSkillEditor(record, true)}>
                 查看
               </Button>
-              <Button onClick={() => setDefaultSkill(record)}>设为默认</Button>
+              {record.role === 'playbook'
+                ? <Button onClick={() => setDefaultSkill(record)}>设为默认</Button>
+                : <Button onClick={() => setSkillRole(record, 'playbook')}>标为排查流程</Button>}
               {record.enabled === false
                 ? <Button onClick={() => enableSkill(record)}>启用</Button>
                 : <Button onClick={() => disableSkill(record)}>禁用</Button>}

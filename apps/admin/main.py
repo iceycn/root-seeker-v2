@@ -378,6 +378,10 @@ class AdminSkillInstallRequest(BaseModel):
     only_name: str | None = None
 
 
+class AdminSkillRoleRequest(BaseModel):
+    role: str = Field(min_length=1)
+
+
 class AdminAiProviderRequest(BaseModel):
     name: str = Field(min_length=1)
     provider_type: str = Field(default="openai_compatible")
@@ -2480,6 +2484,13 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
         runtime.skill_overlay = overlay
         _persist_runtime_overlay(runtime, store)
         return {"ok": True, "default_playbook": overlay.default_playbook}
+
+    @app.post("/api/skills/{name:path}/role")
+    def set_skill_role(name: str, req: AdminSkillRoleRequest) -> dict[str, Any]:
+        overlay = _playbook_resolver(runtime).set_role(name, req.role)
+        runtime.skill_overlay = overlay
+        _persist_runtime_overlay(runtime, store)
+        return {"ok": True, "name": normalize_skill_name(name), "role": req.role}
 
     @app.post("/api/skills/{name:path}/enable")
     def enable_skill(name: str) -> dict[str, Any]:

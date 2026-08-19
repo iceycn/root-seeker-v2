@@ -16,6 +16,7 @@ class FlowExecutionResult:
     case_id: str
     trace: ExecutionTrace
     step_outputs: dict[str, dict[str, Any]]
+    status: str = "completed"
 
 
 class FlowExecutor:
@@ -39,6 +40,10 @@ class FlowExecutor:
             case_steps=result.case.steps,
         )
         step_outputs = {step.step_id: dict(step.outputs) for step in result.case.steps}
+        status = result.case.status.value
         return FlowExecutionResult(
-            case_id=result.case.case_id, trace=trace, step_outputs=step_outputs
+            case_id=result.case.case_id,
+            trace=trace,
+            step_outputs=step_outputs,
+            status=status,
         )

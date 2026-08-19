@@ -44,6 +44,51 @@ def test_task_executor_case_run() -> None:
     assert after.payload.get("flow_run_id")
 
 
+def test_task_executor_case_run_failed_when_planner_missing(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    store = TaskStore()
+    task = create_task_record(
+        kind=TaskKind.CASE_RUN,
+        payload={
+            "title": "planner-missing",
+            "symptom": "no llm",
+            "service_name": "order-service",
+            "source": "task",
+            "metadata": {},
+        },
+    )
+    store.save(task)
+    TaskExecutor(runtime, store).execute(task.task_id)
+    after = store.get(task.task_id)
+    assert after is not None
+    assert after.status == TaskStatus.FAILED
+    assert after.result_ref
+
+
+def test_task_executor_agent_case_run_failed_when_planner_missing(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    store = TaskStore()
+    task = create_task_record(
+        kind=TaskKind.CASE_RUN,
+        payload={
+            "title": "planner-missing-agent",
+            "symptom": "no llm",
+            "service_name": "order-service",
+            "source": "task",
+            "use_agent": True,
+            "metadata": {},
+        },
+    )
+    store.save(task)
+    TaskExecutor(runtime, store).execute(task.task_id)
+    after = store.get(task.task_id)
+    assert after is not None
+    assert after.status == TaskStatus.FAILED
+    assert after.payload.get("runner") == "agent"
+
+
 def test_task_executor_cron_replay_task() -> None:
     runtime = _runtime()
     store = TaskStore()

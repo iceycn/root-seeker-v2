@@ -32,7 +32,7 @@ class FlowRuntime:
             publish_completion=publish_completion,
         )
         self.checkpoints.save(
-            result.trace.execution_id, _build_checkpoint_payload(result, status="completed")
+            result.trace.execution_id, _build_checkpoint_payload(result, status=result.status)
         )
         return result
 

@@ -50,6 +50,7 @@ def register_skill_methods(registry: Any, runtime: DevRuntime) -> None:
     - skill.get: Get skill by slug/name
     - skill.install: Install from local path, zip, or git URL
     - skill.set_default: Set the default playbook
+    - skill.set_role: Overlay-only playbook/helper role
     - skill.enable / skill.disable: Overlay enabled flag
     """
 
@@ -112,6 +113,19 @@ def register_skill_methods(registry: Any, runtime: DevRuntime) -> None:
         runtime.persist_skill_overlay()
         return {"ok": True, "default_playbook": overlay.default_playbook}
 
+    def skill_set_role(params: dict[str, Any]) -> dict[str, Any]:
+        name = _skill_name(params)
+        if not name:
+            return {"ok": False, "code": "SKILL_INVALID_PACKAGE", "message": "slug is required"}
+        role = str(params.get("role") or "").strip()
+        try:
+            overlay = _resolver(runtime).set_role(name, role)
+        except SkillError as exc:
+            return _skill_error(exc)
+        runtime.skill_overlay = overlay
+        runtime.persist_skill_overlay()
+        return {"ok": True, "name": name, "role": role}
+
     def skill_enable(params: dict[str, Any]) -> dict[str, Any]:
         name = _skill_name(params)
         if not name:
@@ -140,5 +154,6 @@ def register_skill_methods(registry: Any, runtime: DevRuntime) -> None:
     registry.register("skill.get", skill_get)
     registry.register("skill.install", skill_install)
     registry.register("skill.set_default", skill_set_default)
+    registry.register("skill.set_role", skill_set_role)
     registry.register("skill.enable", skill_enable)
     registry.register("skill.disable", skill_disable)

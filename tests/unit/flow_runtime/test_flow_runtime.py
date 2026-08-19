@@ -34,6 +34,23 @@ def test_flow_runtime_run_default_and_checkpoint() -> None:
     assert len(checkpoint["steps"]) == len(res.trace.steps)
 
 
+def test_flow_runtime_checkpoint_failed_when_planner_missing(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    flow = FlowRuntime(runtime)
+    res = flow.run_default(
+        CaseCreateRequest(
+            title="planner-missing",
+            symptom="no llm",
+            service_name="order-service",
+            source="unit-flow",
+        )
+    )
+    checkpoint = flow.checkpoints.get(res.trace.execution_id)
+    assert checkpoint is not None
+    assert checkpoint["status"] == "failed"
+
+
 def test_flow_runtime_list_checkpoints() -> None:
     runtime = _runtime()
     flow = FlowRuntime(runtime)

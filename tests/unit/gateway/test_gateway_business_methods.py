@@ -50,6 +50,7 @@ def test_gateway_server_registers_business_methods() -> None:
     assert "skill.get" in methods
     assert "skill.install" in methods
     assert "skill.set_default" in methods
+    assert "skill.set_role" in methods
     assert "skill.disable" in methods
     assert "skill.enable" in methods
 
@@ -164,6 +165,46 @@ def test_gateway_skill_get() -> None:
     assert result.get("skill", {}).get("slug") == "default-log-triage"
 
 
+def test_gateway_skill_set_role_then_set_default(tmp_path: Path) -> None:
+    pkg_root = tmp_path / "pkg"
+    helper = pkg_root / "helper-lookup"
+    helper.mkdir(parents=True)
+    (helper / "SKILL.md").write_text(
+        "---\nname: helper-lookup\ndescription: helper fixture\nmetadata:\n  role: helper\n---\n# helper-lookup\n",
+        encoding="utf-8",
+    )
+    runtime = create_dev_runtime(
+        _repo_root(),
+        tool_planner=IncidentNormalizePlanner(),
+        custom_root=tmp_path / "skills" / "custom",
+        external_root=tmp_path / "skills" / "external",
+        admin_config_root=tmp_path,
+    )
+    server = GatewayServer(runtime=runtime)
+
+    installed = server.methods.invoke("skill.install", {"source": str(pkg_root)})
+    assert installed.get("ok") is True
+    blocked = server.methods.invoke("skill.set_default", {"name": "helper-lookup"})
+    assert blocked.get("ok") is False
+    assert blocked.get("code") == "SKILL_NOT_PLAYBOOK"
+
+    promoted = server.methods.invoke("skill.set_role", {"name": "helper-lookup", "role": "playbook"})
+    assert promoted.get("ok") is True
+    assert promoted.get("role") == "playbook"
+
+    listed = server.methods.invoke("skill.list", {})
+    helper_item = next(i for i in listed["items"] if i.get("name") == "helper-lookup")
+    assert helper_item["role"] == "playbook"
+
+    setd = server.methods.invoke("skill.set_default", {"name": "helper-lookup"})
+    assert setd.get("ok") is True
+    assert setd.get("default_playbook") == "helper-lookup"
+    skill_md = (tmp_path / "skills" / "external" / "helper-lookup" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "role: helper" in skill_md
+
+
 def test_gateway_tool_list() -> None:
     """Test tool.list method."""
     runtime = _runtime()
@@ -191,6 +232,24 @@ def test_gateway_flow_run() -> None:
     assert result.get("case_id")
     assert result.get("flow_run_id")
     assert result.get("status") == "completed"
+
+
+def test_gateway_flow_run_reports_failed_when_planner_missing(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    server = GatewayServer(runtime=runtime)
+
+    result = server.methods.invoke(
+        "flow.run",
+        {
+            "title": "Planner missing",
+            "symptom": "no llm",
+            "service_name": "test-service",
+        },
+    )
+
+    assert result.get("case_id")
+    assert result.get("status") == "failed"
 
 
 def test_gateway_flow_checkpoints() -> None:

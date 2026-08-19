@@ -43,6 +43,7 @@ class Authorizer:
         "skill.get": ["skill:read"],
         "skill.install": ["skill:write"],
         "skill.set_default": ["skill:write"],
+        "skill.set_role": ["skill:write"],
         "skill.enable": ["skill:write"],
         "skill.disable": ["skill:write"],
         "tool.invoke": ["tool:invoke"],

@@ -44,7 +44,7 @@ def register_flow_methods(registry: Any, runtime: DevRuntime) -> None:
         return {
             "case_id": result.case_id,
             "flow_run_id": result.trace.execution_id,
-            "status": "completed",
+            "status": result.status,
             "step_count": len(result.trace.steps),
         }
 

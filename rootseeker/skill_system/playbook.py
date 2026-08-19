@@ -35,6 +35,18 @@ class PlaybookResolver:
                 return spec
         raise SkillError("SKILL_DEFAULT_UNAVAILABLE", "no enabled playbook available")
 
+    def set_role(self, name: str, role: str) -> SkillOverlayState:
+        name = normalize_skill_name(name)
+        spec = self.registry.get(name)
+        if spec is None:
+            raise SkillError("SKILL_DEFAULT_UNAVAILABLE", f"skill not found: {name}")
+        if role not in {"playbook", "helper"}:
+            raise SkillError("SKILL_INVALID_PACKAGE", f"invalid role: {role}")
+        entry: dict[str, Any] = self._overlay.overlays.setdefault(name, {})
+        entry["role"] = role
+        self.registry.upsert(apply_overlay(spec, self._overlay))
+        return self._overlay
+
     def set_default(self, name: str) -> SkillOverlayState:
         name = normalize_skill_name(name)
         spec = self.registry.get(name)

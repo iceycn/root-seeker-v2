@@ -37,6 +37,47 @@ def test_install_and_set_default(client, tmp_path) -> None:
     assert any(i["name"] == "hello-triage" and i["is_default"] is True for i in listed)
 
 
+def test_install_helper_set_role_then_set_default(client, tmp_path) -> None:
+    pkg = tmp_path / "pkg" / "helper-lookup"
+    pkg.mkdir(parents=True)
+    (pkg / "SKILL.md").write_text(
+        "---\nname: helper-lookup\ndescription: helper fixture\nmetadata:\n  role: helper\n---\n# helper-lookup\n",
+        encoding="utf-8",
+    )
+    installed = client.post("/api/skills/install", json={"source": str(pkg.parent)})
+    assert installed.status_code == 200
+    listed = client.get("/api/skills").json()["items"]
+    helper = next(i for i in listed if i["name"] == "helper-lookup")
+    assert helper["role"] == "helper"
+
+    blocked = client.post("/api/skills/helper-lookup/default")
+    assert blocked.status_code == 409
+    assert blocked.json().get("code") == "SKILL_NOT_PLAYBOOK"
+
+    role = client.post("/api/skills/helper-lookup/role", json={"role": "playbook"})
+    assert role.status_code == 200
+    assert role.json().get("role") == "playbook"
+    listed = client.get("/api/skills").json()["items"]
+    helper = next(i for i in listed if i["name"] == "helper-lookup")
+    assert helper["role"] == "playbook"
+
+    setd = client.post("/api/skills/helper-lookup/default")
+    assert setd.status_code == 200
+    listed = client.get("/api/skills").json()["items"]
+    assert any(i["name"] == "helper-lookup" and i["is_default"] is True for i in listed)
+
+    installed_md = (tmp_path / "skills" / "external" / "helper-lookup" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "role: helper" in installed_md
+
+    builtin = client.delete("/api/skills/default-log-triage")
+    assert builtin.status_code in {400, 409}
+    assert "SKILL_BUILTIN_PROTECTED" in builtin.text or builtin.json().get("detail", {}).get(
+        "code"
+    ) == "SKILL_BUILTIN_PROTECTED" or builtin.json().get("code") == "SKILL_BUILTIN_PROTECTED"
+
+
 def test_upsert_env_var_injects_runtime_scope_into_mcp_manager(tmp_path: Path) -> None:
     app = create_app(tmp_path)
     client = TestClient(app)

@@ -178,6 +178,16 @@ def test_resolve_unavailable_when_no_enabled_playbook(
     assert exc.value.code == "SKILL_DEFAULT_UNAVAILABLE"
 
 
+def test_set_role_writes_overlay_then_set_default_succeeds(resolver: PlaybookResolver) -> None:
+    with pytest.raises(SkillError) as blocked:
+        resolver.set_default("code-lookup")
+    assert blocked.value.code == "SKILL_NOT_PLAYBOOK"
+    overlay = resolver.set_role("code-lookup", "playbook")
+    assert overlay.overlays["code-lookup"]["role"] == "playbook"
+    updated = resolver.set_default("code-lookup")
+    assert updated.default_playbook == "code-lookup"
+
+
 def test_overlay_role_promotes_helper_to_playbook(
     skill_roots: dict[str, Path],
 ) -> None:
