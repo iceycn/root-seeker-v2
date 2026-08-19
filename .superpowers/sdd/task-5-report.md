@@ -1,7 +1,7 @@
 # Task 5 Report: SkillEnvResolver
 
 **Branch:** `feat/standard-skills-replace-flow`  
-**Commit:** (pending) — feat(skill): add SkillEnvResolver with env priority and secret handling  
+**Commit:** `d31ed17` — feat(skill): add SkillEnvResolver with env priority and secret handling  
 **Date:** 2026-08-19  
 **Status:** DONE
 
