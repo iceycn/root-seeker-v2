@@ -24,6 +24,7 @@
 - [为什么选择 RootSeeker？](#为什么选择-rootseeker)
 - [核心特性](#核心特性)
 - [工作原理](#工作原理)
+- [界面预览](#界面预览)
 - [快速开始](#快速开始)
 - [Hybrid 本地开发](#hybrid-本地开发)
 - [常用命令](#常用命令)
@@ -86,6 +87,53 @@ flowchart LR
 3. **证据**：日志、链路、代码检索与图谱结果归集为 Evidence。
 4. **根因**：RootCauseEngine 多假设推理；可选 LLM 增强报告文案。
 5. **触达**：推送通知，并可在 Admin 中回放与审计。
+
+---
+
+## 界面预览
+
+以下截图来自 `v1.1.0` 本地全栈（API `:8000` · Admin `:8010` · Zoekt `:6070` · Qdrant `:6333`）。管理控制台入口：http://127.0.0.1:8010/admin
+
+### 管理控制台
+
+<table>
+  <tr>
+    <td align="center"><b>总览状态</b><br><img src="docs/screenshots/admin-overview.png" alt="总览状态"></td>
+    <td align="center"><b>错误排查</b><br><img src="docs/screenshots/admin-error-chat.png" alt="错误排查"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>语义搜索</b><br><img src="docs/screenshots/admin-semantic-search.png" alt="语义搜索"></td>
+    <td align="center"><b>Skills 管理</b><br><img src="docs/screenshots/admin-skills.png" alt="Skills 管理"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Plugins / Tools</b><br><img src="docs/screenshots/admin-plugins.png" alt="Plugins / Tools"></td>
+    <td align="center"><b>MCP 协议</b><br><img src="docs/screenshots/admin-mcp-servers.png" alt="MCP 协议"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Repo 管理</b><br><img src="docs/screenshots/admin-repos.png" alt="Repo 管理"></td>
+    <td align="center"><b>Service Catalog</b><br><img src="docs/screenshots/admin-catalog.png" alt="Service Catalog"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>大模型</b><br><img src="docs/screenshots/admin-models.png" alt="大模型"></td>
+    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>定时任务</b><br><img src="docs/screenshots/admin-schedules.png" alt="定时任务"></td>
+    <td align="center"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置"></td>
+  </tr>
+</table>
+
+### API 与索引服务
+
+<table>
+  <tr>
+    <td align="center"><b>API 文档（Swagger）</b><br><img src="docs/screenshots/api-docs.png" alt="API 文档"></td>
+    <td align="center"><b>Zoekt 代码搜索</b><br><img src="docs/screenshots/zoekt.png" alt="Zoekt"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>Qdrant 向量库</b><br><img src="docs/screenshots/qdrant.png" alt="Qdrant"></td>
+  </tr>
+</table>
 
 ---
 
