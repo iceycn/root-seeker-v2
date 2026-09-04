@@ -67,6 +67,14 @@ INTERNAL_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "path": {"type": "string"},
             "repo": {"type": "string"},
+            "line": {"type": "integer", "description": "Fault line from the stack frame"},
+            "methods": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Call-chain method names to extract from this file",
+            },
+            "start_line": {"type": "integer"},
+            "end_line": {"type": "integer"},
         },
         "required": ["path"],
     },

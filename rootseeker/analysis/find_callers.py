@@ -12,7 +12,8 @@ __all__ = [
 ]
 
 _FRAME_SUMMARY_RE = re.compile(
-    r"^(?P<class_name>[\w$]+)\.(?P<method_name>[\w$<>]+)\s+\((?P<file_path>[^:]+):(?P<line>\d+)\)\s*$"
+    r"^(?P<class_name>[\w$.]+)\.(?P<method_name>[\w$<>]+)"
+    r"(?:\s+\((?P<file_path>[^:)]+)(?::(?P<line>\d+))?\))?\s*$"
 )
 _JAVA_FILE_CLASS_RE = re.compile(r"/([\w$]+)\.java$|^(?:[\w$]+/)?([\w$]+)\.java$")
 _HTTP_MAPPING_RE = re.compile(
@@ -33,11 +34,14 @@ def parse_call_chain_frame(frame: str) -> dict[str, Any] | None:
     match = _FRAME_SUMMARY_RE.match(value)
     if match is None:
         return None
+    class_name = match.group("class_name")
+    file_path = (match.group("file_path") or "").strip() or f"{class_name.rsplit('.', 1)[-1]}.java"
+    line_raw = match.group("line")
     return {
-        "class_name": match.group("class_name"),
+        "class_name": class_name,
         "method_name": match.group("method_name"),
-        "file_path": match.group("file_path"),
-        "line": int(match.group("line")),
+        "file_path": file_path,
+        "line": int(line_raw) if line_raw else 0,
         "summary": value,
     }
 
@@ -104,6 +108,29 @@ def align_runtime_static_chain(
     }
 
 
+def _class_tail(class_name: str) -> str:
+    return str(class_name or "").rsplit(".", 1)[-1]
+
+
+def _select_target_frame(
+    parsed_frames: list[dict[str, Any]],
+    target_symbol: str | None,
+) -> dict[str, Any]:
+    if not parsed_frames:
+        raise ValueError("parsed_frames is empty")
+    wanted = parse_call_chain_frame(str(target_symbol or "").strip())
+    if wanted is None:
+        return parsed_frames[0]
+    want_class = _class_tail(str(wanted.get("class_name") or ""))
+    want_method = str(wanted.get("method_name") or "")
+    for frame in parsed_frames:
+        if _class_tail(str(frame.get("class_name") or "")) == want_class and str(
+            frame.get("method_name") or ""
+        ) == want_method:
+            return frame
+    return wanted
+
+
 def analyze_call_chain(
     call_chain: list[str],
     *,
@@ -115,6 +142,7 @@ def analyze_call_chain(
     limit_per_query: int = 30,
     graph_callers: Callable[..., dict[str, Any]] | None = None,
     prefer_graph: bool = True,
+    target_symbol: str | None = None,
 ) -> dict[str, Any]:
     """Trace callers across indexed repositories.
 
@@ -138,7 +166,7 @@ def analyze_call_chain(
         }
 
     repo_hint = (repo or service_name or "").strip() or None
-    target = parsed_frames[0]
+    target = _select_target_frame(parsed_frames, target_symbol)
     graph_meta: dict[str, Any] | None = None
 
     if prefer_graph and graph_callers is not None:

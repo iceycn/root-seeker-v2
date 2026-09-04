@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from rootseeker.analysis.log_text import unwrap_embedded_log_text
 from rootseeker.analysis.service_identity import resolve_service_name
 from rootseeker.channel_routing.models import ChannelMessage, NormalizedInboundMessage
 
@@ -28,9 +29,8 @@ def normalize_inbound(message: ChannelMessage) -> NormalizedInboundMessage:
 
     # Default webhook normalization
     title = str(payload.get("title") or payload.get("alert_name") or "Untitled alert")
-    symptom = str(
-        payload.get("message") or payload.get("description") or payload.get("content") or title
-    )
+    raw_symptom = payload.get("message") or payload.get("description") or payload.get("content") or title
+    symptom = unwrap_embedded_log_text(raw_symptom) or str(raw_symptom or "")
     service_name = resolve_service_name(
         payload.get("service_name"),
         payload.get("service"),

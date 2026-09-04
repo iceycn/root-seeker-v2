@@ -36,7 +36,7 @@ class FixedAdapter:
     def search_code(self, query: str) -> dict[str, Any]:
         return {"query": query, "hits": []}
 
-    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
+    def read_code(self, path: str, repo: str | None = None, **kwargs: Any) -> dict[str, Any]:
         return {"path": path, "content": ""}
 
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:

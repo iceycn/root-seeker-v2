@@ -1,4 +1,5 @@
 import hmac
+import json
 from hashlib import sha256
 
 from rootseeker.channel_routing import (
@@ -37,6 +38,26 @@ def test_webhook_to_case_create_with_normalized_metadata() -> None:
     assert req.metadata["environment"] == "prod"
     assert req.metadata["trace_id"] == "trace-1"
     assert req.metadata["extra_key"] == "x"
+
+
+def test_webhook_unwraps_sls_content_json_symptom() -> None:
+    inner = (
+        "2026-09-03 21:05:01.639 third-ability-service [SOFA-SEV-BOLT-BIZ-12200-10-T20] INFO  "
+        "c.c.t.s.i.HarvardManageMentorCourseImpl - boom\n"
+        "java.lang.NumberFormatException: For input string: \"user@example.com\"\n"
+        "\tat com.coolcollege.thirdability.service.impl.HarvardManageMentorCourseImpl"
+        ".getCourseProgress(HarvardManageMentorCourseImpl.java:169)\n"
+    )
+    req = webhook_payload_to_case_create(
+        {
+            "title": "错误排查请求",
+            "message": json.dumps({"content": inner}),
+            "source": "admin-error-chat",
+        }
+    )
+    assert req.service_name == "third-ability-service"
+    assert "HarvardManageMentorCourseImpl.java:169" in req.symptom
+    assert not req.symptom.lstrip().startswith("{")
 
 
 def test_routing_session_and_outbound_flow() -> None:

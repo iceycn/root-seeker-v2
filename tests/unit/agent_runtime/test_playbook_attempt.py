@@ -72,14 +72,26 @@ class _DisallowedToolPlanner:
 
 
 class _RecordingToolLoop:
-    def __init__(self) -> None:
+    def __init__(self, *, notify_skipped: bool = False) -> None:
         self.executed_tools: list[str] = []
+        self.executed_requests: list = []
+        self._notify_skipped = notify_skipped
 
     def execute_records(self, requests, *, plugin_id=None, actor="agent-runtime", plan_metadata_by_step_id=None):
         records = []
         for request in requests:
             self.executed_tools.append(request.tool_name)
-            result = ToolCallResult(ok=True, tool_name=request.tool_name, content={"ok": True})
+            self.executed_requests.append(request)
+            content: dict = {"ok": True}
+            if request.tool_name == "notify.send" and self._notify_skipped:
+                content = {
+                    "ok": True,
+                    "metadata": {
+                        "skipped": True,
+                        "reason": "no enabled notification channels configured",
+                    },
+                }
+            result = ToolCallResult(ok=True, tool_name=request.tool_name, content=content)
             trace = ToolExecutionTrace(
                 step_id=request.step_id,
                 tool_name=request.tool_name,
@@ -104,6 +116,29 @@ def test_planner_messages_include_playbook_not_unloaded_helper_body() -> None:
     assert "Call incident.normalize first" in blob
     assert "code-lookup" in blob
     assert "Use file: query" not in blob  # helper 正文不得出现
+    assert "runtime_backends" in blob
+    assert "configured=false" in messages[0]["content"]
+    assert "incident.normalize" in messages[0]["content"]
+    assert "notify.send" in messages[0]["content"]
+    assert "报告生成后" in messages[0]["content"]
+    assert "除非用户明确要求" not in messages[0]["content"]
+
+
+def test_planner_messages_include_unconfigured_backends() -> None:
+    messages = build_tool_planner_messages(
+        case_request=CaseCreateRequest(title="t", symptom="boom", service_name="s", source="webhook"),
+        tools=[],
+        max_tool_calls=6,
+        runtime_backends={
+            "log.query_by_trace_id": {"configured": False},
+            "trace.get_chain": {"configured": False},
+            "code.search": {"configured": True},
+        },
+    )
+    blob = messages[1]["content"]
+    assert '"configured": false' in blob
+    assert "log.query_by_trace_id" in blob
+    assert "code.search" in blob
 
 
 def test_attempt_runner_does_not_call_execute_skill_flow(monkeypatch) -> None:
@@ -271,9 +306,31 @@ def test_loaded_helper_bound_tools_are_unioned_into_allow_list(monkeypatch) -> N
     assert allowed.metadata.get("error_code") is None
 
 
-def test_playbook_write_tools_reach_planner_and_omitted_notify_is_skipped(monkeypatch) -> None:
-    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
-    runtime = create_dev_runtime(_repo_root())
+class _NotifyPlaybookPlanner:
+    def __init__(self, *, include_notify: bool = False) -> None:
+        self.seen_tool_names: list[str] = []
+        self._include_notify = include_notify
+
+    def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs):
+        self.seen_tool_names = [getattr(tool, "name", str(tool)) for tool in tools]
+        calls = [ToolPlanCall(tool_name="incident.normalize", step_id="n1", arguments={})]
+        if self._include_notify:
+            calls.append(
+                ToolPlanCall(
+                    tool_name="notify.send",
+                    step_id="notify-early",
+                    arguments={"channel": "webhook", "message": "too-early"},
+                )
+            )
+        return ToolPlanResult(
+            ok=True,
+            provider="unit",
+            model="planner",
+            plan=ToolPlan(rationale="investigation tools only", tool_calls=calls),
+        )
+
+
+def _notify_playbook(runtime) -> None:
     runtime.skill_registry.upsert(
         SkillSpec(
             name="notify-playbook",
@@ -285,27 +342,12 @@ def test_playbook_write_tools_reach_planner_and_omitted_notify_is_skipped(monkey
         )
     )
 
-    class _CapturingPlanner:
-        allow_write_tools = False
 
-        def __init__(self) -> None:
-            self.seen_tool_names: list[str] = []
-
-        def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs):
-            self.seen_tool_names = [getattr(tool, "name", str(tool)) for tool in tools]
-            return ToolPlanResult(
-                ok=True,
-                provider="unit",
-                model="planner",
-                plan=ToolPlan(
-                    rationale="omit notify",
-                    tool_calls=[
-                        ToolPlanCall(tool_name="incident.normalize", step_id="n1", arguments={})
-                    ],
-                ),
-            )
-
-    planner = _CapturingPlanner()
+def test_notify_send_runs_after_report_even_if_planner_omits_it(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    _notify_playbook(runtime)
+    planner = _NotifyPlaybookPlanner()
     tool_loop = _RecordingToolLoop()
     runner = AttemptRunner(
         FlowRuntime(runtime),
@@ -317,9 +359,174 @@ def test_playbook_write_tools_reach_planner_and_omitted_notify_is_skipped(monkey
         _case_request(preferred_skill="notify-playbook"),
         allow_default_fallback=False,
     )
-    assert "notify.send" in planner.seen_tool_names
+    assert "notify.send" not in planner.seen_tool_names
+    assert result.status == "completed"
+    assert tool_loop.executed_tools == ["incident.normalize", "notify.send"]
+    notify_request = next(req for req in tool_loop.executed_requests if req.tool_name == "notify.send")
+    message = notify_request.arguments["message"]
+    assert "【RootSeeker】" in message
+    assert "root_cause=" not in message
+    assert "服务：s" in message
+    assert result.metadata.get("notify_skipped") is not True
+    report = runtime.report_store.get(result.case_id)
+    assert report is not None
+    assert report.metadata.get("notify_skipped") is not True
+
+
+def test_notify_send_not_invoked_when_playbook_omits_it(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    runtime.skill_registry.upsert(
+        SkillSpec(
+            name="no-notify-playbook",
+            slug="no-notify-playbook",
+            description="no notify.send",
+            skill_kind=SkillKind.FLOW,
+            bound_tools=["incident.normalize"],
+            metadata={"role": "playbook"},
+        )
+    )
+    tool_loop = _RecordingToolLoop()
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=_NotifyPlaybookPlanner(),
+        tool_call_loop=tool_loop,
+    )
+    result = runner.run_once(
+        _case_request(preferred_skill="no-notify-playbook"),
+        allow_default_fallback=False,
+    )
+    assert result.status == "completed"
+    assert "notify.send" not in tool_loop.executed_tools
+
+
+def test_notify_skipped_when_channels_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    _notify_playbook(runtime)
+    tool_loop = _RecordingToolLoop(notify_skipped=True)
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=_NotifyPlaybookPlanner(),
+        tool_call_loop=tool_loop,
+    )
+    result = runner.run_once(
+        _case_request(preferred_skill="notify-playbook"),
+        allow_default_fallback=False,
+    )
+    assert "notify.send" in tool_loop.executed_tools
     assert result.status == "completed"
     assert result.metadata.get("notify_skipped") is True
     report = runtime.report_store.get(result.case_id)
     assert report is not None
     assert report.metadata.get("notify_skipped") is True
+
+
+def test_planner_notify_send_is_deferred_until_after_report(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    _notify_playbook(runtime)
+    tool_loop = _RecordingToolLoop()
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=_NotifyPlaybookPlanner(include_notify=True),
+        tool_call_loop=tool_loop,
+    )
+    result = runner.run_once(
+        _case_request(preferred_skill="notify-playbook"),
+        allow_default_fallback=False,
+    )
+    assert result.status == "completed"
+    assert tool_loop.executed_tools == ["incident.normalize", "notify.send"]
+    notify_request = next(req for req in tool_loop.executed_requests if req.tool_name == "notify.send")
+    assert notify_request.arguments.get("message") != "too-early"
+    assert "【RootSeeker】" in notify_request.arguments["message"]
+    assert "root_cause=" not in notify_request.arguments["message"]
+
+
+class _TriagePlanner:
+    def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None, **kwargs):
+        return ToolPlanResult(
+            ok=True,
+            provider="unit",
+            model="planner",
+            plan=ToolPlan(
+                rationale="mixed backends",
+                tool_calls=[
+                    ToolPlanCall(tool_name="incident.normalize", step_id="normalize", arguments={}),
+                    ToolPlanCall(tool_name="log.query_by_trace_id", step_id="logs", arguments={}),
+                    ToolPlanCall(tool_name="code.search", step_id="code", arguments={}),
+                ],
+            ),
+        )
+
+
+class _MixedBackendLoop:
+    def execute_records(self, requests, *, plugin_id=None, actor="agent-runtime", plan_metadata_by_step_id=None):
+        contents = {
+            "incident.normalize": {
+                "extracted": {"exception_summary": "AES解密失败: Base64 ending unit"},
+                "notes": "缺失字段仅表示未知输入，不代表系统健康。",
+            },
+            "log.query_by_trace_id": {
+                "records": [],
+                "query_key": "sls:unconfigured:abc",
+                "metadata": {"configured": False, "error": "SLS is not configured"},
+            },
+            "code.search": {
+                "hits": [{"path": "AesEncryptUtil.java", "snippet": "decryptField"}],
+            },
+        }
+        records = []
+        for request in requests:
+            result = ToolCallResult(
+                ok=True,
+                tool_name=request.tool_name,
+                content=contents[request.tool_name],
+            )
+            trace = ToolExecutionTrace(
+                step_id=request.step_id,
+                tool_name=request.tool_name,
+                ok=True,
+                content_preview=result.content,
+                plan_metadata=(plan_metadata_by_step_id or {}).get(request.step_id, {}),
+            )
+            records.append(ToolCallExecution(request=request, result=result, trace=trace))
+        return records
+
+
+def test_tool_plan_skips_unconfigured_backends_in_evidence_summary(monkeypatch) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    runtime = create_dev_runtime(_repo_root())
+    runtime.skill_registry.upsert(
+        SkillSpec(
+            name="triage-playbook",
+            slug="triage-playbook",
+            description="triage",
+            skill_kind=SkillKind.FLOW,
+            bound_tools=["incident.normalize", "log.query_by_trace_id", "code.search"],
+            metadata={"role": "playbook"},
+        )
+    )
+    runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=_TriagePlanner(),
+        tool_call_loop=_MixedBackendLoop(),
+    )
+    result = runner.run_once(
+        _case_request(preferred_skill="triage-playbook"),
+        allow_default_fallback=False,
+    )
+    assert result.status == "completed"
+    pack = runtime.evidence_store.get_pack(result.case_id)
+    assert pack is not None
+    assert "llm tool plan evidence" not in pack.summary
+    assert "AES解密失败" in pack.summary
+    assert "日志后端未配置" in pack.summary
+    assert "code.search 命中 1 处" in pack.summary
+    assert all(item.source != "log.query_by_trace_id" for item in pack.items)
+    assert any(item.source == "code.search" for item in pack.items)

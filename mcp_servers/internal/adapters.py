@@ -35,7 +35,7 @@ class InternalToolAdapter(Protocol):
         self, query: str, repo_name: str | None = None, limit: int = 10
     ) -> dict[str, Any]: ...
 
-    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]: ...
+    def read_code(self, path: str, repo: str | None = None, **kwargs: Any) -> dict[str, Any]: ...
 
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]: ...
 
@@ -210,8 +210,9 @@ class HttpInternalToolAdapter:
             payload["repo_name"] = repo_name
         return self._post(self.route_code_semantic_search, payload)
 
-    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
-        return self._post(self.route_code_read, {"path": path, **({"repo": repo} if repo else {})})
+    def read_code(self, path: str, repo: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {"path": path, **({"repo": repo} if repo else {}), **kwargs}
+        return self._post(self.route_code_read, payload)
 
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._post(

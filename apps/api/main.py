@@ -163,6 +163,11 @@ class CodeSearchRequest(BaseModel):
 class CodeReadRequest(BaseModel):
     path: str = Field(min_length=1)
     repo: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    line: int | None = None
+    focus_line: int | None = None
+    methods: list[str] | None = None
 
 
 class NotifySendRequest(BaseModel):

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from mcp_servers.internal.adapters import InternalToolAdapter
 from mcp_servers.internal.tool_schemas import parameter_schema_for
-from rootseeker.analysis.call_chain import extract_call_chain_summary, extract_exception_summary
+from rootseeker.analysis.call_chain import (
+    extract_call_chain_summary,
+    extract_code_path,
+    extract_exception_summary,
+)
+from rootseeker.analysis.log_text import unwrap_embedded_log_text
 from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.tool import ToolPermissionLevel, ToolScope, ToolSpec
@@ -28,8 +32,12 @@ def register_internal_tools(
             payload = dict(args)
         case_request = webhook_payload_to_case_create(payload)
         metadata = dict(case_request.metadata)
-        symptom_text = str(case_request.symptom or "")
-        message_text = str(payload.get("message") or payload.get("content") or "")
+        symptom_text = unwrap_embedded_log_text(case_request.symptom)
+        if symptom_text and symptom_text != case_request.symptom:
+            case_request = case_request.model_copy(update={"symptom": symptom_text})
+        message_text = unwrap_embedded_log_text(
+            payload.get("message") or payload.get("content") or ""
+        )
         source_text = "\n".join(part for part in (message_text, symptom_text) if part)
         service_name = resolve_service_name(
             case_request.service_name,
@@ -50,7 +58,7 @@ def register_internal_tools(
             "time_window": metadata.get("time_window")
             or metadata.get("start_time")
             or metadata.get("end_time"),
-            "code_path": metadata.get("code_path") or _extract_code_path(symptom_text),
+            "code_path": metadata.get("code_path") or extract_code_path(source_text),
             "code_symbol": metadata.get("code_symbol"),
             "exception_summary": extract_exception_summary(source_text),
             "call_chain": extract_call_chain_summary(source_text),
@@ -118,9 +126,28 @@ def register_internal_tools(
 
     def _invoke_code_read(args: dict[str, Any]) -> dict[str, Any]:
         repo = args.get("repo")
+        path = str(args.get("path") or args.get("file_path") or "README.md")
+        extra: dict[str, Any] = {}
+        if args.get("start_line"):
+            extra["start_line"] = int(args["start_line"])
+        if args.get("end_line"):
+            extra["end_line"] = int(args["end_line"])
+        focus = args.get("line") or args.get("focus_line")
+        if focus:
+            extra["focus_line"] = int(focus)
+        methods = args.get("methods")
+        if not isinstance(methods, list) or not methods:
+            alias = args.get("focus_method") or args.get("method") or args.get("method_name")
+            if isinstance(alias, str) and alias.strip():
+                methods = [alias.strip()]
+            elif isinstance(alias, list):
+                methods = alias
+        if isinstance(methods, list) and methods:
+            extra["methods"] = methods
         return adapter.read_code(
-            str(args.get("path", "README.md")),
+            path,
             repo=str(repo) if repo else None,
+            **extra,
         )
 
     def _invoke_code_find_callers(args: dict[str, Any]) -> dict[str, Any]:
@@ -555,8 +582,4 @@ def register_internal_tools(
 
 
 def _extract_code_path(symptom: str) -> str | None:
-    match = re.search(
-        r"([A-Za-z0-9_./-]+\.(?:java|kt|py|go|ts|tsx|js|jsx|cs|rb|php|scala|rs|cpp|c|h))(?::\d+)?",
-        symptom,
-    )
-    return match.group(1) if match else None
+    return extract_code_path(symptom)

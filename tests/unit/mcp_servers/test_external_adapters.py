@@ -284,3 +284,237 @@ class TestAdapterWithMockedHttp:
         assert len(result["hits"]) == 1
         assert result["hits"][0]["path"] == "src/main.py"
         mock_client.post.assert_called()
+
+    def test_read_file_uses_fuzzy_repo_and_package_path(self, tmp_path, monkeypatch) -> None:
+        from mcp_servers.external.zoekt_adapter import ZoektCodeAdapter, ZoektConfig
+
+        repo_root = tmp_path / "6183d17ff1ae9b61971d96b5__coolcollege__backend__user-center-api"
+        rel = (
+            "user-center-facade/src/main/java/net/coolcollege/usercenter/facade/handler/"
+            "AesTypeHandler.java"
+        )
+        java = repo_root / rel
+        java.parent.mkdir(parents=True)
+        java.write_text("public class AesTypeHandler {}\n", encoding="utf-8")
+        monkeypatch.setenv("ROOTSEEKER_REPO_BASE_PATH", str(tmp_path))
+
+        adapter = ZoektCodeAdapter(config=ZoektConfig(endpoint="http://zoekt.test"))
+        adapter._client = _zoekt_client_without_api_file(
+            [
+                ("6183d17ff1ae9b61971d96b5__training-manage-api", "/repos/6183d17ff1ae9b61971d96b5__training-manage-api"),
+                (
+                    "6183d17ff1ae9b61971d96b5__coolcollege__backend__user-center-api",
+                    "/repos/6183d17ff1ae9b61971d96b5__coolcollege__backend__user-center-api",
+                ),
+            ]
+        )
+
+        result = adapter.read_file(
+            "net/coolcollege/usercenter/facade/handler/AesTypeHandler.java",
+            repo="training-manage-api",
+        )
+        assert "public class AesTypeHandler" in result["content"]
+        assert "error" not in result
+
+    def test_read_file_search_fallback_when_local_path_missing(self, tmp_path, monkeypatch) -> None:
+        from mcp_servers.external.zoekt_adapter import ZoektCodeAdapter, ZoektConfig
+
+        repo_root = tmp_path / "6183__user-center-api"
+        rel = "user-center-facade/src/main/java/net/coolcollege/usercenter/facade/handler/AesTypeHandler.java"
+        java = repo_root / rel
+        java.parent.mkdir(parents=True)
+        java.write_text("class AesTypeHandler { int line; }\n", encoding="utf-8")
+        monkeypatch.setenv("ROOTSEEKER_REPO_BASE_PATH", str(tmp_path))
+
+        adapter = ZoektCodeAdapter(config=ZoektConfig(endpoint="http://zoekt.test"))
+        adapter._client = _zoekt_client_without_api_file(
+            [("6183__user-center-api", "/repos/missing-on-host/6183__user-center-api")],
+            search_hits=[
+                {
+                    "Repository": "6183__user-center-api",
+                    "FileName": rel,
+                    "LineMatches": [{"LineNumber": 1, "Line": "class AesTypeHandler", "Score": 10.0}],
+                }
+            ],
+        )
+
+        result = adapter.read_file(
+            "net/coolcollege/usercenter/facade/handler/AesTypeHandler.java",
+            repo="user-center-api",
+        )
+        assert "class AesTypeHandler" in result["content"]
+        assert result["path"] == rel
+
+    def test_read_file_does_not_pick_same_filename_in_other_repo(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        from mcp_servers.external.zoekt_adapter import ZoektCodeAdapter, ZoektConfig
+
+        user_rel = (
+            "user-center-service/src/main/java/net/coolcollege/usercenter/"
+            "service/business/impl/SysUserGroupService.java"
+        )
+        eval_rel = "src/main/java/net/coolcollege/evaluation/api/service/SysUserGroupService.java"
+        user_root = tmp_path / "6183__user-center-api"
+        eval_root = tmp_path / "6183__evaluation-api"
+        user_java = user_root / user_rel
+        eval_java = eval_root / eval_rel
+        user_java.parent.mkdir(parents=True)
+        eval_java.parent.mkdir(parents=True)
+        user_java.write_text("class SysUserGroupService { void parseFile() {} }\n", encoding="utf-8")
+        eval_java.write_text("class SysUserGroupService { /* evaluation stub */ }\n", encoding="utf-8")
+        monkeypatch.setenv("ROOTSEEKER_REPO_BASE_PATH", str(tmp_path))
+
+        adapter = ZoektCodeAdapter(config=ZoektConfig(endpoint="http://zoekt.test"))
+        adapter._client = _zoekt_client_without_api_file(
+            [
+                ("6183__evaluation-api", str(eval_root)),
+                ("6183__user-center-api", str(user_root)),
+            ],
+            search_hits=[
+                {
+                    "Repository": "6183__evaluation-api",
+                    "FileName": eval_rel,
+                    "LineMatches": [{"LineNumber": 1, "Line": "class SysUserGroupService", "Score": 20.0}],
+                },
+                {
+                    "Repository": "6183__user-center-api",
+                    "FileName": user_rel,
+                    "LineMatches": [{"LineNumber": 1, "Line": "void parseFile()", "Score": 5.0}],
+                },
+            ],
+        )
+
+        result = adapter.read_file(
+            "usercenter/src/main/java/net/coolcollege/usercenter/service/business/impl/"
+            "SysUserGroupService.java",
+            repo="user-center-api",
+        )
+        assert "parseFile" in result["content"]
+        assert "evaluation stub" not in result["content"]
+        assert result["path"] == user_rel
+        assert str(result.get("repo") or "").endswith("user-center-api")
+
+    def test_read_file_slices_large_java_method_around_focus(self, tmp_path, monkeypatch) -> None:
+        from mcp_servers.external.zoekt_adapter import ZoektCodeAdapter, ZoektConfig
+
+        repo_root = tmp_path / "6183__user-center-api"
+        rel = "user-center-service/src/main/java/demo/SysUserGroupService.java"
+        java = repo_root / rel
+        java.parent.mkdir(parents=True)
+        body = ["package demo;", "public class SysUserGroupService {"]
+        body.extend([f"    int pad{i} = {i};" for i in range(80)])
+        body.extend(
+            [
+                "    public void parseFile() {",
+                "        if (empty) {",
+                '            throw new ServiceException("enterpriseapi.550008");',
+                "        }",
+                "    }",
+                "}",
+            ]
+        )
+        java.write_text("\n".join(body) + "\n", encoding="utf-8")
+        monkeypatch.setenv("ROOTSEEKER_REPO_BASE_PATH", str(tmp_path))
+        adapter = ZoektCodeAdapter(config=ZoektConfig(endpoint="http://zoekt.test"))
+        adapter._client = _zoekt_client_without_api_file(
+            [("6183__user-center-api", str(repo_root))]
+        )
+        result = adapter.read_file(
+            rel, repo="user-center-api", focus_line=84, methods=["parseFile"]
+        )
+        assert "550008" in result["content"]
+        assert "parseFile" in result["content"]
+        assert result["returned_lines"] < result["total_lines"]
+        assert result["returned_lines"] < 40
+        assert "pad0" not in result["content"]
+
+    def test_read_file_keeps_only_call_chain_methods(self, tmp_path, monkeypatch) -> None:
+        from mcp_servers.external.zoekt_adapter import ZoektCodeAdapter, ZoektConfig
+
+        repo_root = tmp_path / "6183__user-center-facade"
+        rel = "src/main/java/net/coolcollege/usercenter/facade/handler/AesTypeHandler.java"
+        java = repo_root / rel
+        java.parent.mkdir(parents=True)
+        java.write_text(
+            "\n".join(
+                [
+                    "package net.coolcollege.usercenter.facade.handler;",
+                    "public class AesTypeHandler extends BaseTypeHandler<String> {",
+                    "    public String getNullableResult(ResultSet rs, String columnName) {",
+                    "        return decryptField(rs.getString(columnName));",
+                    "    }",
+                    "    public String unusedHelper() {",
+                    '        return "nope";',
+                    "    }",
+                    "    private String decryptField(String encrypted) {",
+                    "        return AesEncryptUtil.decrypt(encrypted);",
+                    "    }",
+                    "}",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ROOTSEEKER_REPO_BASE_PATH", str(tmp_path))
+        adapter = ZoektCodeAdapter(config=ZoektConfig(endpoint="http://zoekt.test"))
+        adapter._client = _zoekt_client_without_api_file(
+            [("6183__user-center-facade", str(repo_root))]
+        )
+        result = adapter.read_file(
+            rel,
+            repo="user-center-facade",
+            methods=["getNullableResult", "decryptField"],
+        )
+        assert "getNullableResult" in result["content"]
+        assert "decryptField" in result["content"]
+        assert "AesEncryptUtil.decrypt" in result["content"]
+        assert "unusedHelper" not in result["content"]
+        assert "nope" not in result["content"]
+
+
+def _zoekt_client_without_api_file(
+    repos: list[tuple[str, str]],
+    search_hits: list[dict] | None = None,
+) -> MagicMock:
+    list_payload = {
+        "List": {
+            "Repos": [
+                {
+                    "Repository": {"Name": name, "Source": source, "URL": "", "Branches": []},
+                    "IndexMetadata": {"IndexTime": ""},
+                }
+                for name, source in repos
+            ]
+        }
+    }
+    list_response = MagicMock()
+    list_response.status_code = 200
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = list_payload
+
+    search_response = MagicMock()
+    search_response.status_code = 200
+    search_response.raise_for_status = MagicMock()
+    search_response.json.return_value = {"Result": {"Files": search_hits or []}}
+
+    file_response = MagicMock()
+    file_response.status_code = 404
+
+    client = MagicMock()
+
+    def get(url, params=None):
+        if str(url).endswith("/api/file"):
+            return file_response
+        raise AssertionError(f"unexpected GET {url}")
+
+    def post(url, json=None):
+        if str(url).endswith("/api/list"):
+            return list_response
+        if str(url).endswith("/api/search"):
+            return search_response
+        raise AssertionError(f"unexpected POST {url}")
+
+    client.get.side_effect = get
+    client.post.side_effect = post
+    return client

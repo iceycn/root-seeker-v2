@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import os
 from collections.abc import Iterable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -16,9 +17,10 @@ from rootseeker.contracts.case import (
 )
 from rootseeker.contracts.common import new_id, utc_now
 from rootseeker.contracts.evidence import EvidencePack, EvidenceType
+from rootseeker.contracts.report import CaseReport
 from rootseeker.contracts.skill import SkillSpec
 from rootseeker.contracts.state_machine import validate_case_transition, validate_step_transition
-from rootseeker.contracts.tool import ToolCallRequest
+from rootseeker.contracts.tool import ToolCallRequest, ToolCallResult
 from rootseeker.evidence import append_tool_json_evidence
 from rootseeker.flow_runtime import FlowRuntime
 from rootseeker.infra_core import RootSeekerSettings
@@ -27,6 +29,7 @@ from rootseeker.skill_runtime.result_sanitize import (
     sanitize_tool_result_for_evidence,
     sanitize_tool_result_for_persistence,
 )
+from rootseeker.skill_runtime.rule_step_argument_resolver import build_notify_args
 from rootseeker.skill_system.env_resolver import resolve_skill_env, substitute_non_secret
 from rootseeker.skill_system.errors import SkillError
 from rootseeker.skill_system.parser import load_skill_body
@@ -39,9 +42,11 @@ from .model_router import ModelRouter
 from .prompt_builder import PromptBuilder
 from .result import AttemptResult, ToolExecutionTrace
 from .tool_call_loop import ToolCallLoop
-from .tool_plan import ToolPlanResult
+from .tool_plan import ToolPlanResult, enrich_tool_arguments_with_step_outputs
 
 __all__ = ["AttemptRunner"]
+
+_POST_REPORT_TOOL_NAMES = frozenset({"notify.send"})
 
 
 class AttemptRunner:
@@ -144,6 +149,7 @@ class AttemptRunner:
         playbook_text: str,
     ) -> AttemptResult:
         allowed_tool_names = _allowed_tools_for_run(playbook, self.loaded_helpers)
+        planner_allowed = allowed_tool_names - _POST_REPORT_TOOL_NAMES
         planner_tools = [
             spec
             for spec in resolve_planner_tools(
@@ -151,7 +157,7 @@ class AttemptRunner:
                 playbook,
                 allow_write_tools=True,
             )
-            if spec.name in allowed_tool_names
+            if spec.name in planner_allowed
         ]
         plan_result = _invoke_planner(
             self.tool_planner,
@@ -160,7 +166,7 @@ class AttemptRunner:
             history_summary=history_summary,
             playbook_text=playbook_text,
             skill_catalog=self._skill_catalog(),
-            allowed_tool_names=allowed_tool_names,
+            allowed_tool_names=planner_allowed,
         )
         if not plan_result.ok or plan_result.plan is None:
             return self._fail_attempt(
@@ -187,6 +193,7 @@ class AttemptRunner:
                 plan_result=plan_result,
                 skill_slug=playbook.name,
             )
+        plan_result = _without_post_report_tools(plan_result)
 
         case = _build_case_from_plan(case_request, plan_result, skill_slug=playbook.name)
         requests = [
@@ -275,8 +282,21 @@ class AttemptRunner:
             if case.status == CaseStatus.PLANNED:
                 _transition_case_status(case, CaseStatus.RUNNING)
 
+            completed_outputs = _completed_step_outputs(records_by_step_id)
+            ready_requests = []
+            for step_id in ready_step_ids:
+                request = requests_by_step_id[step_id]
+                request.arguments = enrich_tool_arguments_with_step_outputs(
+                    request.tool_name,
+                    dict(request.arguments),
+                    case_request=case_request,
+                    step_outputs=completed_outputs,
+                )
+                steps_by_step_id[step_id].inputs = dict(request.arguments)
+                ready_requests.append(request)
+
             records = self.tool_call_loop.execute_records(
-                [requests_by_step_id[step_id] for step_id in ready_step_ids],
+                ready_requests,
                 actor="agent-runtime",
                 plan_metadata_by_step_id={
                     step_id: calls_by_step_id[step_id].to_execution_metadata()
@@ -293,7 +313,7 @@ class AttemptRunner:
                 if not record.result.ok and call.required:
                     blocking_step_ids.add(step_id)
 
-        pack = EvidencePack(case_id=case.case_id, summary="llm tool plan evidence")
+        pack = EvidencePack(case_id=case.case_id, summary="")
         for step in case.steps:
             record = records_by_step_id.get(step.step_id)
             if record is None:
@@ -301,17 +321,19 @@ class AttemptRunner:
             step.outputs = sanitize_tool_result_for_persistence(record.result.content)
             if record.result.ok:
                 _transition_step_status(step, StepStatus.COMPLETED)
-                append_tool_json_evidence(
-                    pack,
-                    tool_name=record.result.tool_name,
-                    evidence_type=_evidence_type_for_tool(record.result.tool_name),
-                    content=sanitize_tool_result_for_evidence(
-                        record.result.tool_name,
-                        record.result.content,
-                    ),
-                )
+                if _tool_content_has_usable_evidence(record.result.content):
+                    append_tool_json_evidence(
+                        pack,
+                        tool_name=record.result.tool_name,
+                        evidence_type=_evidence_type_for_tool(record.result.tool_name),
+                        content=sanitize_tool_result_for_evidence(
+                            record.result.tool_name,
+                            record.result.content,
+                        ),
+                    )
             else:
                 _transition_step_status(step, StepStatus.FAILED)
+        pack.summary = _summarize_tool_plan_evidence(case, records_by_step_id)
         failed = any(
             step.status in {StepStatus.FAILED, StepStatus.SKIPPED}
             and calls_by_step_id[step.step_id].required
@@ -322,10 +344,19 @@ class AttemptRunner:
             CaseStatus.FAILED if failed else CaseStatus.COMPLETED,
         )
         case.updated_at = utc_now()
-        notify_skipped = _notify_skipped(allowed_tool_names, plan_result)
         self.flow_runtime.runtime.case_store.put(case)
         self.flow_runtime.runtime.evidence_store.put_pack(pack)
         report = build_case_report(case_id=case.case_id, title=case.title, pack=pack)
+        notify_result = None
+        if "notify.send" in allowed_tool_names:
+            notify_result = self._send_report_notification(
+                case_id=case.case_id,
+                skill_slug=playbook.name,
+                case_request=case_request,
+                report=report,
+                tool_traces=tool_traces,
+            )
+        notify_skipped = _notify_dispatch_skipped(notify_result)
         report_metadata = {
             **report.metadata,
             "agent": {
@@ -397,6 +428,32 @@ class AttemptRunner:
                 continue
             catalog.append({"name": spec.name, "description": spec.description or ""})
         return catalog
+
+    def _send_report_notification(
+        self,
+        *,
+        case_id: str,
+        skill_slug: str,
+        case_request: CaseCreateRequest,
+        report: CaseReport,
+        tool_traces: list[ToolExecutionTrace],
+    ) -> ToolCallResult | None:
+        request = ToolCallRequest(
+            case_id=case_id,
+            step_id="notify",
+            skill_name=skill_slug,
+            tool_name="notify.send",
+            arguments=build_notify_args(case_request=case_request, report=report),
+        )
+        records = self.tool_call_loop.execute_records(
+            [request],
+            actor="agent-runtime",
+            plan_metadata_by_step_id={"notify": {"engine": "after_report"}},
+        )
+        if not records:
+            return None
+        tool_traces.append(records[0].trace)
+        return records[0].result
 
     def _fail_attempt(
         self,
@@ -491,6 +548,7 @@ def _invoke_planner(
         "playbook_text": playbook_text,
         "skill_catalog": skill_catalog,
         "allowed_tool_names": allowed_tool_names,
+        "runtime_backends": _runtime_backend_status(),
     }
     try:
         parameters = inspect.signature(planner.plan).parameters
@@ -516,11 +574,36 @@ def _allowed_tools_for_run(
     return names
 
 
-def _notify_skipped(allowed_tool_names: set[str], plan_result: ToolPlanResult) -> bool:
-    if "notify.send" not in allowed_tool_names or plan_result.plan is None:
+def _without_post_report_tools(plan_result: ToolPlanResult) -> ToolPlanResult:
+    if plan_result.plan is None:
+        return plan_result
+    kept = [
+        call
+        for call in plan_result.plan.tool_calls
+        if call.tool_name not in _POST_REPORT_TOOL_NAMES
+    ]
+    if len(kept) == len(plan_result.plan.tool_calls):
+        return plan_result
+    return replace(plan_result, plan=replace(plan_result.plan, tool_calls=kept))
+
+
+def _notify_dispatch_skipped(result: ToolCallResult | None) -> bool:
+    if result is None:
         return False
-    called = {call.tool_name for call in plan_result.plan.tool_calls}
-    return "notify.send" not in called
+    content = result.content
+    if not isinstance(content, dict):
+        return False
+    metadata = content.get("metadata")
+    return isinstance(metadata, dict) and bool(metadata.get("skipped"))
+
+
+def _completed_step_outputs(records_by_step_id: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    outputs: dict[str, dict[str, Any]] = {}
+    for step_id, record in records_by_step_id.items():
+        content = getattr(getattr(record, "result", None), "content", None)
+        if isinstance(content, dict):
+            outputs[step_id] = content
+    return outputs
 
 
 def _env_key_list(value: Any) -> list[str]:
@@ -603,3 +686,103 @@ def _evidence_type_for_tool(tool_name: str) -> EvidenceType:
     if tool_name.startswith("catalog."):
         return EvidenceType.SERVICE_CATALOG
     return EvidenceType.OTHER
+
+
+def _runtime_backend_status() -> dict[str, Any]:
+    settings = RootSeekerSettings()
+    sls_configured = bool(
+        os.getenv("SLS_ACCESS_KEY_ID")
+        and os.getenv("SLS_ACCESS_KEY_SECRET")
+        and os.getenv("SLS_PROJECT")
+        and os.getenv("SLS_LOGSTORE")
+    )
+    jaeger_configured = bool((os.getenv("JAEGER_ENDPOINT") or "").strip())
+    code_configured = bool(settings.repo_enable_zoekt and settings.zoekt_endpoint)
+    graph_configured = bool(settings.repo_enable_gitnexus and settings.gitnexus_endpoint)
+    return {
+        "log.query_by_trace_id": {"configured": sls_configured},
+        "log.query_by_template": {"configured": sls_configured},
+        "trace.get_chain": {"configured": jaeger_configured},
+        "code.search": {"configured": code_configured},
+        "code.read": {"configured": code_configured},
+        "code.find_callers": {"configured": code_configured or graph_configured},
+        "graph.impact": {"configured": graph_configured},
+        "graph.context": {"configured": graph_configured},
+    }
+
+
+def _tool_content_unconfigured(content: Any) -> bool:
+    if not isinstance(content, dict):
+        return False
+    if content.get("configured") is False:
+        return True
+    metadata = content.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("configured") is False
+
+
+def _tool_content_has_usable_evidence(content: Any) -> bool:
+    return not _tool_content_unconfigured(content)
+
+
+def _clip_text(value: str, max_chars: int) -> str:
+    text = " ".join(value.split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"
+
+
+def _summarize_tool_plan_evidence(case: CaseRecord, records_by_step_id: dict[str, Any]) -> str:
+    found: list[str] = []
+    gaps: list[str] = []
+    for step in case.steps:
+        record = records_by_step_id.get(step.step_id)
+        if record is None:
+            continue
+        tool_name = record.result.tool_name
+        content = record.result.content if isinstance(record.result.content, dict) else {}
+        if _tool_content_unconfigured(content):
+            if tool_name.startswith("log."):
+                gaps.append("日志后端未配置")
+            elif tool_name.startswith("trace."):
+                gaps.append("链路后端未配置")
+            else:
+                gaps.append(f"{tool_name} 未配置")
+            continue
+        if tool_name == "incident.normalize":
+            extracted = content.get("extracted")
+            if isinstance(extracted, dict):
+                summary = str(extracted.get("exception_summary") or "").strip()
+                if summary:
+                    found.append(f"异常：{_clip_text(summary, 80)}")
+            continue
+        if tool_name == "code.search":
+            hits = content.get("hits")
+            count = len(hits) if isinstance(hits, list) else 0
+            found.append(f"code.search 命中 {count} 处" if count else "code.search 无命中")
+            continue
+        if tool_name == "code.read":
+            path = str(content.get("path") or content.get("file_path") or "").strip()
+            if path and content.get("content"):
+                found.append(f"已读取 {path}")
+            elif content.get("error"):
+                gaps.append("code.read 未读到文件")
+            continue
+        if tool_name == "code.find_callers":
+            callers = content.get("static_callers") or content.get("entrypoints") or []
+            count = len(callers) if isinstance(callers, list) else 0
+            found.append(f"caller 追踪 {count} 条" if count else "caller 追踪无结果")
+            continue
+        if tool_name.startswith("log."):
+            records = content.get("records")
+            count = len(records) if isinstance(records, list) else 0
+            found.append(f"日志 {count} 条" if count else "日志查询无记录")
+            continue
+        if tool_name.startswith("trace."):
+            spans = content.get("spans")
+            count = len(spans) if isinstance(spans, list) else 0
+            found.append(f"链路 {count} 个 span" if count else "链路查询无 span")
+    unique_gaps = list(dict.fromkeys(gaps))
+    parts = found + unique_gaps
+    if not parts:
+        return "工具已执行，但未收集到可用于推断的证据"
+    return "；".join(parts)

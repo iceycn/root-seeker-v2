@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from rootseeker.code_index.gitnexus_adapter import GitNexusAdapter, _symbol_candidates
+from rootseeker.code_index.gitnexus_adapter import (
+    GitNexusAdapter,
+    _graph_hit_usable,
+    _symbol_candidates,
+)
 from rootseeker.code_index.gitnexus_cli import GitNexusCli, GitNexusCliConfig, GitNexusCommandResult
 from rootseeker.analysis.call_chain import extract_call_chain_summary
 from rootseeker.analysis.find_callers import analyze_call_chain
@@ -36,6 +40,84 @@ class _FakeCli(GitNexusCli):
         return GitNexusCommandResult(ok=True, exit_code=0, stdout="{}", stderr="", data={}, command=["gitnexus", *args])
 
 
+def test_symbol_candidates_skip_java_package_segments() -> None:
+    candidates = _symbol_candidates(
+        "net.coolcollege.usercenter.facade.handler.AesTypeHandler"
+    )
+    assert "AesTypeHandler" in candidates
+    assert "handler" not in candidates
+    assert "facade" not in candidates
+    assert "usercenter" not in candidates
+
+
+def test_context_rejects_unrelated_handler_method() -> None:
+    class _Cli(GitNexusCli):
+        def __init__(self) -> None:
+            super().__init__(GitNexusCliConfig(enabled=True, command="gitnexus"))
+
+        def run(self, args, *, cwd=None, timeout_seconds=None, prefer_json=True):  # noqa: ANN001
+            symbol = args[1] if len(args) > 1 else ""
+            repo = args[args.index("--repo") + 1] if "--repo" in args else None
+            if args and args[0] == "list":
+                data = {"repos": ["training-manage-api", "user-center-api"]}
+                return GitNexusCommandResult(
+                    ok=True,
+                    exit_code=0,
+                    stdout=json.dumps(data),
+                    stderr="",
+                    data=data,
+                    command=["gitnexus", *args],
+                )
+            if symbol == "handler":
+                data = {
+                    "status": "found",
+                    "symbol": {
+                        "uid": (
+                            "Method:training-manage-service/src/main/java/net/coolcollege/"
+                            "training/service/messageCustomer/StudyProjectResourceMessageService.java:"
+                            "transMessageConfigHandler.handler#3"
+                        ),
+                        "name": "handler",
+                        "filePath": (
+                            "training-manage-service/src/main/java/net/coolcollege/training/"
+                            "service/messageCustomer/StudyProjectResourceMessageService.java"
+                        ),
+                    },
+                    "incoming": [{"name": "transMessageConfigHandler"}],
+                }
+            elif "AesTypeHandler" in symbol and repo is None:
+                data = {
+                    "status": "found",
+                    "symbol": {
+                        "uid": "Method:user-center-facade/.../AesTypeHandler.java:decryptField#1",
+                        "name": "AesTypeHandler",
+                        "filePath": "user-center-facade/src/main/java/.../AesTypeHandler.java",
+                    },
+                    "incoming": [{"name": "getNullableResult"}],
+                }
+            else:
+                data = {"error": f"Target '{symbol}' not found", "status": "not_found"}
+            return GitNexusCommandResult(
+                ok=True,
+                exit_code=0,
+                stdout=json.dumps(data),
+                stderr="",
+                data=data,
+                command=["gitnexus", *args],
+            )
+
+    adapter = GitNexusAdapter(cli=_Cli())
+    result = adapter.context(
+        "net.coolcollege.usercenter.facade.handler.AesTypeHandler",
+        repo="training-manage-api",
+    )
+    uid = str((result.get("result") or {}).get("symbol") or {})
+    if isinstance((result.get("result") or {}).get("symbol"), dict):
+        uid = str((result.get("result") or {})["symbol"].get("uid") or "")
+    assert "AesTypeHandler" in uid
+    assert "transMessageConfigHandler" not in uid
+
+
 def test_match_gitnexus_repo_suffix_and_contains() -> None:
     from rootseeker.code_index.gitnexus_adapter import _match_gitnexus_repo
 
@@ -48,6 +130,13 @@ def test_match_gitnexus_repo_suffix_and_contains() -> None:
     assert (
         _match_gitnexus_repo("training-manage-api", ["6183d17ff1ae9b61971d96b5__training-manage-api"])
         == "6183d17ff1ae9b61971d96b5__training-manage-api"
+    )
+    assert (
+        _match_gitnexus_repo(
+            "third-ability-service",
+            ["6183d17ff1ae9b61971d96b5__coolcollege__backend__third-ability"],
+        )
+        == "6183d17ff1ae9b61971d96b5__coolcollege__backend__third-ability"
     )
 
 
@@ -152,6 +241,57 @@ def test_impact_retries_method_name_when_qualified_missing() -> None:
     assert result.get("ok") is True
     assert (result.get("result") or {}).get("impactedCount") == 2
     assert result.get("disambiguated_uid") == "impl"
+
+
+def test_impact_retries_without_repo_when_target_missing_in_pinned_repo() -> None:
+    class _Cli(GitNexusCli):
+        def __init__(self) -> None:
+            super().__init__(GitNexusCliConfig(enabled=True, command="gitnexus"))
+            self.repos: list[str | None] = []
+
+        def run(self, args, *, cwd=None, timeout_seconds=None, prefer_json=True):  # noqa: ANN001
+            repo = None
+            if "--repo" in args:
+                repo = args[args.index("--repo") + 1]
+            self.repos.append(repo)
+            if args and args[0] == "list":
+                data = {"repos": ["6183__training-manage-api", "6183__user-center-api"]}
+                return GitNexusCommandResult(
+                    ok=True,
+                    exit_code=0,
+                    stdout=json.dumps(data),
+                    stderr="",
+                    data=data,
+                    command=["gitnexus", *args],
+                )
+            if repo:
+                data = {"error": "Target 'AesTypeHandler' not found", "impactedCount": 0}
+            else:
+                data = {
+                    "impactedCount": 1,
+                    "byDepth": {
+                        "1": [
+                            {
+                                "name": "AesEncryptUtil.decrypt",
+                                "filePath": "AesEncryptUtil.java",
+                            }
+                        ]
+                    },
+                }
+            return GitNexusCommandResult(
+                ok=True,
+                exit_code=0,
+                stdout=json.dumps(data),
+                stderr="",
+                data=data,
+                command=["gitnexus", *args],
+            )
+
+    adapter = GitNexusAdapter(cli=_Cli())
+    result = adapter.impact("AesTypeHandler", repo="training-manage-api")
+    assert _graph_hit_usable(result.get("result"))
+    assert (result.get("result") or {}).get("impactedCount") == 1
+    assert None in adapter.cli.repos
 
 
 def test_gitnexus_adapter_callers_for_symbol() -> None:

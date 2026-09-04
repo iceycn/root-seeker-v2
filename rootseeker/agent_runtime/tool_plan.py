@@ -13,6 +13,7 @@ __all__ = [
     "ToolPlanCall",
     "ToolPlanResult",
     "build_default_tool_arguments",
+    "enrich_tool_arguments_with_step_outputs",
     "parse_tool_plan_content",
 ]
 
@@ -111,6 +112,7 @@ def parse_tool_plan_content(
         raw_args = item.get("arguments")
         arguments = dict(raw_args) if isinstance(raw_args, dict) else {}
         arguments = build_default_tool_arguments(tool_name, case_request) | arguments
+        arguments = _normalize_planned_arguments(tool_name, arguments)
         step_id = str(item.get("step_id") or _step_id_from_tool(tool_name, idx)).strip()
         timeout_seconds = _parse_timeout_seconds(item.get("timeout_seconds"))
         calls.append(
@@ -128,6 +130,7 @@ def parse_tool_plan_content(
     if not calls:
         return None
     calls = _filter_dependencies(calls)
+    calls = _require_normalize_dependency(calls)
     final_answer = parsed.get("final_answer")
     return ToolPlan(
         tool_calls=calls,
@@ -139,6 +142,93 @@ def parse_tool_plan_content(
 
 def build_default_tool_arguments(tool_name: str, case_request: CaseCreateRequest) -> dict[str, Any]:
     return _rule_resolver.resolve(tool_name, case_request, step_outputs={})
+
+
+def enrich_tool_arguments_with_step_outputs(
+    tool_name: str,
+    arguments: dict[str, Any],
+    *,
+    case_request: CaseCreateRequest,
+    step_outputs: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Fill planned args from completed steps (e.g. normalize call_chain)."""
+    defaults = _rule_resolver.resolve(tool_name, case_request, step_outputs=step_outputs)
+    merged = dict(defaults)
+    merged.update(arguments or {})
+    if tool_name == "code.find_callers":
+        chain = merged.get("call_chain")
+        usable = isinstance(chain, list) and any(str(item).strip() for item in chain)
+        if not usable:
+            default_chain = defaults.get("call_chain")
+            if isinstance(default_chain, list) and default_chain:
+                merged["call_chain"] = default_chain
+                usable = True
+        if usable:
+            merged.pop("_skip_reason", None)
+    elif tool_name in {"graph.impact", "graph.context"}:
+        if not str(merged.get("symbol") or "").strip():
+            default_symbol = str(defaults.get("symbol") or "").strip()
+            if default_symbol:
+                merged["symbol"] = default_symbol
+        if str(merged.get("symbol") or "").strip():
+            merged.pop("_skip_reason", None)
+    elif tool_name == "code.read":
+        if str(merged.get("path") or merged.get("file_path") or "").strip():
+            merged.pop("_skip_reason", None)
+        from rootseeker.analysis.code_slice import chain_methods_for_path, fault_line_for_path
+        from rootseeker.skill_runtime.rule_step_argument_resolver import (
+            _call_chain_for_code_read,
+        )
+
+        path = str(merged.get("path") or merged.get("file_path") or "")
+        chain = _call_chain_for_code_read(step_outputs, str(case_request.symptom or ""))
+        specs = chain_methods_for_path(path, chain)
+        if specs:
+            merged["methods"] = [item["name"] for item in specs]
+            if specs[0].get("line"):
+                merged["line"] = int(specs[0]["line"])
+        else:
+            methods = _coerce_code_read_methods(merged)
+            if methods:
+                merged["methods"] = methods
+        if not merged.get("line") and not merged.get("focus_line"):
+            line = fault_line_for_path(path, chain) or 0
+            if line:
+                merged["line"] = line
+    return _normalize_planned_arguments(tool_name, merged)
+
+
+def _normalize_planned_arguments(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool_name != "code.read":
+        return arguments
+    out = dict(arguments)
+    explicit = str(out.get("file_path") or out.get("file") or "").strip()
+    path = str(out.get("path") or "").strip()
+    if explicit and (not path or path != explicit):
+        out["path"] = explicit
+    methods = _coerce_code_read_methods(out)
+    if methods:
+        out["methods"] = methods
+    return out
+
+
+def _coerce_code_read_methods(arguments: dict[str, Any]) -> list[str]:
+    raw = arguments.get("methods")
+    if isinstance(raw, str) and raw.strip():
+        return [raw.strip()]
+    if isinstance(raw, list):
+        names = [str(item).strip() for item in raw if str(item).strip()]
+        if names:
+            return names
+    for key in ("focus_method", "method", "method_name"):
+        alias = arguments.get(key)
+        if isinstance(alias, str) and alias.strip():
+            return [alias.strip()]
+        if isinstance(alias, list):
+            names = [str(item).strip() for item in alias if str(item).strip()]
+            if names:
+                return names
+    return []
 
 
 def _parse_json_object(content: str) -> dict[str, Any] | None:
@@ -226,3 +316,34 @@ def _filter_dependencies(calls: list[ToolPlanCall]) -> list[ToolPlanCall]:
             )
         )
     return filtered
+
+
+_CHAIN_DEPENDENT_TOOLS = {"code.read", "code.find_callers"}
+
+
+def _require_normalize_dependency(calls: list[ToolPlanCall]) -> list[ToolPlanCall]:
+    normalize_ids = [call.step_id for call in calls if call.tool_name == "incident.normalize"]
+    if not normalize_ids:
+        return calls
+    normalize_id = normalize_ids[0]
+    required: list[ToolPlanCall] = []
+    for call in calls:
+        depends_on = list(call.depends_on)
+        if (
+            call.tool_name in _CHAIN_DEPENDENT_TOOLS
+            and call.step_id != normalize_id
+            and normalize_id not in depends_on
+        ):
+            depends_on.append(normalize_id)
+        required.append(
+            ToolPlanCall(
+                tool_name=call.tool_name,
+                step_id=call.step_id,
+                arguments=dict(call.arguments),
+                rationale=call.rationale,
+                depends_on=depends_on,
+                timeout_seconds=call.timeout_seconds,
+                required=call.required,
+            )
+        )
+    return required

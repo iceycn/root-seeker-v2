@@ -662,6 +662,74 @@ def test_admin_error_chat_infers_service_name_when_omitted(tmp_path: Path) -> No
     assert item["case"]["service_name"] == "training-manage-api"
 
 
+def test_tool_planner_from_admin_store_uses_configured_provider(tmp_path: Path) -> None:
+    from apps.admin.config_store import build_admin_config_store
+    from apps.admin.main import _tool_planner_from_admin_store
+    from rootseeker.agent_runtime.llm_tool_planner import OpenAICompatibleToolPlanner
+
+    store = build_admin_config_store(tmp_path)
+    store.upsert_ai_provider(
+        {
+            "name": "mimo",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.xiaomimimo.com/v1",
+            "api_key": "sk-test",
+            "model": "mimo-v2.5-pro",
+            "enabled": True,
+        }
+    )
+    store.set_default_ai_provider("mimo")
+    store.set_default_ai_model("mimo", "mimo-v2.5-pro")
+
+    planner = _tool_planner_from_admin_store(store)
+    assert isinstance(planner, OpenAICompatibleToolPlanner)
+    assert planner.config.model == "mimo-v2.5-pro"
+    assert planner.config.base_url == "https://api.xiaomimimo.com/v1"
+
+
+def test_create_app_wires_admin_ai_provider_as_tool_planner(tmp_path: Path) -> None:
+    from apps.admin.config_store import build_admin_config_store
+
+    store = build_admin_config_store(tmp_path)
+    store.upsert_ai_provider(
+        {
+            "name": "mimo",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.xiaomimimo.com/v1",
+            "api_key": "sk-test",
+            "model": "mimo-v2.5-pro",
+            "enabled": True,
+        }
+    )
+    store.set_default_ai_model("mimo", "mimo-v2.5-pro")
+
+    client = TestClient(create_app(tmp_path))
+    planner = client.app.state.runtime.tool_planner
+    assert planner is not None
+    assert planner.config.model == "mimo-v2.5-pro"
+
+
+def test_upsert_ai_provider_refreshes_runtime_tool_planner(tmp_path: Path) -> None:
+    client = TestClient(create_app(tmp_path))
+    assert client.app.state.runtime.tool_planner is None
+
+    response = client.post(
+        "/api/ai-providers",
+        json={
+            "name": "mimo",
+            "provider_type": "openai_compatible",
+            "base_url": "https://api.xiaomimimo.com/v1",
+            "api_key": "sk-test",
+            "model": "mimo-v2.5-pro",
+            "enabled": True,
+        },
+    )
+    assert response.status_code == 200
+    planner = client.app.state.runtime.tool_planner
+    assert planner is not None
+    assert planner.config.model == "mimo-v2.5-pro"
+
+
 def test_build_llm_error_chat_payload_stays_under_kimi_limit() -> None:
     import json
     from types import SimpleNamespace
@@ -764,3 +832,13 @@ def test_build_llm_error_chat_payload_hard_truncates_when_still_over_limit() -> 
         "payload_too_large",
         "payload_hard_truncated",
     }
+
+
+def test_error_chat_analysis_prompt_separates_base64_from_key_mismatch() -> None:
+    from apps.admin.main import ERROR_CHAT_ANALYSIS_SYSTEM_PROMPT
+
+    prompt = ERROR_CHAT_ANALYSIS_SYSTEM_PROMPT
+    assert "Base64" in prompt
+    assert "BadPadding" in prompt
+    assert "user-center" in prompt
+    assert "已证实" in prompt

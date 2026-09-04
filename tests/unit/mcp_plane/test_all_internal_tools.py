@@ -6,6 +6,7 @@ Each test proves the call path:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -150,8 +151,8 @@ class RecordingAdapter:
         self._record("semantic_search_code", query, repo_name=repo_name, limit=limit)
         return {"ok": True, "query": query, "repo_name": repo_name, "limit": limit, "result": []}
 
-    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
-        self._record("read_code", path, repo)
+    def read_code(self, path: str, repo: str | None = None, **kwargs: Any) -> dict[str, Any]:
+        self._record("read_code", path, repo, **kwargs)
         return {"path": path, "repo": repo, "content": f"// {path}\nclass Demo {{}}\n", "total_lines": 2}
 
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -450,6 +451,43 @@ def test_incident_normalize_payload_and_flat_args(adapter: RecordingAdapter, gat
     assert "PopRecordService.insertPopRecordLogic" in flat.content["extracted"]["call_chain"][0]
     assert flat.content["case_request"]["service_name"] == "api"
     assert "time_window" in flat.content["missing_fields"]
+
+
+def test_incident_normalize_unwraps_sls_content_json(adapter: RecordingAdapter, gateway) -> None:
+    gw, _, _ = gateway
+    inner_log = (
+        "2026-09-03 21:05:01.639 third-ability-service [SOFA-SEV-BOLT-BIZ-12200-10-T20] INFO  "
+        "c.c.t.s.i.HarvardManageMentorCourseImpl - harvard manage mentor getCourses error\n"
+        "java.lang.NumberFormatException: For input string: \"user@example.com\"\n"
+        "\tat java.lang.NumberFormatException.forInputString(NumberFormatException.java:65)\n"
+        "\tat java.lang.Long.parseLong(Long.java:589)\n"
+        "\tat java.lang.Long.valueOf(Long.java:803)\n"
+        "\tat com.coolcollege.thirdability.service.impl.HarvardManageMentorCourseImpl"
+        ".getCourseProgress(HarvardManageMentorCourseImpl.java:169)\n"
+        "\tat com.coolcollege.thirdability.facade.impl.ThirdCourseFacadeImpl"
+        ".getCourseProgress(ThirdCourseFacadeImpl.java:299)\n"
+    )
+    res = _invoke(
+        gw,
+        "incident.normalize",
+        {
+            "payload": {
+                "title": "错误排查请求",
+                "source": "admin-error-chat",
+                "message": json.dumps({"content": inner_log}),
+            }
+        },
+    )
+    assert res.ok
+    extracted = res.content["extracted"]
+    assert extracted["service_name"] == "third-ability-service"
+    assert "NumberFormatException" in extracted["exception_summary"]
+    assert extracted["call_chain"]
+    assert extracted["call_chain"][0].startswith("HarvardManageMentorCourseImpl.getCourseProgress")
+    assert extracted["code_path"] == "HarvardManageMentorCourseImpl.java"
+    symptom = res.content["case_request"]["symptom"]
+    assert "HarvardManageMentorCourseImpl.java:169" in symptom
+    assert not str(symptom).lstrip().startswith("{")
 
 
 def test_catalog_unknown_service_still_returns_entry(adapter: RecordingAdapter, gateway) -> None:

@@ -13,7 +13,10 @@ from rootseeker.agent_runtime import (
 from rootseeker.agent_runtime.attempt_runner import AttemptRunner
 from rootseeker.agent_runtime.model_router import ModelRouter
 from rootseeker.agent_runtime.tool_call_loop import ToolCallExecution
-from rootseeker.agent_runtime.tool_plan import parse_tool_plan_content
+from rootseeker.agent_runtime.tool_plan import (
+    enrich_tool_arguments_with_step_outputs,
+    parse_tool_plan_content,
+)
 from rootseeker.bootstrap import create_dev_runtime
 from rootseeker.contracts.case import CaseCreateRequest, CaseStatus, StepStatus
 from rootseeker.contracts.tool import ToolCallResult
@@ -175,6 +178,201 @@ def test_parse_tool_plan_filters_unknown_tools_and_fills_defaults() -> None:
     assert plan.tool_calls[1].required is False
 
 
+def test_parse_tool_plan_prefers_llm_file_path_over_framework_default() -> None:
+    stack = """
+org.springframework.jdbc.UncategorizedSQLException: AES解密失败
+	at org.springframework.jdbc.support.AbstractFallbackSQLExceptionTranslator.translate(AbstractFallbackSQLExceptionTranslator.java:89)
+Caused by: java.lang.IllegalArgumentException: Input byte array has wrong 4-byte ending unit
+	at java.util.Base64$Decoder.decode0(Base64.java:704)
+	at net.coolcollege.usercenter.facade.utils.AesEncryptUtil.decrypt(AesEncryptUtil.java:61)
+"""
+    case_request = CaseCreateRequest(
+        title="planner",
+        symptom=stack,
+        service_name="training-manage-api",
+        source="unit-agent",
+    )
+    plan = parse_tool_plan_content(
+        """
+        {
+          "rationale": "read decrypt util",
+          "tool_calls": [
+            {
+              "step_id": "read-aes",
+              "tool_name": "code.read",
+              "arguments": {
+                "file_path": "net/coolcollege/usercenter/facade/utils/AesEncryptUtil.java",
+                "repo": "user-center-api"
+              }
+            }
+          ]
+        }
+        """,
+        allowed_tools={"code.read"},
+        max_tool_calls=4,
+        case_request=case_request,
+    )
+    assert plan is not None
+    args = plan.tool_calls[0].arguments
+    assert args["path"] == "net/coolcollege/usercenter/facade/utils/AesEncryptUtil.java"
+    assert "AbstractFallbackSQLExceptionTranslator.java" not in str(args.get("path"))
+    assert args["repo"] == "user-center-api"
+
+
+def test_enrich_find_callers_injects_normalize_call_chain() -> None:
+    args = enrich_tool_arguments_with_step_outputs(
+        "code.find_callers",
+        {
+            "symbol": "BizPracticeService.queryBizPracticeListByUserDepaGroupPost",
+            "_skip_reason": "No call_chain from normalize-incident.",
+        },
+        case_request=CaseCreateRequest(
+            title="t",
+            symptom="AES decrypt failed",
+            service_name="training-manage-api",
+            source="unit-agent",
+        ),
+        step_outputs={
+            "llm-1-incident-normalize": {
+                "extracted": {
+                    "call_chain": [
+                        "AesTypeHandler.decryptField (AesTypeHandler.java:53)",
+                    ]
+                }
+            }
+        },
+    )
+    assert args["call_chain"][0].startswith("AesTypeHandler.decryptField")
+    assert "_skip_reason" not in args
+
+
+def test_enrich_code_read_injects_focus_line_from_call_chain() -> None:
+    args = enrich_tool_arguments_with_step_outputs(
+        "code.read",
+        {
+            "path": (
+                "user-center-service/src/main/java/net/coolcollege/usercenter/"
+                "service/business/impl/SysUserGroupService.java"
+            ),
+            "repo": "user-center-api",
+        },
+        case_request=CaseCreateRequest(
+            title="t",
+            symptom="无法识别文件",
+            service_name="user-center-api",
+            source="unit-agent",
+        ),
+        step_outputs={
+            "normalize": {
+                "extracted": {
+                    "call_chain": [
+                        "SysUserGroupService.parseFile (SysUserGroupService.java:1333)",
+                        "SysUserGroupControllerV2.parse (SysUserGroupControllerV2.java:172)",
+                    ]
+                }
+            }
+        },
+    )
+    assert args["line"] == 1333
+    assert args["methods"] == ["parseFile"]
+    assert args["path"].endswith("SysUserGroupService.java")
+
+
+def test_parse_tool_plan_forces_code_read_to_depend_on_normalize() -> None:
+    plan = parse_tool_plan_content(
+        """
+        {
+          "rationale": "read business file",
+          "tool_calls": [
+            {"step_id": "1", "tool_name": "incident.normalize", "arguments": {}},
+            {
+              "step_id": "5",
+              "tool_name": "code.read",
+              "arguments": {"path": "AesTypeHandler.java", "repo": "user-center-api"},
+              "depends_on": []
+            }
+          ]
+        }
+        """,
+        allowed_tools={"incident.normalize", "code.read"},
+        max_tool_calls=6,
+        case_request=CaseCreateRequest(
+            title="t",
+            symptom="AES",
+            service_name="training-manage-api",
+            source="unit-agent",
+        ),
+    )
+    assert plan is not None
+    read = next(call for call in plan.tool_calls if call.tool_name == "code.read")
+    assert "1" in read.depends_on
+
+
+def test_enrich_code_read_maps_focus_method_alias() -> None:
+    args = enrich_tool_arguments_with_step_outputs(
+        "code.read",
+        {
+            "path": "SysUserGroupService.java",
+            "repo": "user-center-api",
+            "focus_method": "parseFile",
+        },
+        case_request=CaseCreateRequest(
+            title="t",
+            symptom="无法识别文件",
+            service_name="user-center-api",
+            source="unit-agent",
+        ),
+        step_outputs={},
+    )
+    assert args["methods"] == ["parseFile"]
+
+
+def test_enrich_code_read_uses_symptom_stack_when_normalize_missing() -> None:
+    stack = """
+Caused by: java.sql.SQLException: AES解密失败
+	at net.coolcollege.usercenter.facade.handler.AesTypeHandler.decryptField(AesTypeHandler.java:53)
+	at net.coolcollege.usercenter.facade.handler.AesTypeHandler.getNullableResult(AesTypeHandler.java:28)
+Caused by: java.lang.IllegalArgumentException: Input byte array has wrong 4-byte ending unit
+	at net.coolcollege.usercenter.facade.utils.AesEncryptUtil.decrypt(AesEncryptUtil.java:61)
+	at net.coolcollege.usercenter.facade.handler.AesTypeHandler.decryptField(AesTypeHandler.java:51)
+"""
+    args = enrich_tool_arguments_with_step_outputs(
+        "code.read",
+        {"path": "AesTypeHandler.java", "repo": "user-center-api"},
+        case_request=CaseCreateRequest(
+            title="t",
+            symptom=stack,
+            service_name="training-manage-api",
+            source="unit-agent",
+        ),
+        step_outputs={},
+    )
+    assert args["methods"] == ["decryptField", "getNullableResult"]
+    assert args["line"] in {51, 53, 28}
+
+
+def test_agent_attempt_injects_call_chain_before_find_callers(monkeypatch) -> None:
+    runtime = _runtime(monkeypatch)
+    tool_loop = _CaptureFindCallersLoop()
+    attempt_runner = AttemptRunner(
+        FlowRuntime(runtime),
+        model_router=_StaticRouter(),
+        tool_planner=_FindCallersPlanner(),
+        tool_call_loop=tool_loop,
+    )
+    result = attempt_runner.run_once(
+        CaseCreateRequest(
+            title="find callers enrichment",
+            symptom="AES decrypt failed",
+            service_name="training-manage-api",
+            source="unit-agent",
+        )
+    )
+    assert result.status == "completed"
+    assert tool_loop.find_callers_args is not None
+    assert tool_loop.find_callers_args["call_chain"][0].startswith("AesTypeHandler.decryptField")
+
+
 def test_agent_attempt_can_execute_llm_tool_plan(monkeypatch) -> None:
     runtime = _runtime(monkeypatch)
     attempt_runner = AttemptRunner(
@@ -193,10 +391,11 @@ def test_agent_attempt_can_execute_llm_tool_plan(monkeypatch) -> None:
     )
     assert result.status == "completed"
     assert result.route.mode == "llm_tool_plan"
-    assert [trace.tool_name for trace in result.tool_traces] == [
+    assert [trace.tool_name for trace in result.tool_traces if trace.tool_name != "notify.send"] == [
         "catalog.resolve_service",
         "log.query_by_trace_id",
     ]
+    assert result.tool_traces[-1].tool_name == "notify.send"
     assert result.tool_traces[1].plan_metadata["depends_on"] == ["resolve-service"]
     assert result.tool_traces[1].plan_metadata["timeout_seconds"] == 30.0
     assert result.tool_traces[1].plan_metadata["required"] is True
@@ -207,7 +406,10 @@ def test_agent_attempt_can_execute_llm_tool_plan(monkeypatch) -> None:
     assert all(step.status == StepStatus.COMPLETED for step in case.steps)
     pack = runtime.evidence_store.get_pack(result.case_id)
     assert pack is not None
-    assert len(pack.items) == 2
+    sources = [item.source for item in pack.items]
+    assert "catalog.resolve_service" in sources
+    assert "log.query_by_trace_id" not in sources
+    assert "日志后端未配置" in pack.summary
     report = runtime.report_store.get(result.case_id)
     assert report is not None
     assert report.metadata["agent"]["route_mode"] == "llm_tool_plan"
@@ -268,7 +470,10 @@ def test_agent_attempt_skips_steps_with_failed_dependencies(monkeypatch) -> None
     )
 
     assert result.status == "failed"
-    assert [trace.step_id for trace in result.tool_traces] == ["resolve-service", "query-logs"]
+    assert [trace.step_id for trace in result.tool_traces if trace.tool_name != "notify.send"] == [
+        "resolve-service",
+        "query-logs",
+    ]
     assert result.tool_traces[0].error_code == "UNIT_FAILURE"
     assert result.tool_traces[1].error_code == "DEPENDENCY_FAILED"
     assert result.tool_traces[1].plan_metadata["depends_on"] == ["resolve-service"]
@@ -293,7 +498,10 @@ def test_agent_attempt_continues_after_optional_dependency_failure(monkeypatch) 
     )
 
     assert result.status == "completed"
-    assert [trace.step_id for trace in result.tool_traces] == ["optional-code-search", "query-logs"]
+    assert [trace.step_id for trace in result.tool_traces if trace.tool_name != "notify.send"] == [
+        "optional-code-search",
+        "query-logs",
+    ]
     assert result.tool_traces[0].error_code == "OPTIONAL_FAILURE"
     assert result.tool_traces[0].plan_metadata["required"] is False
     assert result.tool_traces[1].ok is True
@@ -319,11 +527,12 @@ def test_agent_attempt_batches_independent_ready_steps(monkeypatch) -> None:
     )
 
     assert result.status == "completed"
-    assert tool_loop.batches == [
+    assert tool_loop.batches[:2] == [
         ["resolve-service", "query-logs"],
         ["search-code"],
     ]
-    assert [trace.step_id for trace in result.tool_traces] == [
+    assert tool_loop.batches[-1] == ["notify"]
+    assert [trace.step_id for trace in result.tool_traces if trace.tool_name != "notify.send"] == [
         "resolve-service",
         "query-logs",
         "search-code",
@@ -431,6 +640,16 @@ class _DependentPlanner:
 class _FailFirstToolLoop:
     def execute_records(self, requests, *, plugin_id=None, actor="agent-runtime", plan_metadata_by_step_id=None):
         request = requests[0]
+        if request.tool_name == "notify.send":
+            result = ToolCallResult(ok=True, tool_name=request.tool_name, content={"ok": True})
+            trace = ToolExecutionTrace(
+                step_id=request.step_id,
+                tool_name=request.tool_name,
+                ok=True,
+                content_preview=result.content,
+                plan_metadata=(plan_metadata_by_step_id or {}).get(request.step_id, {}),
+            )
+            return [ToolCallExecution(request=request, result=result, trace=trace)]
         result = ToolCallResult(
             ok=False,
             tool_name=request.tool_name,
@@ -480,6 +699,16 @@ class _FailOptionalToolLoop:
     def execute_records(self, requests, *, plugin_id=None, actor="agent-runtime", plan_metadata_by_step_id=None):
         request = requests[0]
         plan_metadata = (plan_metadata_by_step_id or {}).get(request.step_id, {})
+        if request.tool_name == "notify.send":
+            result = ToolCallResult(ok=True, tool_name=request.tool_name, content={"ok": True})
+            trace = ToolExecutionTrace(
+                step_id=request.step_id,
+                tool_name=request.tool_name,
+                ok=True,
+                content_preview=result.content,
+                plan_metadata=plan_metadata,
+            )
+            return [ToolCallExecution(request=request, result=result, trace=trace)]
         if request.step_id == "optional-code-search":
             result = ToolCallResult(
                 ok=False,
@@ -557,6 +786,66 @@ class _RecordingToolLoop:
         records = []
         for request in requests:
             content = {"ok": True, "step_id": request.step_id}
+            result = ToolCallResult(ok=True, tool_name=request.tool_name, content=content)
+            trace = ToolExecutionTrace(
+                step_id=request.step_id,
+                tool_name=request.tool_name,
+                ok=True,
+                content_preview=content,
+                plan_metadata=(plan_metadata_by_step_id or {}).get(request.step_id, {}),
+            )
+            records.append(ToolCallExecution(request=request, result=result, trace=trace))
+        return records
+
+
+class _FindCallersPlanner:
+    def plan(self, *, case_request: CaseCreateRequest, tools, history_summary=None) -> ToolPlanResult:
+        return ToolPlanResult(
+            ok=True,
+            provider="unit",
+            model="planner",
+            plan=ToolPlan(
+                rationale="normalize then find callers",
+                tool_calls=[
+                    ToolPlanCall(
+                        tool_name="incident.normalize",
+                        step_id="llm-1-incident-normalize",
+                        arguments={"payload": {"message": case_request.symptom}},
+                    ),
+                    ToolPlanCall(
+                        tool_name="code.find_callers",
+                        step_id="llm-2-code-find-callers",
+                        arguments={
+                            "symbol": "BizPracticeService.queryBizPracticeListByUserDepaGroupPost",
+                            "_skip_reason": "No call_chain from normalize-incident.",
+                        },
+                        depends_on=["llm-1-incident-normalize"],
+                    ),
+                ],
+            ),
+        )
+
+
+class _CaptureFindCallersLoop:
+    def __init__(self) -> None:
+        self.find_callers_args: dict | None = None
+
+    def execute_records(self, requests, *, plugin_id=None, actor="agent-runtime", plan_metadata_by_step_id=None):
+        records = []
+        for request in requests:
+            if request.tool_name == "incident.normalize":
+                content = {
+                    "extracted": {
+                        "call_chain": [
+                            "AesTypeHandler.decryptField (AesTypeHandler.java:53)",
+                        ]
+                    }
+                }
+            elif request.tool_name == "notify.send":
+                content = {"ok": True}
+            else:
+                self.find_callers_args = dict(request.arguments)
+                content = {"ok": True, "static_callers": []}
             result = ToolCallResult(ok=True, tool_name=request.tool_name, content=content)
             trace = ToolExecutionTrace(
                 step_id=request.step_id,
