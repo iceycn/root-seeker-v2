@@ -2923,7 +2923,6 @@ function App() {
                   <div><b>证据数：</b>{errorChatResult.evidence_count ?? 0}</div>
                   <div><b>证据摘要：</b>{errorChatResult.evidence_summary || '-'}</div>
                   <div><b>流程耗时：</b>{errorChatResult.flow_elapsed_ms ?? '-'}ms</div>
-                  <div><b>根因：</b>{errorChatResult.report?.root_cause?.title || '暂无明确根因'}</div>
                   <div>
                     <b>AI 分析：</b>
                     {errorChatResult.ai_analysis?.ok
@@ -2934,6 +2933,14 @@ function App() {
                   </div>
                   {errorChatResult.ai_analysis?.content ? (
                     <div className="ai-analysis-content">{errorChatResult.ai_analysis.content}</div>
+                  ) : (
+                    <div><b>根因：</b>{errorChatResult.report?.root_cause?.title || '暂无明确根因'}</div>
+                  )}
+                  {errorChatResult.ai_analysis?.ok && errorChatResult.report?.root_cause?.title ? (
+                    <details>
+                      <summary>规则引擎初判</summary>
+                      <div>{errorChatResult.report.root_cause.title}</div>
+                    </details>
                   ) : null}
                   <details>
                     <summary>查看排查步骤</summary>

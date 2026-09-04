@@ -162,6 +162,191 @@ def _read_from_source(source: str, rel_path: str) -> str | None:
     return _docker_read_repo_file(source, rel_path)
 
 
+def _normalize_rel_path(rel_path: str) -> str:
+    return str(rel_path or "").replace("\\", "/").lstrip("/")
+
+
+def _path_is_suffix(full: str, needle: str) -> bool:
+    full_n = _normalize_rel_path(full)
+    needle_n = _normalize_rel_path(needle)
+    if not needle_n:
+        return False
+    return full_n == needle_n or full_n.endswith("/" + needle_n)
+
+
+def _java_type_path(path: str) -> str:
+    normalized = _normalize_rel_path(path)
+    marker = "src/main/java/"
+    index = normalized.find(marker)
+    if index >= 0:
+        return normalized[index + len(marker) :]
+    return normalized
+
+
+def _package_overlap_len(full: str, needle: str) -> int:
+    full_parts = [part for part in _java_type_path(full).split("/") if part]
+    needle_parts = [part for part in _java_type_path(needle).split("/") if part]
+    overlap = 0
+    for left, right in zip(reversed(full_parts), reversed(needle_parts)):
+        if left != right:
+            break
+        overlap += 1
+    return overlap
+
+
+def _path_matches_request(full: str, needle: str) -> bool:
+    if _path_is_suffix(full, needle):
+        return True
+    if not _java_type_path(full).endswith(".java") or not _java_type_path(needle).endswith(".java"):
+        return False
+    return _package_overlap_len(full, needle) >= 3
+
+
+def _repo_names_match(hit_repo: str | None, requested: str | None) -> bool:
+    left = str(hit_repo or "").strip().lower()
+    right = str(requested or "").strip().lower()
+    if not left or not right:
+        return False
+    return left == right or left.endswith("__" + right) or right.endswith("__" + left) or right in left
+
+
+def _repo_base_path() -> Path:
+    return Path(os.getenv("ROOTSEEKER_REPO_BASE_PATH") or "repos")
+
+
+def _local_roots_for_repo(repo_name: str | None, source: str) -> list[Path]:
+    roots = list(_local_source_candidates(source))
+    base = _repo_base_path()
+    name = str(repo_name or "").strip()
+    if name:
+        roots.append(base / name)
+        if "__" in name:
+            roots.append(base / name.rsplit("__", 1)[-1])
+    seen: set[str] = set()
+    ordered: list[Path] = []
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            seen.add(key)
+            ordered.append(root)
+    return ordered
+
+
+def _prefer_suffix_match(matches: list[Path], needle: str) -> Path | None:
+    if not matches:
+        return None
+    if len(matches) == 1:
+        return matches[0]
+    needle_n = _normalize_rel_path(needle)
+    java_src = [path for path in matches if "/src/main/java/" in path.as_posix()]
+    pool = java_src or matches
+    exact_suffix = [path for path in pool if _path_matches_request(path.as_posix(), needle_n)]
+    pool = exact_suffix or pool
+    return sorted(
+        pool,
+        key=lambda path: (-_package_overlap_len(path.as_posix(), needle_n), len(path.as_posix())),
+    )[0]
+
+
+def _read_text_from_root(root: Path, rel_path: str) -> tuple[str, str] | None:
+    needle = _normalize_rel_path(rel_path)
+    if not needle:
+        return None
+    text = _safe_read_repo_file(root, needle)
+    if text is not None:
+        return text, needle
+    name = needle.rsplit("/", 1)[-1]
+    if not name or not root.exists() or not root.is_dir():
+        return None
+    matches: list[Path] = []
+    try:
+        for candidate in root.rglob(name):
+            if not candidate.is_file():
+                continue
+            rel = candidate.relative_to(root).as_posix()
+            if _path_matches_request(rel, needle):
+                matches.append(candidate)
+    except (OSError, ValueError):
+        return None
+    chosen = _prefer_suffix_match(matches, needle)
+    if chosen is None:
+        return None
+    try:
+        return chosen.read_text(encoding="utf-8", errors="replace"), chosen.relative_to(root).as_posix()
+    except OSError:
+        return None
+
+
+def _read_indexed_file(
+    *,
+    repo_name: str | None,
+    source: str,
+    rel_path: str,
+) -> tuple[str, str] | None:
+    for root in _local_roots_for_repo(repo_name, source):
+        found = _read_text_from_root(root, rel_path)
+        if found is not None:
+            return found
+    text = _docker_read_repo_file(source, rel_path)
+    if text is not None:
+        return text, _normalize_rel_path(rel_path)
+    return None
+
+
+def _match_index_repos(requested: str | None, repos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not requested:
+        return list(repos)
+    req = requested.strip().lower()
+    if not req:
+        return list(repos)
+    exact = [item for item in repos if str(item.get("name") or "").lower() == req]
+    if exact:
+        return exact
+    suffix: list[dict[str, Any]] = []
+    contains: list[dict[str, Any]] = []
+    for item in repos:
+        name = str(item.get("name") or "").lower()
+        if name.endswith("__" + req) or name.endswith("/" + req) or name.endswith("\\" + req):
+            suffix.append(item)
+        elif req in name:
+            contains.append(item)
+    if suffix:
+        return suffix
+    return sorted(contains, key=lambda item: len(str(item.get("name") or "")))
+
+
+def _sliced_read_result(
+    *,
+    path: str,
+    repo: str | None,
+    text: str,
+    start_line: int,
+    end_line: int | None,
+    focus_line: int | None,
+    methods: list[Any] | None = None,
+) -> dict[str, Any]:
+    from rootseeker.analysis.code_slice import slice_source_window
+
+    content, start, end = slice_source_window(
+        text,
+        start_line=start_line,
+        end_line=end_line,
+        focus_line=focus_line,
+        methods=methods,
+    )
+    total = len(str(text).splitlines())
+    returned = len(content.splitlines()) if content else 0
+    return {
+        "path": path,
+        "repo": repo,
+        "content": content,
+        "total_lines": total,
+        "returned_lines": returned,
+        "start_line": start,
+        "end_line": end,
+    }
+
+
 @dataclass
 class ZoektCodeAdapter:
     """Production adapter for Zoekt code search.
@@ -237,25 +422,15 @@ class ZoektCodeAdapter:
         if not data:
             return None
         repos = self._normalized_repos_from_list(data)
-        cand = repos
-        if repo:
-            cand = [r for r in repos if r.get("name") == repo]
-        if path:
-            for item in cand:
-                src = item.get("source") or ""
-                if src and _read_from_source(src, path) is not None:
-                    # Prefer a locally existing candidate when available.
-                    for root in _local_source_candidates(src):
-                        if root.exists():
-                            return root
-                    return Path(src)
-            return None
-        for item in cand:
-            src = item.get("source") or ""
+        for item in self._iter_repo_candidates(repos, repo):
+            src = str(item.get("source") or "")
+            name = str(item.get("name") or "") or None
+            if path and _read_indexed_file(repo_name=name, source=src, rel_path=path) is None:
+                continue
+            for root in _local_roots_for_repo(name, src):
+                if root.exists():
+                    return root
             if src:
-                for root in _local_source_candidates(src):
-                    if root.exists():
-                        return root
                 return Path(src)
         return None
 
@@ -264,19 +439,100 @@ class ZoektCodeAdapter:
         if not data:
             return None
         repos = self._normalized_repos_from_list(data)
-        cand = repos
-        if repo:
-            cand = [r for r in repos if r.get("name") == repo]
-        if path:
-            for item in cand:
-                src = str(item.get("source") or "")
-                if src and _read_from_source(src, path) is not None:
-                    return src
-            return None
-        for item in cand:
+        for item in self._iter_repo_candidates(repos, repo):
             src = str(item.get("source") or "")
+            name = str(item.get("name") or "") or None
+            if path and _read_indexed_file(repo_name=name, source=src, rel_path=path) is None:
+                continue
             if src:
                 return src
+        return None
+
+    def _iter_repo_candidates(
+        self,
+        repos: list[dict[str, Any]],
+        repo: str | None,
+    ) -> list[dict[str, Any]]:
+        matched = _match_index_repos(repo, repos)
+        seen: set[str] = set()
+        ordered: list[dict[str, Any]] = []
+        for item in [*matched, *repos]:
+            key = str(item.get("name") or item.get("source") or id(item))
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(item)
+        return ordered
+
+    def _read_from_index_list(
+        self,
+        path: str,
+        repo: str | None,
+    ) -> tuple[str, str, str | None] | None:
+        data = self._fetch_index_list_payload(reuse_cache=True)
+        if not data:
+            return None
+        repos = self._normalized_repos_from_list(data)
+        for item in self._iter_repo_candidates(repos, repo):
+            src = str(item.get("source") or "")
+            name = str(item.get("name") or "") or None
+            found = _read_indexed_file(repo_name=name, source=src, rel_path=path)
+            if found is None:
+                continue
+            content, resolved_path = found
+            return content, resolved_path, name
+        return None
+
+    def _read_from_search_hit(
+        self,
+        path: str,
+        repo: str | None,
+    ) -> tuple[str, str, str | None] | None:
+        basename = _normalize_rel_path(path).rsplit("/", 1)[-1]
+        if not basename:
+            return None
+        search = self.search_code(f"file:{basename}", num_results=20)
+        hits = search.get("hits") if isinstance(search, dict) else None
+        if not isinstance(hits, list):
+            return None
+        ranked: list[dict[str, Any]] = []
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            hit_path = str(hit.get("path") or "")
+            if not hit_path:
+                continue
+            if (
+                _path_matches_request(hit_path, path)
+                or _path_is_suffix(hit_path, path)
+                or hit_path.endswith("/" + basename)
+                or hit_path == basename
+            ):
+                ranked.append(hit)
+        if not ranked:
+            ranked = [hit for hit in hits if isinstance(hit, dict)]
+        ranked.sort(
+            key=lambda hit: (
+                _package_overlap_len(str(hit.get("path") or ""), path),
+                1 if _repo_names_match(str(hit.get("repo") or ""), repo) else 0,
+                1 if _path_is_suffix(str(hit.get("path") or ""), path) else 0,
+                float(hit.get("score") or 0.0),
+            ),
+            reverse=True,
+        )
+        best_overlap = _package_overlap_len(str(ranked[0].get("path") or ""), path) if ranked else 0
+        if best_overlap >= 3:
+            ranked = [
+                hit
+                for hit in ranked
+                if _package_overlap_len(str(hit.get("path") or ""), path) >= 3
+            ]
+        for hit in ranked:
+            hit_path = str(hit.get("path") or path)
+            hit_repo = str(hit.get("repo") or "") or repo
+            found = self._read_from_index_list(hit_path, hit_repo)
+            if found is not None:
+                return found
         return None
 
     def search_code(
@@ -398,6 +654,8 @@ class ZoektCodeAdapter:
         repo: str | None = None,
         start_line: int = 1,
         end_line: int | None = None,
+        focus_line: int | None = None,
+        methods: list[Any] | None = None,
     ) -> dict[str, Any]:
         """Read file: prefer Zoekt legacy HTTP GET /api/file; else local clone path from index list."""
         if not self._client:
@@ -411,55 +669,36 @@ class ZoektCodeAdapter:
         try:
             response = self._client.get(url, params=params)
             if response.status_code == 200:
-                content = response.text
-                lines = content.split("\n")
-                if end_line is None:
-                    end_line = len(lines)
-                selected = lines[max(0, start_line - 1) : end_line]
-                return {
-                    "path": path,
-                    "repo": repo,
-                    "content": "\n".join(selected),
-                    "total_lines": len(lines),
-                    "returned_lines": len(selected),
-                    "start_line": start_line,
-                    "end_line": min(end_line, len(lines)),
-                }
+                return _sliced_read_result(
+                    path=path,
+                    repo=repo,
+                    text=response.text,
+                    start_line=start_line,
+                    end_line=end_line,
+                    focus_line=focus_line,
+                    methods=methods,
+                )
         except Exception:
             pass
 
-        source = self._source_for_repo(repo, path=path)
-        if not source:
+        found = self._read_from_index_list(path, repo) or self._read_from_search_hit(path, repo)
+        if found is None:
             return {
                 "path": path,
                 "repo": repo,
                 "content": "",
                 "error": "file read via Zoekt /api/file unavailable and no local Source in index list",
             }
-
-        text = _read_from_source(source, path)
-        if text is None:
-            return {
-                "path": path,
-                "repo": repo,
-                "content": "",
-                "error": f"could not read {path!r} under {source}",
-            }
-
-        lines = text.split("\n")
-        if end_line is None:
-            end_line = len(lines)
-        selected = lines[max(0, start_line - 1) : end_line]
-        return {
-            "path": path,
-            "repo": repo,
-            "content": "\n".join(selected),
-            "total_lines": len(lines),
-            "returned_lines": len(selected),
-            "start_line": start_line,
-            "end_line": min(end_line, len(lines)),
-            "source": source,
-        }
+        text, resolved_path, resolved_repo = found
+        return _sliced_read_result(
+            path=resolved_path,
+            repo=resolved_repo or repo,
+            text=text,
+            start_line=start_line,
+            end_line=end_line,
+            focus_line=focus_line,
+            methods=methods,
+        )
 
     def _not_configured_read_file(self, path: str) -> dict[str, Any]:
         return {

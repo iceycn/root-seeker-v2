@@ -78,6 +78,28 @@ class TestCompositeProductionAdapter:
         assert result["ready"] is False
         assert result["indexes"] == []
 
+    def test_find_callers_accepts_symbol_when_call_chain_missing(self) -> None:
+        from mcp_servers.external.composite_adapter import _coerce_call_chain_arg
+
+        frames = _coerce_call_chain_arg(
+            {"symbol": "BizPracticeService.queryBizPracticeListByUserDepaGroupPost"}
+        )
+        assert frames == ["BizPracticeService.queryBizPracticeListByUserDepaGroupPost"]
+
+    def test_find_callers_keeps_planner_symbol_alongside_call_chain(self) -> None:
+        from mcp_servers.external.composite_adapter import _coerce_call_chain_arg
+
+        frames = _coerce_call_chain_arg(
+            {
+                "symbol": "AesTypeHandler.decryptField",
+                "call_chain": [
+                    "BizPracticeService.queryBizPracticeListByUserDepaGroupPost (BizPracticeService.java:2361)",
+                    "AesTypeHandler.decryptField (AesTypeHandler.java:53)",
+                ],
+            }
+        )
+        assert frames[0].startswith("AesTypeHandler.decryptField")
+
     def test_close_closes_all_adapters(self) -> None:
         """Test that close closes all sub-adapters."""
         adapter = CompositeProductionAdapter.from_env()

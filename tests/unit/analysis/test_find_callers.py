@@ -28,6 +28,24 @@ def test_parse_call_chain_frame() -> None:
     }
 
 
+def test_parse_call_chain_frame_accepts_symbol_without_file() -> None:
+    parsed = parse_call_chain_frame(
+        "BizPracticeService.queryBizPracticeListByUserDepaGroupPost"
+    )
+    assert parsed is not None
+    assert parsed["class_name"] == "BizPracticeService"
+    assert parsed["method_name"] == "queryBizPracticeListByUserDepaGroupPost"
+
+
+def test_parse_call_chain_frame_accepts_qualified_java_class() -> None:
+    parsed = parse_call_chain_frame(
+        "net.coolcollege.usercenter.facade.handler.AesTypeHandler.decryptField"
+    )
+    assert parsed is not None
+    assert parsed["class_name"].endswith("AesTypeHandler")
+    assert parsed["method_name"] == "decryptField"
+
+
 def test_build_caller_search_query() -> None:
     assert build_caller_search_query(method_name="saveProgress") == "saveProgress("
     assert (
@@ -88,3 +106,36 @@ def test_analyze_call_chain_with_mock_search() -> None:
     assert result["static_callers"]
     assert result["static_callers"][0]["runtime_match"] is True
     assert result["entrypoints"][0]["class_name"] == "StudyProjectController"
+
+
+def test_analyze_call_chain_uses_planner_symbol_not_wrapper_frame() -> None:
+    seen: list[str] = []
+
+    def graph_callers(symbol: str, *, repo=None, file=None, max_depth=5):  # noqa: ANN001
+        seen.append(symbol)
+        return {
+            "ok": True,
+            "static_callers": [
+                {
+                    "caller_class": "AesTypeHandler",
+                    "caller_method": "getNullableResult",
+                    "path": "AesTypeHandler.java",
+                    "line": 28,
+                }
+            ],
+        }
+
+    result = analyze_call_chain(
+        [
+            "BizPracticeService.queryBizPracticeListByUserDepaGroupPost (BizPracticeService.java:2361)",
+            "AesTypeHandler.decryptField (AesTypeHandler.java:53)",
+        ],
+        search_code=lambda *args, **kwargs: {"hits": []},
+        graph_callers=graph_callers,
+        target_symbol="net.coolcollege.usercenter.facade.handler.AesTypeHandler.decryptField",
+    )
+    assert result["target"]["method_name"] == "decryptField"
+    assert result["target"]["class_name"].endswith("AesTypeHandler")
+    assert seen
+    assert "decryptField" in seen[0]
+    assert "queryBizPracticeListByUserDepaGroupPost" not in seen[0]

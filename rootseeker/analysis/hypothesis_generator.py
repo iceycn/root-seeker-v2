@@ -138,6 +138,8 @@ class HypothesisGenerator:
         """Find evidence items matching a template's keywords."""
         matching: list[EvidenceItem] = []
         for item in pack.items:
+            if _is_unconfigured_evidence(item):
+                continue
             content = self._extract_content(item)
             content_lower = content.lower()
             if any(kw in content_lower for kw in template.keywords):
@@ -176,13 +178,9 @@ class HypothesisGenerator:
         # Build summary from top items' content
         summaries: list[str] = []
         for item in new_items[:3]:
-            content = item.content
-            if content:
-                # Extract first meaningful value from content
-                for v in content.values():
-                    if isinstance(v, str) and len(v) > 0:
-                        summaries.append(v[:50])
-                        break
+            snippet = _hypothesis_summary_snippet(item)
+            if snippet:
+                summaries.append(snippet)
         summary = "; ".join(summaries[:2]) if summaries else f"证据 {new_items[0].item_id}"
 
         statement = template.statement_template.format(summary=summary)
@@ -204,8 +202,9 @@ class HypothesisGenerator:
         """Generate hypotheses based on evidence types."""
         type_groups: dict[str, list[EvidenceItem]] = {}
         for item in pack.items:
-            if item.item_id not in used_items:
-                type_groups.setdefault(item.type.value, []).append(item)
+            if item.item_id in used_items or _is_unconfigured_evidence(item):
+                continue
+            type_groups.setdefault(item.type.value, []).append(item)
 
         hypotheses: list[Hypothesis] = []
         for evidence_type, items in type_groups.items():
@@ -228,3 +227,48 @@ class HypothesisGenerator:
             statement=f"疑似由 {first.source} 相关异常导致",
             evidence_item_ids=[i.item_id for i in pack.items[:3]],
         )
+
+
+def _is_unconfigured_evidence(item: EvidenceItem) -> bool:
+    content = item.content or {}
+    if content.get("configured") is False:
+        return True
+    metadata = content.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("configured") is False
+
+
+_SKIP_SNIPPET_KEYS = frozenset({"source", "backend", "engine", "index", "query_key", "tool_name"})
+_SKIP_SNIPPET_VALUES = frozenset({"zoekt", "gitnexus", "qdrant", "catalog", "ok", "true", "false"})
+
+
+def _usable_hypothesis_snippet(value: str, *, source: str = "") -> bool:
+    text = value.strip()
+    if not text or text.startswith("缺失字段仅表示"):
+        return False
+    lowered = text.lower()
+    if lowered in _SKIP_SNIPPET_VALUES:
+        return False
+    if lowered == str(source or "").strip().lower():
+        return False
+    return True
+
+
+def _hypothesis_summary_snippet(item: EvidenceItem) -> str:
+    content = item.content or {}
+    source = str(item.source or "")
+    extracted = content.get("extracted")
+    if isinstance(extracted, dict):
+        for key in ("exception_summary", "symptom", "code_path"):
+            value = extracted.get(key)
+            if isinstance(value, str) and _usable_hypothesis_snippet(value, source=source):
+                return value.strip()[:80]
+    for key in ("exception_summary", "summary", "path", "error"):
+        value = content.get(key)
+        if isinstance(value, str) and _usable_hypothesis_snippet(value, source=source):
+            return value.strip()[:80]
+    for key, value in content.items():
+        if str(key) in _SKIP_SNIPPET_KEYS:
+            continue
+        if isinstance(value, str) and _usable_hypothesis_snippet(value, source=source):
+            return value.strip()[:80]
+    return ""

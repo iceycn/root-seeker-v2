@@ -83,6 +83,30 @@ def test_rule_resolver_semantic_search_defaults() -> None:
     assert args["limit"] == 10
 
 
+def test_rule_resolver_find_callers_reads_call_chain_from_any_normalize_step() -> None:
+    resolver = RuleStepArgumentResolver()
+    args = resolver.resolve(
+        "code.find_callers",
+        CaseCreateRequest(
+            title="t",
+            symptom="AES decrypt failed",
+            service_name="training-manage-api",
+            source="x",
+        ),
+        step_outputs={
+            "llm-1-incident-normalize": {
+                "extracted": {
+                    "call_chain": [
+                        "AesTypeHandler.decryptField (AesTypeHandler.java:53)",
+                    ]
+                }
+            }
+        },
+    )
+    assert args["call_chain"][0].startswith("AesTypeHandler.decryptField")
+    assert "_skip_reason" not in args
+
+
 def test_rule_resolver_graph_prefers_inferred_service_over_code_search() -> None:
     resolver = RuleStepArgumentResolver()
     args = resolver.resolve(
@@ -122,4 +146,45 @@ def test_build_notify_args_uses_resolved_service_name() -> None:
         ),
         report=CaseReport(case_id="c1", title="t", summary="s", evidence_item_ids=[]),
     )["message"]
-    assert message.startswith("[training-manage-api]")
+    assert "training-manage-api" in message
+    assert "unknown-service" not in message
+
+
+def test_build_notify_args_formats_readable_incident_card() -> None:
+    from rootseeker.contracts.evidence import RootCauseConclusion
+    from rootseeker.contracts.report import CaseReport
+    from rootseeker.skill_runtime.rule_step_argument_resolver import build_notify_args
+
+    message = build_notify_args(
+        case_request=CaseCreateRequest(
+            title="错误排查请求",
+            symptom=(
+                "NOTIFY_SMOKE\n"
+                "java.lang.NullPointerException: cannot invoke because is null\n"
+                "\tat com.example.NotifySmoke.run(NotifySmoke.java:12)\n"
+            ),
+            service_name="unknown-service",
+            source="admin-error-chat",
+        ),
+        report=CaseReport(
+            case_id="case-9ecbac85",
+            title="错误排查请求",
+            summary="Collected 5 evidence item(s); generated 2 hypothesis(es).",
+            evidence_item_ids=["a", "b", "c", "d", "e"],
+            root_cause=RootCauseConclusion(
+                title="日志中发现错误: java.lang.NullPointerException: cannot invoke because is null; zoekt",
+                narrative="调用链停在 NotifySmoke.run，空指针未做空值保护。",
+                confidence=0.62,
+            ),
+        ),
+    )["message"]
+    assert "root_cause=" not in message
+    assert "evidence=" not in message
+    assert "unknown-service" not in message
+    assert "错误排查请求" not in message
+    assert "; zoekt" not in message
+    assert "Collected 5 evidence" not in message
+    assert "NullPointerException" in message
+    assert "NotifySmoke.run" in message
+    assert "case-9ecbac85" in message
+    assert "【RootSeeker】" in message

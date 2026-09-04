@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import Any, Protocol
 
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
 from rootseeker.contracts.case import CaseCreateRequest
@@ -23,6 +23,7 @@ class LlmToolPlanner(Protocol):
         playbook_text: str = "",
         skill_catalog: list[dict[str, str]] | None = None,
         allowed_tool_names: set[str] | None = None,
+        runtime_backends: dict[str, Any] | None = None,
     ) -> ToolPlanResult: ...
 
 
@@ -66,6 +67,7 @@ class OpenAICompatibleToolPlanner:
         playbook_text: str = "",
         skill_catalog: list[dict[str, str]] | None = None,
         allowed_tool_names: set[str] | None = None,
+        runtime_backends: dict[str, Any] | None = None,
     ) -> ToolPlanResult:
         allowed_tools = _allowed_tools(
             tools,
@@ -80,6 +82,7 @@ class OpenAICompatibleToolPlanner:
             playbook_text=playbook_text,
             skill_catalog=skill_catalog,
             allowed_tool_names=allowed_tool_names,
+            runtime_backends=runtime_backends,
         )
         result = self._client.complete(messages)
         if not result.ok:
@@ -128,6 +131,7 @@ def build_tool_planner_messages(
     playbook_text: str = "",
     skill_catalog: list[dict[str, str]] | None = None,
     allowed_tool_names: set[str] | None = None,
+    runtime_backends: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     if allowed_tool_names is not None:
         tools = [tool for tool in tools if tool.name in allowed_tool_names]
@@ -136,6 +140,7 @@ def build_tool_planner_messages(
         "max_tool_calls": max_tool_calls,
         "playbook": playbook_text,
         "skill_catalog": list(skill_catalog or []),
+        "runtime_backends": dict(runtime_backends or {}),
         "available_tools": [
             {
                 "name": tool.name,
@@ -171,6 +176,16 @@ def build_tool_planner_messages(
             "content": (
                 "你是 RootSeeker Agent 工具规划器。只能输出紧凑 JSON，不要 Markdown。"
                 "只能选择 available_tools 中的工具；执行会由系统通过 MCP Gateway 完成。"
+                "runtime_backends.configured=false 的工具不要占用 max_tool_calls。"
+                "若 available_tools 含 incident.normalize，必须作为第一步，"
+                "code.find_callers 必须 depends_on 该步。"
+                "code.read 的 path 必须是业务类文件，禁止 Spring/JDK 框架文件"
+                "（如 AbstractFallbackSQLExceptionTranslator.java、Base64.java）。"
+                "code.read 必须 depends_on incident.normalize，"
+                "并用 methods 传入该文件在调用链上的方法名，不要读整文件。"
+                "用堆栈里的包名定位仓库，不要默认当前服务名。"
+                "notify.send 由系统在报告生成后根据通知渠道开关决定是否发送，不要放入 tool plan。"
+                "未配置的 log/trace、catalog 不要用来填满配额。"
             ),
         },
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, sort_keys=True)},

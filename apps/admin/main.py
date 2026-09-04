@@ -22,6 +22,7 @@ from apps.admin.config_store import (
 )
 from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
 from apps.scheduler.main import run_job_now
+from rootseeker.agent_runtime.llm_tool_planner import OpenAICompatibleToolPlanner
 from rootseeker.agent_runtime.result import AgentRunResult
 from rootseeker.analysis.call_chain import (
     extract_call_chain_summary,
@@ -575,13 +576,16 @@ def _create_admin_runtime(
     )
     set_repo_sync_service(repo_sync_service)
     overlay = store.get_skill_overlay()
+    resolved_planner = (
+        tool_planner if tool_planner is not None else _tool_planner_from_admin_store(store)
+    )
     runtime = create_dev_runtime(
         runtime_root,
         repo_sync_service=repo_sync_service,
         node_role="admin",
         mcp_extra_env=store.mcp_runtime_env(),
         mcp_extra_env_provider=store.mcp_runtime_env,
-        tool_planner=tool_planner,
+        tool_planner=resolved_planner,
         skill_overlay=overlay,
         builtin_root=runtime_root / "skills" / "builtin",
         custom_root=config_root / "skills" / "custom",
@@ -1648,6 +1652,55 @@ def _error_chat_llm_timeout_seconds(store: AdminConfigStore, provider: dict[str,
     return 120.0
 
 
+def _llm_report_config_from_admin_store(store: AdminConfigStore) -> LlmReportConfig | None:
+    provider = _configured_ai_provider(store)
+    if provider is None:
+        return None
+    base_url = str(provider.get("base_url") or "").rstrip("/")
+    api_key = str(provider.get("api_key") or "")
+    model = _configured_ai_model(store, provider)
+    if not base_url or not api_key or not model:
+        return None
+    return LlmReportConfig(
+        base_url=base_url,
+        api_key=api_key,
+        model=str(model),
+        provider_name=str(provider.get("name") or provider.get("provider_type") or "admin"),
+        timeout_seconds=_error_chat_llm_timeout_seconds(store, provider),
+        temperature=0.2,
+        max_retries=1,
+    )
+
+
+def _tool_planner_from_admin_store(store: AdminConfigStore) -> OpenAICompatibleToolPlanner | None:
+    config = _llm_report_config_from_admin_store(store)
+    if config is None:
+        return None
+    settings = RootSeekerSettings()
+    return OpenAICompatibleToolPlanner(
+        config,
+        max_tool_calls=settings.agent_llm_max_tool_calls,
+        allow_write_tools=settings.agent_llm_allow_write_tools,
+    )
+
+
+ERROR_CHAT_ANALYSIS_SYSTEM_PROMPT = (
+    "你是 RootSeeker 错误排查助手。"
+    "请优先依据 exception_summary、call_chain（运行时调用链）"
+    "与 caller_trace（跨仓库静态 caller 追踪、HTTP 入口）判断根因，"
+    "再结合 case/report/evidence 摘要给出排查证据和下一步建议。"
+    "要求："
+    "1. 根因必须能被 exception_summary 或 call_chain 直接支持；把已证实与待验证分开写。"
+    "2. Java 若失败在 Base64.decode / IllegalArgumentException（wrong 4-byte ending unit），"
+    "直接原因是密文不是合法 Base64；不要把密钥或算法不一致写成并列根因"
+    "（那通常出现在 Cipher.doFinal / BadPadding 阶段）。"
+    "3. 用 call_chain 的包名定位代码归属，例如 net.coolcollege.usercenter.facade 属于"
+    "user-center 公共库，不要猜测成当前服务仓库。"
+    "4. 工具失败或未读到源码时，明确写结论来自堆栈，不要假装读过实现。"
+    "5. 下一步按证据优先级：先核对库里的字段原值，再考虑配置或密钥。"
+)
+
+
 def _run_llm_analysis(
     *,
     store: AdminConfigStore,
@@ -1681,12 +1734,7 @@ def _run_llm_analysis(
     messages = [
         {
             "role": "system",
-            "content": (
-                "你是 RootSeeker 错误排查助手。请优先依据 exception_summary、call_chain（运行时调用链）"
-                "与 caller_trace（跨仓库静态 caller 追踪、HTTP 入口）判断根因，"
-                "再结合 case/report/evidence 摘要给出排查证据和下一步建议。"
-                "不要依赖完整堆栈或工具原始输出。"
-            ),
+            "content": ERROR_CHAT_ANALYSIS_SYSTEM_PROMPT,
         },
         {
             "role": "user",
@@ -1790,9 +1838,15 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
     store = build_admin_config_store(config_root)
     _migrate_repo_remotes_git_username(store)
     _migrate_legacy_notification_callbacks(config_root, store)
+    explicit_tool_planner = tool_planner is not None
     runtime, repo_sync_service = _create_admin_runtime(
         config_root, store, tool_planner=tool_planner
     )
+
+    def _refresh_runtime_tool_planner() -> None:
+        if explicit_tool_planner:
+            return
+        runtime.tool_planner = _tool_planner_from_admin_store(store)
     history_store = build_error_history_store(config_root)
     _load_admin_config(runtime, store, repo_sync_service)
 
@@ -1930,6 +1984,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
             settings["ROOTSEEKER_EMBEDDING_DIMENSION"] = req.embedding_dimension
         if settings:
             store.update_settings(settings)
+        _refresh_runtime_tool_planner()
         return {"ok": True, "provider": payload, "settings": store.get_settings()}
 
     @app.post("/api/ai-providers/{name}/default")
@@ -1940,6 +1995,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
         if name not in known:
             raise HTTPException(status_code=404, detail=f"AI provider not found: {name}")
         settings = store.set_default_ai_provider(name)
+        _refresh_runtime_tool_planner()
         return {"ok": True, "default_provider": name, "settings": settings}
 
     @app.post("/api/ai-providers/{name}/models/{model:path}/switch")
@@ -1950,11 +2006,13 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
         if name not in known:
             raise HTTPException(status_code=404, detail=f"AI provider not found: {name}")
         settings = store.set_default_ai_model(name, model)
+        _refresh_runtime_tool_planner()
         return {"ok": True, "default_provider": name, "default_model": model, "settings": settings}
 
     @app.delete("/api/ai-providers/{name}")
     def delete_ai_provider(name: str) -> dict[str, Any]:
         store.delete_ai_provider(name)
+        _refresh_runtime_tool_planner()
         return {"ok": True, "name": name}
 
     @app.post("/api/ai-providers/{name}/test")

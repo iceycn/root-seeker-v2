@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from rootseeker.analysis.call_chain import extract_exception_summary
 from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 from rootseeker.code_index.search_query import build_zoekt_search_query
 from rootseeker.contracts.case import CaseCreateRequest
@@ -98,7 +99,7 @@ class RuleStepArgumentResolver:
                 _path_from_code_search(step_outputs)
                 or metadata.get("code_path")
                 or _path_from_normalized_input(step_outputs)
-                or _path_from_symptom(symptom)
+                or _preferred_code_read_path(symptom)
             )
             if not path:
                 return {
@@ -108,11 +109,20 @@ class RuleStepArgumentResolver:
             repo = service_name or _repo_from_code_search(step_outputs)
             if repo:
                 payload["repo"] = repo
+            from rootseeker.analysis.code_slice import chain_methods_for_path
+
+            specs = chain_methods_for_path(str(path), _call_chain_for_code_read(step_outputs, symptom))
+            if specs:
+                payload["methods"] = [item["name"] for item in specs]
+            line = int(specs[0].get("line") or 0) if specs else 0
+            if not line:
+                line = _fault_line_from_outputs(step_outputs, str(path)) or 0
+            if line:
+                payload["line"] = line
             return payload
         if action == "code.find_callers":
-            extracted = step_outputs.get("normalize-incident", {}).get("extracted")
-            call_chain = extracted.get("call_chain") if isinstance(extracted, dict) else None
-            if not isinstance(call_chain, list) or not call_chain:
+            call_chain = _call_chain_from_outputs(step_outputs)
+            if not call_chain:
                 return {"_skip_reason": "No call_chain from normalize-incident."}
             payload = {
                 "call_chain": call_chain,
@@ -151,38 +161,129 @@ class RuleStepArgumentResolver:
 
 
 def build_notify_args(*, case_request: CaseCreateRequest, report: CaseReport) -> dict[str, Any]:
-    cause_title = report.root_cause.title if report.root_cause is not None else "pending"
     channel = case_request.metadata.get("notify_channel", "webhook")
-    service_name = resolve_service_name(
-        case_request.service_name,
-        text=case_request.symptom,
-        default=case_request.service_name or "unknown-service",
-    )
     return {
         "channel": channel,
-        "message": (
-            f"[{service_name}] {case_request.title} | "
-            f"root_cause={cause_title} | evidence={len(report.evidence_item_ids)}"
-        ),
+        "message": _build_notify_message(case_request=case_request, report=report),
     }
 
 
+_GENERIC_CASE_TITLES = frozenset({"", "t", "错误排查请求", "error triage", "case"})
+_INDEXER_TAIL_RE = re.compile(
+    r"(?:\s*;\s*)+(?:zoekt|gitnexus|qdrant|catalog)"
+    r"(?:\s*;\s*(?:zoekt|gitnexus|qdrant|catalog))*\s*$",
+    re.IGNORECASE,
+)
+_LOG_ERROR_PREFIX_RE = re.compile(r"^日志中发现错误:\s*")
+
+
+def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport) -> str:
+    exception = extract_exception_summary(case_request.symptom, max_chars=180)
+    cause = _clean_cause_title(
+        report.root_cause.title if report.root_cause is not None else "",
+        exception=exception,
+    )
+    headline = exception or cause or _usable_case_title(case_request.title) or "排查完成"
+    service = resolve_service_name(
+        case_request.service_name,
+        text=case_request.symptom,
+        default="",
+    )
+    if is_placeholder_service_name(service):
+        service = ""
+
+    lines = [f"【RootSeeker】{headline}"]
+    if service:
+        lines.append(f"服务：{service}")
+    if cause and cause not in headline and headline not in cause:
+        lines.append(f"结论：{cause}")
+    narrative = ""
+    if report.root_cause is not None:
+        narrative = str(report.root_cause.narrative or "").strip()
+    if narrative and narrative not in headline and narrative not in (cause or ""):
+        if len(narrative) > 280:
+            narrative = narrative[:277] + "..."
+        lines.append(f"说明：{narrative}")
+    confidence = report.root_cause.confidence if report.root_cause is not None else 0.0
+    if confidence > 0:
+        lines.append(f"置信度：{int(round(confidence * 100))}%")
+    lines.append(f"Case：{report.case_id}")
+    return "\n".join(lines)
+
+
+def _usable_case_title(title: str) -> str:
+    text = str(title or "").strip()
+    if text.lower() in _GENERIC_CASE_TITLES or text in _GENERIC_CASE_TITLES:
+        return ""
+    return text
+
+
+def _clean_cause_title(title: str, *, exception: str = "") -> str:
+    text = _INDEXER_TAIL_RE.sub("", str(title or "").strip()).strip(" ;")
+    text = _LOG_ERROR_PREFIX_RE.sub("", text).strip()
+    if not text:
+        return ""
+    if exception and (text == exception or exception.startswith(text) or text.startswith(exception)):
+        return ""
+    return text
+
+
+def _normalize_payload(step_outputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    preferred: dict[str, Any] | None = None
+    fallback: dict[str, Any] | None = None
+    for step_id, payload in step_outputs.items():
+        if not isinstance(payload, dict):
+            continue
+        extracted = payload.get("extracted")
+        has_extracted = isinstance(extracted, dict)
+        has_case = isinstance(payload.get("case_request"), dict)
+        if not has_extracted and not has_case:
+            continue
+        if fallback is None:
+            fallback = payload
+        if "normalize" in str(step_id).lower() or has_case:
+            preferred = payload
+            break
+    return preferred or fallback or {}
+
+
+def _call_chain_from_outputs(step_outputs: dict[str, dict[str, Any]]) -> list[str]:
+    extracted = _normalize_payload(step_outputs).get("extracted")
+    if not isinstance(extracted, dict):
+        return []
+    call_chain = extracted.get("call_chain")
+    if not isinstance(call_chain, list):
+        return []
+    return [str(item).strip() for item in call_chain if str(item).strip()]
+
+
+def _call_chain_for_code_read(step_outputs: dict[str, dict[str, Any]], symptom: str) -> list[str]:
+    chain = _call_chain_from_outputs(step_outputs)
+    if chain:
+        return chain
+    from rootseeker.analysis.call_chain import extract_call_chain_summary
+
+    return extract_call_chain_summary(str(symptom or ""))
+
+
 def _normalized_case_request(step_outputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    value = step_outputs.get("normalize-incident", {}).get("case_request")
+    value = _normalize_payload(step_outputs).get("case_request")
     return value if isinstance(value, dict) else {}
 
 
 def _symbol_from_call_chain(step_outputs: dict[str, dict[str, Any]]) -> str | None:
-    extracted = step_outputs.get("normalize-incident", {}).get("extracted")
-    if not isinstance(extracted, dict):
+    call_chain = _call_chain_from_outputs(step_outputs)
+    if not call_chain:
         return None
-    call_chain = extracted.get("call_chain")
-    if not isinstance(call_chain, list) or not call_chain:
-        return None
-    first = str(call_chain[0]).strip()
-    if not first:
-        return None
+    first = call_chain[0]
     return first.split(" (", 1)[0].strip() or None
+
+
+def _path_from_normalized_input(step_outputs: dict[str, dict[str, Any]]) -> str | None:
+    extracted = _normalize_payload(step_outputs).get("extracted")
+    if isinstance(extracted, dict) and extracted.get("code_path"):
+        return str(extracted["code_path"])
+    return None
 
 
 def _symbol_from_symptom(symptom: str) -> str | None:
@@ -190,13 +291,6 @@ def _symbol_from_symptom(symptom: str) -> str | None:
     match = re.search(r"\b([A-Z][\w$]+)\.([a-zA-Z_][\w$]*)\b", text)
     if match:
         return f"{match.group(1)}.{match.group(2)}"
-    return None
-
-
-def _path_from_normalized_input(step_outputs: dict[str, dict[str, Any]]) -> str | None:
-    extracted = step_outputs.get("normalize-incident", {}).get("extracted")
-    if isinstance(extracted, dict) and extracted.get("code_path"):
-        return str(extracted["code_path"])
     return None
 
 
@@ -224,9 +318,13 @@ def _zoekt_search_query_from_symptom(symptom: str) -> str:
     return build_zoekt_search_query(symptom)
 
 
-def _path_from_symptom(symptom: str) -> str | None:
-    match = re.search(
-        r"([A-Za-z0-9_./-]+\.(?:java|kt|py|go|ts|tsx|js|jsx|cs|rb|php|scala|rs|cpp|c|h))(?::\d+)?",
-        symptom,
-    )
-    return match.group(1) if match else None
+def _preferred_code_read_path(symptom: str) -> str | None:
+    from rootseeker.analysis.call_chain import extract_code_path
+
+    return extract_code_path(str(symptom or ""))
+
+
+def _fault_line_from_outputs(step_outputs: dict[str, dict[str, Any]], path: str) -> int | None:
+    from rootseeker.analysis.code_slice import fault_line_for_path
+
+    return fault_line_for_path(path, _call_chain_from_outputs(step_outputs))

@@ -17,6 +17,7 @@ __all__ = [
     "MysqlErrorChatHistoryStore",
     "SqliteErrorChatHistoryStore",
     "build_error_history_store",
+    "sort_error_history_items",
 ]
 
 
@@ -28,6 +29,11 @@ class ErrorChatHistoryStore(Protocol):
     def update(self, item_id: str, patch: dict[str, Any]) -> dict[str, Any] | None: ...
 
     def clear(self) -> None: ...
+
+
+def sort_error_history_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sort history in process memory so MySQL does not filesort huge JSON payloads."""
+    return sorted(items, key=lambda item: str(item.get("created_at") or ""))
 
 
 class FileErrorChatHistoryStore:
@@ -135,6 +141,8 @@ class SqliteErrorChatHistoryStore:
 
 
 class MysqlErrorChatHistoryStore:
+    LIST_SQL = "SELECT payload FROM error_chat_history"
+
     def __init__(self, config: MysqlConnectConfig) -> None:
         self.config = config
         self._init()
@@ -158,9 +166,7 @@ class MysqlErrorChatHistoryStore:
     def list_items(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT payload FROM error_chat_history ORDER BY created_at ASC"
-                )
+                cur.execute(self.LIST_SQL)
                 rows = cur.fetchall()
         items: list[dict[str, Any]] = []
         for row in rows:
@@ -170,7 +176,7 @@ class MysqlErrorChatHistoryStore:
             if isinstance(payload, str):
                 payload = json.loads(payload)
             items.append(payload)
-        return items
+        return sort_error_history_items(items)
 
     def append(self, item: dict[str, Any]) -> dict[str, Any]:
         payload = dict(item)

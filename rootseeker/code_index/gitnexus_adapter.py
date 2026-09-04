@@ -85,6 +85,29 @@ class GitNexusAdapter:
         if not sym:
             return {"ok": False, "error": "symbol is required"}
         resolved_repo = self._canonical_repo(repo)
+        result = self._context_once(sym, repo=resolved_repo, original_repo=repo, file=file, uid=uid)
+        if resolved_repo and not (
+            _graph_hit_usable(result.get("result"))
+            and _result_matches_symbol(result.get("result"), sym)
+        ):
+            fallback = self._context_once(sym, repo=None, original_repo=None, file=file, uid=uid)
+            if _graph_hit_usable(fallback.get("result")) and _result_matches_symbol(
+                fallback.get("result"), sym
+            ):
+                fallback["repo_fallback"] = True
+                return fallback
+        return result
+
+    def _context_once(
+        self,
+        sym: str,
+        *,
+        repo: str | None,
+        original_repo: str | None,
+        file: str | None,
+        uid: str | None,
+    ) -> dict[str, Any]:
+        resolved_repo = repo
         last: dict[str, Any] | None = None
         for candidate in _symbol_candidates(sym):
             result = self._wrap(
@@ -96,10 +119,10 @@ class GitNexusAdapter:
                     cwd=self._cwd_for_repo(resolved_repo),
                 ),
                 symbol=candidate,
-                repo=resolved_repo or repo,
+                repo=resolved_repo or original_repo,
             )
             if _repo_missing(result):
-                alt = self._canonical_repo(repo, force_refresh=True)
+                alt = self._canonical_repo(original_repo or resolved_repo, force_refresh=True)
                 if alt and alt != resolved_repo:
                     resolved_repo = alt
                     result = self._wrap(
@@ -116,12 +139,14 @@ class GitNexusAdapter:
             result = self._resolve_ambiguous(
                 result,
                 symbol=candidate,
-                repo=resolved_repo or repo,
+                repo=resolved_repo or original_repo,
                 file=file,
                 kind="context",
             )
             last = result
-            if _graph_hit_usable(result.get("result")):
+            if _graph_hit_usable(result.get("result")) and _result_matches_symbol(
+                result.get("result"), sym
+            ):
                 return result
         return last or {"ok": False, "error": "symbol is required", "result": None}
 
@@ -142,6 +167,47 @@ class GitNexusAdapter:
             return {"ok": False, "error": "symbol is required"}
         direction_norm = str(direction or "upstream").strip().lower() or "upstream"
         resolved_repo = self._canonical_repo(repo)
+        result = self._impact_once(
+            sym,
+            direction_norm=direction_norm,
+            repo=resolved_repo,
+            original_repo=repo,
+            file=file,
+            uid=uid,
+            kind=kind,
+        )
+        if resolved_repo and not (
+            _graph_hit_usable(result.get("result"))
+            and _result_matches_symbol(result.get("result"), sym)
+        ):
+            fallback = self._impact_once(
+                sym,
+                direction_norm=direction_norm,
+                repo=None,
+                original_repo=None,
+                file=file,
+                uid=uid,
+                kind=kind,
+            )
+            if _graph_hit_usable(fallback.get("result")) and _result_matches_symbol(
+                fallback.get("result"), sym
+            ):
+                fallback["repo_fallback"] = True
+                return fallback
+        return result
+
+    def _impact_once(
+        self,
+        sym: str,
+        *,
+        direction_norm: str,
+        repo: str | None,
+        original_repo: str | None,
+        file: str | None,
+        uid: str | None,
+        kind: str | None,
+    ) -> dict[str, Any]:
+        resolved_repo = repo
         last: dict[str, Any] | None = None
         for candidate in _symbol_candidates(sym):
             result = self._wrap(
@@ -185,7 +251,9 @@ class GitNexusAdapter:
                 direction=direction_norm,
             )
             last = result
-            if _graph_hit_usable(result.get("result")):
+            if _graph_hit_usable(result.get("result")) and _result_matches_symbol(
+                result.get("result"), sym
+            ):
                 return result
         return last or {"ok": False, "error": "symbol is required", "result": None}
 
@@ -377,22 +445,35 @@ def _repo_missing(payload: dict[str, Any]) -> bool:
     return "not found" in blob and "available" in blob
 
 
+_REPO_NAME_SUFFIXES = ("-service", "-api", "-svc", "-server")
+
+
+def _repo_match_aliases(requested: str) -> list[str]:
+    req_l = requested.lower()
+    aliases = [req_l]
+    for suffix in _REPO_NAME_SUFFIXES:
+        if req_l.endswith(suffix) and len(req_l) > len(suffix) + 1:
+            stem = req_l[: -len(suffix)]
+            if stem and stem not in aliases:
+                aliases.append(stem)
+    return aliases
+
+
 def _match_gitnexus_repo(requested: str, available: list[str]) -> str | None:
     req = requested.strip()
     if not req or not available:
         return None
     lowered = {name: name.lower() for name in available}
-    req_l = req.lower()
-    for name, low in lowered.items():
-        if low == req_l:
-            return name
-    for name, low in lowered.items():
-        if low.endswith("__" + req_l) or low.endswith("/" + req_l) or low.endswith("\\" + req_l):
-            return name
-    # Prefer the shortest name that contains the service token.
-    contains = [name for name, low in lowered.items() if req_l in low]
-    if contains:
-        return sorted(contains, key=len)[0]
+    for alias in _repo_match_aliases(req):
+        for name, low in lowered.items():
+            if low == alias:
+                return name
+        for name, low in lowered.items():
+            if low.endswith("__" + alias) or low.endswith("/" + alias) or low.endswith("\\" + alias):
+                return name
+        contains = [name for name, low in lowered.items() if alias in low]
+        if contains:
+            return sorted(contains, key=len)[0]
     return None
 
 
@@ -509,13 +590,58 @@ def _symbol_candidates(symbol: str) -> list[str]:
     add(value)
     if "(" in value:
         add(value.split("(", 1)[0])
-    # Class.method → also try method and Class
     parts = [p for p in _SYMBOL_SPLIT_RE.split(value) if p]
     if len(parts) >= 2:
-        add(parts[-1])
-        add(".".join(parts[-2:]))
-        add(parts[-2])
+        last = parts[-1]
+        prev = parts[-2]
+        add(last)
+        if prev[:1].isupper():
+            add(".".join((prev, last)))
+            add(prev)
     return out
+
+
+def _requested_class_token(symbol: str) -> str | None:
+    parts = [part for part in _SYMBOL_SPLIT_RE.split(str(symbol or "")) if part]
+    classes = [part for part in parts if part[:1].isupper() and part[:1].isalpha()]
+    return classes[-1] if classes else None
+
+
+def _resolved_symbol_blob(data: Any) -> str:
+    if not isinstance(data, dict):
+        return ""
+    parts: list[str] = []
+    for key in ("symbol", "target"):
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            parts.extend(
+                [
+                    str(nested.get("uid") or ""),
+                    str(nested.get("name") or ""),
+                    str(nested.get("filePath") or nested.get("file") or ""),
+                ]
+            )
+        elif nested:
+            parts.append(str(nested))
+    if data.get("uid"):
+        parts.extend(
+            [
+                str(data.get("uid") or ""),
+                str(data.get("name") or ""),
+                str(data.get("filePath") or data.get("file") or ""),
+            ]
+        )
+    return " ".join(parts)
+
+
+def _result_matches_symbol(data: Any, symbol: str) -> bool:
+    class_name = _requested_class_token(symbol)
+    if not class_name or len(class_name) < 3:
+        return True
+    blob = _resolved_symbol_blob(data)
+    if not blob.strip():
+        return True
+    return class_name.lower() in blob.lower()
 
 
 def _extract_callers_from_impact(data: Any, *, max_depth: int) -> list[dict[str, Any]]:

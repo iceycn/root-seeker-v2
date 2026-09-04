@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from rootseeker.analysis.log_text import unwrap_embedded_log_text
+
 __all__ = [
     "PLACEHOLDER_SERVICE_NAMES",
     "extract_service_name_from_text",
@@ -28,6 +30,12 @@ PLACEHOLDER_SERVICE_NAMES = frozenset(
 _BRACKET_AFTER_TS_RE = re.compile(
     r"(?m)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+"
     r"\[([A-Za-z][\w.-]{1,96})\]"
+)
+
+# Timestamp + bare service + [thread]  (SOFA / some Log4j layouts)
+_BARE_SERVICE_AFTER_TS_RE = re.compile(
+    r"(?m)^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?\s+"
+    r"([A-Za-z][\w.-]*(?:-api|-service|-svc|-server|-web|-gateway|-admin|-worker|-job)[\w.-]*)\s+\["
 )
 
 # Explicit key=value / key: value forms
@@ -73,11 +81,16 @@ def is_placeholder_service_name(value: str | None) -> bool:
 
 def extract_service_name_from_text(text: str | None) -> str | None:
     """Best-effort parse of a service name from log / stack / alert text."""
-    raw = str(text or "")
+    raw = unwrap_embedded_log_text(text)
     if not raw.strip():
         return None
 
     for match in _BRACKET_AFTER_TS_RE.finditer(raw):
+        candidate = _clean_candidate(match.group(1))
+        if candidate:
+            return candidate
+
+    for match in _BARE_SERVICE_AFTER_TS_RE.finditer(raw):
         candidate = _clean_candidate(match.group(1))
         if candidate:
             return candidate

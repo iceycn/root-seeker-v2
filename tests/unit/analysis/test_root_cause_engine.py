@@ -39,6 +39,69 @@ def test_hypothesis_generator_empty_pack() -> None:
     assert "证据不足" in hypotheses[0].statement
 
 
+def test_hypothesis_generator_ignores_unconfigured_backends() -> None:
+    generator = HypothesisGenerator()
+    pack = EvidencePack(case_id="case", summary="pack")
+    pack.items.append(
+        EvidenceItem(
+            item_id="log-empty",
+            type=EvidenceType.LOG,
+            source="log.query_by_trace_id",
+            content={
+                "records": [],
+                "query_key": "sls:unconfigured:x",
+                "metadata": {"configured": False, "error": "SLS is not configured: missing keys"},
+            },
+        )
+    )
+    pack.items.append(
+        EvidenceItem(
+            item_id="norm",
+            type=EvidenceType.OTHER,
+            source="incident.normalize",
+            content={
+                "notes": "缺失字段仅表示未知输入，不代表系统健康。",
+                "extracted": {"exception_summary": "AES解密失败: Base64 ending unit"},
+            },
+        )
+    )
+    hypotheses = generator.generate(pack)
+    blob = " ".join(h.statement for h in hypotheses)
+    assert "SLS is not configured" not in blob
+    assert "缺失字段仅表示" not in blob
+    assert "AES解密失败" in blob
+    assert "AES解密失败" in blob
+
+
+def test_hypothesis_generator_skips_indexer_source_snippets() -> None:
+    generator = HypothesisGenerator()
+    pack = EvidencePack(case_id="case", summary="pack")
+    pack.items.append(
+        EvidenceItem(
+            item_id="norm",
+            type=EvidenceType.OTHER,
+            source="incident.normalize",
+            content={
+                "extracted": {
+                    "exception_summary": "java.lang.NullPointerException: cannot invoke because is null",
+                }
+            },
+        )
+    )
+    pack.items.append(
+        EvidenceItem(
+            item_id="code",
+            type=EvidenceType.CODE,
+            source="code.search",
+            content={"source": "zoekt", "error": "zoekt", "notes": "code search timeout"},
+        )
+    )
+    blob = " ".join(h.statement for h in generator.generate(pack))
+    assert "NullPointerException" in blob
+    assert "; zoekt" not in blob
+    assert blob.lower().count("zoekt") == 0
+
+
 def test_hypothesis_generator_log_error() -> None:
     """Test generator finds log error hypothesis."""
     generator = HypothesisGenerator()

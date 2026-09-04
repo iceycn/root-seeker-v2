@@ -166,9 +166,24 @@ class CompositeProductionAdapter:
         """Search code chunks via Qdrant-backed repo sync service."""
         return self.repo_sync_service.semantic_search(query=query, repo_name=repo_name, limit=limit)
 
-    def read_code(self, path: str, repo: str | None = None) -> dict[str, Any]:
+    def read_code(
+        self,
+        path: str,
+        repo: str | None = None,
+        start_line: int = 1,
+        end_line: int | None = None,
+        focus_line: int | None = None,
+        methods: list[Any] | None = None,
+    ) -> dict[str, Any]:
         """Read file via Zoekt."""
-        return self._zoekt.read_file(path, repo=repo)
+        return self._zoekt.read_file(
+            path,
+            repo=repo,
+            start_line=start_line,
+            end_line=end_line,
+            focus_line=focus_line,
+            methods=methods,
+        )
 
     def find_callers(self, args: dict[str, Any]) -> dict[str, Any]:
         """Trace method callers: GitNexus KG first, Zoekt heuristics fallback."""
@@ -213,6 +228,7 @@ class CompositeProductionAdapter:
             service_name=str(args.get("service_name") or "") or None,
             max_depth=int(args.get("max_depth", 5)),
             limit_per_query=int(args.get("limit", 30)),
+            target_symbol=str(args.get("symbol") or "").strip() or None,
         )
 
     def graph_impact(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -331,12 +347,38 @@ class CompositeProductionAdapter:
 
 def _coerce_call_chain_arg(args: dict[str, Any]) -> list[str]:
     raw = args.get("call_chain")
+    frames: list[str] = []
     if isinstance(raw, list):
-        return [str(item).strip() for item in raw if str(item).strip()]
+        frames = [str(item).strip() for item in raw if str(item).strip()]
+    symbol = str(args.get("symbol") or "").strip()
+    if frames:
+        return _rotate_chain_to_symbol(frames, symbol) if symbol else frames
+    if symbol:
+        return [symbol]
     class_name = str(args.get("class_name") or "").strip()
     method_name = str(args.get("method_name") or "").strip()
     file_path = str(args.get("file_path") or "").strip()
     line = args.get("line")
     if class_name and method_name and file_path and line:
         return [f"{class_name}.{method_name} ({file_path}:{int(line)})"]
+    if class_name and method_name:
+        return [f"{class_name}.{method_name}"]
     return []
+
+
+def _rotate_chain_to_symbol(frames: list[str], symbol: str) -> list[str]:
+    from rootseeker.analysis.find_callers import parse_call_chain_frame
+
+    wanted = parse_call_chain_frame(symbol)
+    if wanted is None:
+        return frames
+    want_class = str(wanted.get("class_name") or "").rsplit(".", 1)[-1]
+    want_method = str(wanted.get("method_name") or "")
+    for index, frame in enumerate(frames):
+        parsed = parse_call_chain_frame(frame)
+        if parsed is None:
+            continue
+        have_class = str(parsed.get("class_name") or "").rsplit(".", 1)[-1]
+        if have_class == want_class and str(parsed.get("method_name") or "") == want_method:
+            return [frames[index], *[item for i, item in enumerate(frames) if i != index]]
+    return [symbol, *frames]
