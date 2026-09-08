@@ -149,7 +149,43 @@ def test_complete_retries_once_on_read_timeout() -> None:
     assert attempts["count"] == 2
 
 
-def test_build_case_report_marks_llm_disabled() -> None:
+def test_build_case_report_prefers_rule_problem_summary(monkeypatch) -> None:
+    from rootseeker.contracts.evidence import EvidenceItem, EvidencePack, EvidenceType
+    from rootseeker.infra_core.settings import RootSeekerSettings
+
+    pack = EvidencePack(case_id="case-ps", summary="pack")
+    pack.items.append(
+        EvidenceItem(
+            item_id="norm",
+            type=EvidenceType.OTHER,
+            source="incident.normalize",
+            content={
+                "extracted": {
+                    "service_name": "knowledge-api-service",
+                    "exception_summary": (
+                        "net.coolcollege.platform.cool.common.error.exception."
+                        "BusinessException: rpc interface error!"
+                    ),
+                    "call_chain": [
+                        "CourseWorkflowMessageListener.sendCourseApprovalOAMessage "
+                        "(CourseWorkflowMessageListener.java:266)"
+                    ],
+                }
+            },
+        )
+    )
+    report = build_case_report(
+        case_id="case-ps",
+        title="错误排查请求",
+        pack=pack,
+        service_name="knowledge-api-service",
+        settings=RootSeekerSettings(llm_enabled=False),
+    )
+    assert "CourseWorkflowMessageListener.sendCourseApprovalOAMessage" in report.summary
+    assert "BusinessException: rpc interface error!" in report.summary
+    assert report.metadata.get("problem_summary") == report.summary
+    assert not report.summary.startswith("Collected ")
+
     report = build_case_report(
         case_id="case-disabled",
         title="No LLM",

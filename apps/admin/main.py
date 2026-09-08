@@ -30,6 +30,7 @@ from rootseeker.analysis.call_chain import (
     merge_call_chain_summaries,
 )
 from rootseeker.analysis.llm_report import LlmReportConfig, OpenAICompatibleReportClient
+from rootseeker.analysis.problem_summary import build_problem_summary
 from rootseeker.analysis.service_identity import resolve_service_name
 from rootseeker.bootstrap import DevRuntime, create_dev_runtime
 from rootseeker.channel_routing.models import OutboundTarget
@@ -1767,6 +1768,18 @@ def _agent_flow_run_id(result: AgentRunResult) -> str:
     return ""
 
 
+def _error_chat_problem_summary(*, report: Any, content: str, service_name: str) -> str:
+    metadata = getattr(report, "metadata", None) or {}
+    if isinstance(metadata, dict):
+        stored = str(metadata.get("problem_summary") or "").strip()
+        if stored:
+            return stored
+    summary = str(getattr(report, "summary", "") or "").strip()
+    if summary and not summary.startswith("Collected "):
+        return summary
+    return build_problem_summary(symptom=content, service_name=service_name)
+
+
 def _admin_flow_view(runtime: DevRuntime, result: Any) -> Any:
     """Normalize default-flow or agent-flow results for admin helpers."""
     from types import SimpleNamespace
@@ -2444,6 +2457,11 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
                 "runner": flow_view.runner,
                 "evidence_count": len(flow_view.evidence_pack.items),
                 "evidence_summary": flow_view.evidence_pack.summary,
+                "problem_summary": _error_chat_problem_summary(
+                    report=flow_view.report,
+                    content=req.content,
+                    service_name=service_name,
+                ),
                 "evidence_items": [
                     evidence.model_dump(mode="json") for evidence in flow_view.evidence_pack.items
                 ],

@@ -346,7 +346,12 @@ class AttemptRunner:
         case.updated_at = utc_now()
         self.flow_runtime.runtime.case_store.put(case)
         self.flow_runtime.runtime.evidence_store.put_pack(pack)
-        report = build_case_report(case_id=case.case_id, title=case.title, pack=pack)
+        report = build_case_report(
+            case_id=case.case_id,
+            title=case.title,
+            pack=pack,
+            service_name=case.service_name or case_request.service_name,
+        )
         notify_result = None
         if "notify.send" in allowed_tool_names:
             notify_result = self._send_report_notification(

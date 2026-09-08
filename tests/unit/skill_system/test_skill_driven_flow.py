@@ -188,6 +188,8 @@ def test_build_notify_args_formats_readable_incident_card() -> None:
     assert "NotifySmoke.run" in message
     assert "case-9ecbac85" in message
     assert "【RootSeeker】" in message
+    assert "问题：" in message
+    assert "NotifySmoke.run" in message.split("问题：", 1)[1]
 
 
 def test_build_notify_args_skips_procedural_narrative() -> None:

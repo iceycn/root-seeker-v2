@@ -179,6 +179,8 @@ _PROCEDURAL_NARRATIVE_RE = re.compile(r"共分析|分析已收敛|上下文片�
 
 
 def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport) -> str:
+    from rootseeker.analysis.problem_summary import build_problem_summary
+
     exception = extract_exception_summary(case_request.symptom, max_chars=180)
     cause = _clean_cause_title(
         report.root_cause.title if report.root_cause is not None else "",
@@ -193,10 +195,30 @@ def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport
     if is_placeholder_service_name(service):
         service = ""
 
+    report_summary = str(report.summary or "").strip()
+    problem = str((report.metadata or {}).get("problem_summary") or "").strip()
+    if not problem and report_summary and not report_summary.startswith("Collected "):
+        # Pre-LLM reports may store the rule summary directly on summary.
+        problem = report_summary
+    if not problem:
+        problem = build_problem_summary(
+            symptom=case_request.symptom,
+            service_name=service,
+            exception=exception,
+        )
+
     lines = [f"【RootSeeker】{headline}"]
+    if problem and _should_include_problem_summary(problem, headline=headline):
+        lines.append(f"问题：{problem}")
     if service:
         lines.append(f"服务：{service}")
-    if cause and cause not in headline and headline not in cause:
+    if (
+        cause
+        and cause not in headline
+        and headline not in cause
+        and cause not in problem
+        and problem not in cause
+    ):
         lines.append(f"结论：{cause}")
     narrative = ""
     if report.root_cause is not None:
@@ -205,6 +227,7 @@ def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport
         narrative
         and narrative not in headline
         and narrative not in (cause or "")
+        and narrative not in problem
         and not _PROCEDURAL_NARRATIVE_RE.search(narrative)
     ):
         if len(narrative) > 280:
@@ -215,6 +238,19 @@ def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport
         lines.append(f"置信度：{int(round(confidence * 100))}%")
     lines.append(f"Case：{report.case_id}")
     return "\n".join(lines)
+
+
+def _should_include_problem_summary(problem: str, *, headline: str) -> bool:
+    text = problem.strip()
+    head = headline.strip()
+    if not text:
+        return False
+    if text == head:
+        return False
+    if text == f"抛出 {head}":
+        return False
+    return True
+
 
 
 def _usable_case_title(title: str) -> str:

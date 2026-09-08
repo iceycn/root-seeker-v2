@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from rootseeker.analysis.evidence_expander import EvidenceExpander, McpGatewayEvidenceExpander
 from rootseeker.analysis.llm_report import (
     LlmReportConfig,
     LlmReportResult,
     OpenAICompatibleReportClient,
     apply_llm_report_result,
 )
-from rootseeker.analysis.evidence_expander import EvidenceExpander, McpGatewayEvidenceExpander
+from rootseeker.analysis.problem_summary import problem_summary_from_pack
 from rootseeker.analysis.root_cause_engine import RootCauseEngine
 from rootseeker.contracts.evidence import EvidencePack
 from rootseeker.contracts.report import CaseReport
@@ -49,10 +50,19 @@ def build_case_report(
         evidence_expander=evidence_expander,
     )
     evidence_ids = [item.item_id for item in pack.items]
-    summary = (
+    problem_summary = problem_summary_from_pack(pack, service_name=service_name or "")
+    summary = problem_summary or (
         f"Collected {len(pack.items)} evidence item(s); "
         f"generated {len(analysis.hypotheses)} hypothesis(es)."
     )
+
+    metadata: dict[str, Any] = {
+        "builder": "root_cause_engine",
+        "hypotheses": [hyp.model_dump(mode="json") for hyp in analysis.hypotheses],
+        "context_used_tokens": context.used_tokens,
+    }
+    if problem_summary:
+        metadata["problem_summary"] = problem_summary
 
     report = CaseReport(
         case_id=case_id,
@@ -60,11 +70,7 @@ def build_case_report(
         summary=summary,
         root_cause=analysis.conclusion,
         evidence_item_ids=evidence_ids,
-        metadata={
-            "builder": "root_cause_engine",
-            "hypotheses": [hyp.model_dump(mode="json") for hyp in analysis.hypotheses],
-            "context_used_tokens": context.used_tokens,
-        },
+        metadata=metadata,
     )
     client, skip_reason = (
         (llm_client, "") if llm_client is not None else _build_default_llm_client(settings)

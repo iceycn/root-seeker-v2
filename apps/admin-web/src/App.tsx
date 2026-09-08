@@ -283,10 +283,13 @@ type ErrorChatResult = ApiRecord & {
   flow_run_id?: string
   evidence_count?: number
   evidence_summary?: string
+  problem_summary?: string
   evidence_items?: ErrorChatEvidence[]
   flow_elapsed_ms?: number
   report?: ApiRecord & {
     root_cause?: { title?: string }
+    summary?: string
+    metadata?: ApiRecord
   }
   ai_analysis?: {
     ok?: boolean
@@ -2921,6 +2924,7 @@ function App() {
                   <div><b>状态：</b>{errorChatResult.case?.status || '-'}</div>
                   <div><b>服务：</b>{errorChatResult.case?.service_name || '-'}</div>
                   <div><b>证据数：</b>{errorChatResult.evidence_count ?? 0}</div>
+                  <div><b>问题摘要：</b>{errorChatResult.problem_summary || errorChatResult.report?.summary || '-'}</div>
                   <div><b>证据摘要：</b>{errorChatResult.evidence_summary || '-'}</div>
                   <div><b>流程耗时：</b>{errorChatResult.flow_elapsed_ms ?? '-'}ms</div>
                   <div>
