@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -176,12 +177,7 @@ class HypothesisGenerator:
             return None
 
         # Build summary from top items' content
-        summaries: list[str] = []
-        for item in new_items[:3]:
-            snippet = _hypothesis_summary_snippet(item)
-            if snippet:
-                summaries.append(snippet)
-        summary = "; ".join(summaries[:2]) if summaries else f"证据 {new_items[0].item_id}"
+        summary = _build_summary_from_items(new_items) or f"证据 {new_items[0].item_id}"
 
         statement = template.statement_template.format(summary=summary)
 
@@ -239,9 +235,13 @@ def _is_unconfigured_evidence(item: EvidenceItem) -> bool:
 
 _SKIP_SNIPPET_KEYS = frozenset({"source", "backend", "engine", "index", "query_key", "tool_name"})
 _SKIP_SNIPPET_VALUES = frozenset({"zoekt", "gitnexus", "qdrant", "catalog", "ok", "true", "false"})
+_PATH_LIKE_RE = re.compile(
+    r"(?:^|[/\\])[\w.-]+\.(?:java|kt|py|go|ts|tsx|js|jsx|cs|rb)$|(?:^|/)(?:src|main|java|com|org)/",
+    re.IGNORECASE,
+)
 
 
-def _usable_hypothesis_snippet(value: str, *, source: str = "") -> bool:
+def _usable_hypothesis_snippet(value: str, *, source: str = "", prefer_exception: bool = False) -> bool:
     text = value.strip()
     if not text or text.startswith("缺失字段仅表示"):
         return False
@@ -249,6 +249,13 @@ def _usable_hypothesis_snippet(value: str, *, source: str = "") -> bool:
     if lowered in _SKIP_SNIPPET_VALUES:
         return False
     if lowered == str(source or "").strip().lower():
+        return False
+    if (
+        prefer_exception
+        and _PATH_LIKE_RE.search(text)
+        and "exception" not in lowered
+        and "error!" not in lowered
+    ):
         return False
     return True
 
@@ -260,15 +267,44 @@ def _hypothesis_summary_snippet(item: EvidenceItem) -> str:
     if isinstance(extracted, dict):
         for key in ("exception_summary", "symptom", "code_path"):
             value = extracted.get(key)
-            if isinstance(value, str) and _usable_hypothesis_snippet(value, source=source):
-                return value.strip()[:80]
+            prefer_exception = key != "exception_summary"
+            if isinstance(value, str) and _usable_hypothesis_snippet(
+                value, source=source, prefer_exception=prefer_exception
+            ):
+                return value.strip()[:180]
     for key in ("exception_summary", "summary", "path", "error"):
         value = content.get(key)
-        if isinstance(value, str) and _usable_hypothesis_snippet(value, source=source):
-            return value.strip()[:80]
+        prefer_exception = key in {"summary", "path"}
+        if isinstance(value, str) and _usable_hypothesis_snippet(
+            value, source=source, prefer_exception=prefer_exception
+        ):
+            return value.strip()[:180]
     for key, value in content.items():
         if str(key) in _SKIP_SNIPPET_KEYS:
             continue
-        if isinstance(value, str) and _usable_hypothesis_snippet(value, source=source):
-            return value.strip()[:80]
+        if isinstance(value, str) and _usable_hypothesis_snippet(
+            value, source=source, prefer_exception=True
+        ):
+            return value.strip()[:180]
     return ""
+
+
+def _build_summary_from_items(items: list[EvidenceItem]) -> str:
+    """Prefer exception text; avoid joining code paths onto the headline."""
+    exception_bits: list[str] = []
+    other_bits: list[str] = []
+    for item in items[:5]:
+        extracted = (item.content or {}).get("extracted")
+        if isinstance(extracted, dict):
+            exc = extracted.get("exception_summary")
+            if isinstance(exc, str) and _usable_hypothesis_snippet(exc, source=str(item.source or "")):
+                text = exc.strip()
+                if text not in exception_bits:
+                    exception_bits.append(text)
+                continue
+        snippet = _hypothesis_summary_snippet(item)
+        if snippet and snippet not in other_bits and snippet not in exception_bits:
+            other_bits.append(snippet)
+    if exception_bits:
+        return exception_bits[0][:180]
+    return "; ".join(other_bits[:2]) if other_bits else ""

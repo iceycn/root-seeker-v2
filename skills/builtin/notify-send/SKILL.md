@@ -8,7 +8,7 @@ metadata:
 
 # Notify send
 
-调用 `notify.send`。必须在 `build_case_report` 之后执行（`defer_until: after_report`）。
+报告生成后由 AttemptRunner 按已启用渠道自动调用 `notify.send`；playbook 规划阶段不要主动选择本工具。
 
 详细准则见 `references/guide.md`。
 

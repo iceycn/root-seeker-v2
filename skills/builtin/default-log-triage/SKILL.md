@@ -25,9 +25,9 @@ metadata:
 11. `graph.impact`（helper: `graph-lookup`）— 对 `call_chain` 故障符号做 GitNexus 影响面
 12. `graph.context`（helper: `graph-lookup`）— 加载故障方法的 360° 符号上下文
 13. `code.find_callers`（helper: `code-lookup`）— 跨仓库追踪 caller（图谱优先，Zoekt 回退），与运行时调用链对齐
-14. 生成报告之后再调用 `notify.send`（helper: `notify-send`）
+14. 生成报告（系统在报告后按通知渠道自动发送；**不要**规划 `notify.send`）
 
-生成报告之后再调用 notify.send。call notify.send after the report.
+系统在 `build_case_report` 之后按 Admin 已启用渠道自动发送通知；不要在计划中调用 `notify.send`。
 
 ## AI 分析输入约定
 

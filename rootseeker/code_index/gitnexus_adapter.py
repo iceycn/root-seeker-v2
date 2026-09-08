@@ -459,7 +459,18 @@ def _repo_match_aliases(requested: str) -> list[str]:
     return aliases
 
 
+def _repo_path_tokens(name: str) -> list[str]:
+    tokens: list[str] = []
+    for part in name.replace("\\", "/").split("/"):
+        for token in part.split("__"):
+            text = token.strip().lower()
+            if text and text not in tokens:
+                tokens.append(text)
+    return tokens
+
+
 def _match_gitnexus_repo(requested: str, available: list[str]) -> str | None:
+    """Match service/repo alias by exact name, suffix, or path-token equality (no substring)."""
     req = requested.strip()
     if not req or not available:
         return None
@@ -471,9 +482,9 @@ def _match_gitnexus_repo(requested: str, available: list[str]) -> str | None:
         for name, low in lowered.items():
             if low.endswith("__" + alias) or low.endswith("/" + alias) or low.endswith("\\" + alias):
                 return name
-        contains = [name for name, low in lowered.items() if alias in low]
-        if contains:
-            return sorted(contains, key=len)[0]
+        token_hits = [name for name, low in lowered.items() if alias in _repo_path_tokens(low)]
+        if token_hits:
+            return sorted(token_hits, key=len)[0]
     return None
 
 

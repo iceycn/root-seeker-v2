@@ -175,6 +175,7 @@ _INDEXER_TAIL_RE = re.compile(
     re.IGNORECASE,
 )
 _LOG_ERROR_PREFIX_RE = re.compile(r"^日志中发现错误:\s*")
+_PROCEDURAL_NARRATIVE_RE = re.compile(r"共分析|分析已收敛|上下文片段")
 
 
 def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport) -> str:
@@ -200,7 +201,12 @@ def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport
     narrative = ""
     if report.root_cause is not None:
         narrative = str(report.root_cause.narrative or "").strip()
-    if narrative and narrative not in headline and narrative not in (cause or ""):
+    if (
+        narrative
+        and narrative not in headline
+        and narrative not in (cause or "")
+        and not _PROCEDURAL_NARRATIVE_RE.search(narrative)
+    ):
         if len(narrative) > 280:
             narrative = narrative[:277] + "..."
         lines.append(f"说明：{narrative}")

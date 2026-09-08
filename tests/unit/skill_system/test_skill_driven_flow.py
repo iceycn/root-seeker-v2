@@ -188,3 +188,32 @@ def test_build_notify_args_formats_readable_incident_card() -> None:
     assert "NotifySmoke.run" in message
     assert "case-9ecbac85" in message
     assert "【RootSeeker】" in message
+
+
+def test_build_notify_args_skips_procedural_narrative() -> None:
+    from rootseeker.contracts.evidence import RootCauseConclusion
+    from rootseeker.contracts.report import CaseReport
+    from rootseeker.skill_runtime.rule_step_argument_resolver import build_notify_args
+
+    message = build_notify_args(
+        case_request=CaseCreateRequest(
+            title="错误排查请求",
+            symptom="java.lang.IllegalStateException: boom\n\tat com.example.A.run(A.java:1)\n",
+            service_name="demo-api",
+            source="admin-error-chat",
+        ),
+        report=CaseReport(
+            case_id="case-proc",
+            title="t",
+            summary="s",
+            evidence_item_ids=[],
+            root_cause=RootCauseConclusion(
+                title="日志中发现错误: java.lang.IllegalStateException: boom",
+                narrative="共分析 6 条证据，生成 2 个假设。 上下文片段 4 条。 分析已收敛。",
+                confidence=0.7,
+            ),
+        ),
+    )["message"]
+    assert "共分析" not in message
+    assert "分析已收敛" not in message
+    assert "IllegalStateException" in message

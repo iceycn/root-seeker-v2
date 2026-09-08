@@ -259,26 +259,6 @@ class RootCauseEngine:
             if evidence_weight > 0:
                 confidence = min(0.95, confidence * (0.75 + 0.25 * evidence_weight))
 
-        # Build narrative
-        evidence_count = len(pack.items)
-        context_count = len(context.segments) if context else 0
-        hypothesis_count = len(hypotheses)
-
-        narrative = f"共分析 {evidence_count} 条证据，生成 {hypothesis_count} 个假设。"
-        if context_count > 0:
-            narrative += f" 上下文片段 {context_count} 条。"
-
-        if weighted_evidence:
-            top_weighted = sorted(weighted_evidence, key=lambda w: w.weight, reverse=True)[:3]
-            key_sources = [w.item.source for w in top_weighted if w.item.source]
-            if key_sources:
-                narrative += f" 关键证据来源：{', '.join(key_sources)}。"
-
-        if convergence.is_converged:
-            narrative += " 分析已收敛。"
-        else:
-            narrative += f" {convergence.recommendation}"
-
         # Contributing factors from highest-weighted evidence types
         contributing_factors: list[str] = []
         if weighted_evidence:
@@ -295,8 +275,79 @@ class RootCauseEngine:
                     contributing_factors.append(item.type.value)
 
         return RootCauseConclusion(
-            title=top_hypothesis.statement[:100] if top_hypothesis.statement else "初步结论",
-            narrative=narrative,
+            title=_conclusion_title(pack=pack, top_hypothesis=top_hypothesis),
+            narrative=_conclusion_narrative(
+                pack=pack,
+                top_hypothesis=top_hypothesis,
+                convergence=convergence,
+            ),
             confidence=confidence,
             contributing_factors=contributing_factors,
         )
+
+
+_HYPOTHESIS_PREFIXES = (
+    "日志中发现错误:",
+    "调用链异常:",
+    "代码缺陷:",
+    "资源耗尽:",
+    "配置错误:",
+    "依赖服务故障:",
+)
+
+
+def _extracted_field(pack: EvidencePack, key: str) -> str:
+    for item in pack.items:
+        extracted = (item.content or {}).get("extracted")
+        if not isinstance(extracted, dict):
+            continue
+        value = extracted.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if key == "call_chain" and isinstance(value, list) and value:
+            first = value[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+    return ""
+
+
+def _strip_hypothesis_prefix(statement: str) -> str:
+    text = statement.strip()
+    for prefix in _HYPOTHESIS_PREFIXES:
+        if text.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+def _conclusion_title(*, pack: EvidencePack, top_hypothesis: Hypothesis) -> str:
+    exception = _extracted_field(pack, "exception_summary")
+    if exception:
+        return exception[:100]
+    cleaned = _strip_hypothesis_prefix(top_hypothesis.statement or "")
+    if cleaned:
+        return cleaned[:100]
+    return "初步结论"
+
+
+def _conclusion_narrative(
+    *,
+    pack: EvidencePack,
+    top_hypothesis: Hypothesis,
+    convergence,
+) -> str:
+    parts: list[str] = []
+    exception = _extracted_field(pack, "exception_summary")
+    if exception:
+        parts.append(exception[:240])
+    fault = _extracted_field(pack, "call_chain")
+    if fault and fault not in "".join(parts):
+        parts.append(f"故障点：{fault[:160]}")
+    if not parts:
+        cleaned = _strip_hypothesis_prefix(top_hypothesis.statement or "")
+        if cleaned:
+            parts.append(cleaned[:240])
+    if not getattr(convergence, "is_converged", True):
+        recommendation = str(getattr(convergence, "recommendation", "") or "").strip()
+        if recommendation:
+            parts.append(recommendation)
+    return " ".join(parts) if parts else "分析未能生成有效假设"

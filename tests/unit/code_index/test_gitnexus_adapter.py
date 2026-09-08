@@ -138,6 +138,14 @@ def test_match_gitnexus_repo_suffix_and_contains() -> None:
         )
         == "6183d17ff1ae9b61971d96b5__coolcollege__backend__third-ability"
     )
+    assert _match_gitnexus_repo("order-service", ["border-service", "other-api"]) is None
+    assert (
+        _match_gitnexus_repo(
+            "user-api",
+            ["6183d17ff1ae9b61971d96b5__coolcollege__backend__user-center"],
+        )
+        is None
+    )
 
 
 def test_graph_hit_usable_rejects_bare_target() -> None:

@@ -102,6 +102,55 @@ def test_hypothesis_generator_skips_indexer_source_snippets() -> None:
     assert blob.lower().count("zoekt") == 0
 
 
+def test_root_cause_title_prefers_exception_over_code_path() -> None:
+    engine = RootCauseEngine()
+    pack = EvidencePack(case_id="case-kc", summary="pack")
+    pack.items.append(
+        EvidenceItem(
+            item_id="norm",
+            type=EvidenceType.OTHER,
+            source="incident.normalize",
+            content={
+                "extracted": {
+                    "service_name": "knowledge-api-service",
+                    "exception_summary": (
+                        "net.coolcollege.platform.cool.common.error.exception."
+                        "BusinessException: rpc interface error!"
+                    ),
+                    "call_chain": [
+                        "CourseWorkflowMessageListener.sendCourseApprovalOAMessage "
+                        "(CourseWorkflowMessageListener.java:266)"
+                    ],
+                    "code_path": "CourseWorkflowMessageListener.java",
+                }
+            },
+        )
+    )
+    pack.items.append(
+        EvidenceItem(
+            item_id="code-read",
+            type=EvidenceType.CODE,
+            source="code.read",
+            content={
+                "path": (
+                    "knowledge-service/src/main/java/com/coolcollege/knowledge/"
+                    "service/mq/consumer/CourseWorkflowMessageListener.java"
+                ),
+                "repo": "6183d17ff1ae9b61971d96b5__coolcollege__backend__knowledge-api",
+            },
+        )
+    )
+    result = engine.analyze(pack=pack)
+    title = result.conclusion.title
+    assert "BusinessException" in title
+    assert "rpc interface error" in title
+    assert "knowledge-service/src/main/java" not in title
+    assert "共分析" not in (result.conclusion.narrative or "")
+    assert "BusinessException" in (result.conclusion.narrative or "") or "rpc interface" in (
+        result.conclusion.narrative or ""
+    )
+
+
 def test_hypothesis_generator_log_error() -> None:
     """Test generator finds log error hypothesis."""
     generator = HypothesisGenerator()
@@ -347,7 +396,9 @@ def test_root_cause_engine_conclusion_uses_weighted_evidence() -> None:
 
     assert result.conclusion.contributing_factors
     assert result.conclusion.contributing_factors[0] == "trace"
-    assert "jaeger" in result.conclusion.narrative
+    assert "共分析" not in (result.conclusion.narrative or "")
+    assert result.conclusion.title
+    assert result.conclusion.narrative
 
 
 def test_root_cause_engine_focuses_evidence_on_later_iterations() -> None:
