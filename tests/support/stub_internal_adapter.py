@@ -144,10 +144,12 @@ class StubInternalToolAdapter:
     def get_index_status(self) -> dict[str, Any]:
         return {"ready": True, "indexes": [{"name": "stub-zoekt", "ready": True}]}
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]:
+    def send_notification(
+        self, channel: str, message: str, context: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         from rootseeker.channel_routing.notify_dispatch import dispatch_broadcast_notify
 
-        return dispatch_broadcast_notify(channel=channel, message=message)
+        return dispatch_broadcast_notify(channel=channel, message=message, context=context)
 
     def repo_register(self, args: dict[str, Any]) -> dict[str, Any]:
         return repo_register_tool(self.repo_sync_service, args)

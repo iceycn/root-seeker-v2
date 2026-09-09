@@ -196,6 +196,21 @@ type NotificationChannelRecord = ApiRecord & {
   has_secret?: boolean
   masked_secret?: string
   sort_order?: number
+  template_id?: string
+}
+
+type MessageTemplateRecord = ApiRecord & {
+  template_id: string
+  name: string
+  kind?: 'system' | 'custom' | string
+  body?: string
+  description?: string
+  updated_at?: string
+}
+
+type NotifyVariable = {
+  name: string
+  description: string
 }
 
 type McpServerRecord = ApiRecord & {
@@ -692,6 +707,7 @@ const pathToView: Record<string, string> = {
   '/plugins': 'plugins',
   '/mcp-servers': 'mcpServers',
   '/notification-channels': 'notificationChannels',
+  '/message-templates': 'messageTemplates',
   '/schedules': 'schedules',
   '/semantic-search': 'semantic',
   '/error-chat': 'errorChat',
@@ -707,6 +723,7 @@ const viewToPath: Record<string, string> = {
   plugins: '/plugins',
   mcpServers: '/mcp-servers',
   notificationChannels: '/notification-channels',
+  messageTemplates: '/message-templates',
   schedules: '/schedules',
   semantic: '/semantic-search',
   errorChat: '/error-chat',
@@ -734,6 +751,8 @@ function App() {
   const [selectedRemoteRepoKeys, setSelectedRemoteRepoKeys] = useState<string[]>([])
   const [catalogItems, setCatalogItems] = useState<CatalogRecord[]>([])
   const [notificationChannels, setNotificationChannels] = useState<NotificationChannelRecord[]>([])
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplateRecord[]>([])
+  const [notifyVariables, setNotifyVariables] = useState<NotifyVariable[]>([])
   const [mcpServers, setMcpServers] = useState<McpServerRecord[]>([])
   const [mcpToolsTotal, setMcpToolsTotal] = useState(0)
   const [broadcastEnabled, setBroadcastEnabled] = useState(true)
@@ -767,6 +786,9 @@ function App() {
   const [channelForm] = Form.useForm()
   const [channelModalOpen, setChannelModalOpen] = useState(false)
   const [editingChannel, setEditingChannel] = useState<NotificationChannelRecord | null>(null)
+  const [templateForm] = Form.useForm()
+  const [templateModalOpen, setTemplateModalOpen] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<MessageTemplateRecord | null>(null)
   const [mcpServerModalOpen, setMcpServerModalOpen] = useState(false)
   const [editingMcpServer, setEditingMcpServer] = useState<McpServerRecord | null>(null)
   const [mcpServerJsonText, setMcpServerJsonText] = useState('')
@@ -807,6 +829,10 @@ function App() {
     catalog: { title: 'Service Catalog', desc: '配置 service_name 到仓库、日志源、负责人等信息的映射。' },
     models: { title: '大语言模型', desc: '系统会根据用户内容智能选择最合适的模型，您也可以切换默认模型。' },
     notificationChannels: { title: '通知渠道', desc: '配置分析结论出站通知；启用多个渠道后，报告生成时自动广播。' },
+    messageTemplates: {
+      title: '消息模板',
+      desc: '配置通知正文格式与可用变量；系统模板可修改不可删除，普通模板可增删改。',
+    },
     schedules: { title: '定时任务', desc: '管理仓库增量同步等定时任务：启停、改调度、立即执行与运行记录。' },
     advanced: { title: '高级设置', desc: '管理 Skill/MCP 运行时环境变量与 RootSeeker 运行时配置。' },
   }
@@ -868,6 +894,17 @@ function App() {
         .catch((e) => apiMessage.error(String(e)))
       api<{ settings: { broadcast_enabled?: boolean } }>('/api/notification-channel-settings')
         .then((d) => setBroadcastEnabled(d.settings?.broadcast_enabled !== false))
+        .catch((e) => apiMessage.error(String(e)))
+      api<{ items: MessageTemplateRecord[] }>('/api/message-templates')
+        .then((d) => setMessageTemplates(d.items || []))
+        .catch((e) => apiMessage.error(String(e)))
+    }
+    if (active === 'messageTemplates') {
+      api<{ items: MessageTemplateRecord[]; variables?: NotifyVariable[] }>('/api/message-templates')
+        .then((d) => {
+          setMessageTemplates(d.items || [])
+          setNotifyVariables(d.variables || [])
+        })
         .catch((e) => apiMessage.error(String(e)))
     }
     if (active === 'schedules') {
@@ -1178,6 +1215,7 @@ function App() {
 
   const saveNotificationChannel = async () => {
     const values = await channelForm.validateFields()
+    values.template_id = values.template_id || ''
     if (editingChannel?.channel_id) {
       await api(`/api/notification-channels/${encodeURIComponent(editingChannel.channel_id)}`, {
         method: 'PUT',
@@ -1215,6 +1253,52 @@ function App() {
     await api(`/api/notification-channels/${encodeURIComponent(channelId)}`, { method: 'DELETE' })
     apiMessage.success('通知渠道已删除')
     await refreshNotificationChannels()
+  }
+
+  const refreshMessageTemplates = async () => {
+    const data = await api<{ items: MessageTemplateRecord[]; variables?: NotifyVariable[] }>(
+      '/api/message-templates',
+    )
+    setMessageTemplates(data.items || [])
+    setNotifyVariables(data.variables || [])
+  }
+
+  const openTemplateModal = (record?: MessageTemplateRecord) => {
+    setEditingTemplate(record || null)
+    templateForm.setFieldsValue(
+      record
+        ? { name: record.name, body: record.body, description: record.description || '' }
+        : { name: '', body: '【RootSeeker】{{headline}}\nCase：{{case_id}}', description: '' },
+    )
+    setTemplateModalOpen(true)
+  }
+
+  const saveMessageTemplate = async () => {
+    const values = await templateForm.validateFields()
+    if (editingTemplate?.template_id) {
+      await api(`/api/message-templates/${encodeURIComponent(editingTemplate.template_id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(values),
+      })
+      apiMessage.success('消息模板已更新')
+    } else {
+      await api('/api/message-templates', { method: 'POST', body: JSON.stringify(values) })
+      apiMessage.success('消息模板已创建')
+    }
+    setTemplateModalOpen(false)
+    setEditingTemplate(null)
+    templateForm.resetFields()
+    await refreshMessageTemplates()
+  }
+
+  const deleteMessageTemplate = async (record: MessageTemplateRecord) => {
+    if (record.kind === 'system') {
+      apiMessage.error('系统模板不可删除')
+      return
+    }
+    await api(`/api/message-templates/${encodeURIComponent(record.template_id)}`, { method: 'DELETE' })
+    apiMessage.success('消息模板已删除')
+    await refreshMessageTemplates()
   }
 
   const refreshMcpServers = async () => {
@@ -1672,6 +1756,7 @@ function App() {
     { key: 'settings', label: '设置', type: 'group' },
     { key: 'models', icon: <RobotOutlined />, label: '大模型' },
     { key: 'notificationChannels', icon: <MessageOutlined />, label: '通知渠道' },
+    { key: 'messageTemplates', icon: <EditOutlined />, label: '消息模板' },
     { key: 'schedules', icon: <ClockCircleOutlined />, label: '定时任务' },
     { key: 'advanced', icon: <SettingOutlined />, label: '高级设置' },
   ]
@@ -2587,6 +2672,15 @@ function App() {
                 },
                 { title: 'URL', dataIndex: 'endpoint_url', ellipsis: true, render: renderEllipsisCell },
                 {
+                  title: '模板',
+                  dataIndex: 'template_id',
+                  render: (value?: string) => {
+                    if (!value) return <Typography.Text type="secondary">默认（系统）</Typography.Text>
+                    const found = messageTemplates.find((item) => item.template_id === value)
+                    return found ? found.name : <Typography.Text type="danger">模板已失效</Typography.Text>
+                  },
+                },
+                {
                   title: '启用',
                   render: (_: unknown, record: NotificationChannelRecord) => (
                     <Switch
@@ -2643,8 +2737,110 @@ function App() {
               >
                 <Input.Password placeholder="留空则保留已有密钥；未启用加签请留空" />
               </Form.Item>
+              <Form.Item
+                name="template_id"
+                label="消息模板"
+                extra="留空则使用系统默认模板。可在「消息模板」菜单中管理。"
+              >
+                <Select
+                  allowClear
+                  placeholder="默认（系统模板）"
+                  options={messageTemplates.map((item) => ({
+                    value: item.template_id,
+                    label: `${item.name}${item.kind === 'system' ? '（系统）' : ''}`,
+                  }))}
+                />
+              </Form.Item>
               <Form.Item name="enabled" label="启用" valuePropName="checked" initialValue={true}>
                 <Switch />
+              </Form.Item>
+            </Form>
+          </Modal>
+        </Space>
+      )
+    }
+    if (active === 'messageTemplates') {
+      return (
+        <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Typography.Text type="secondary">
+              可用变量：{notifyVariables.map((item) => `{{${item.name}}}`).join('、') || '加载中…'}
+            </Typography.Text>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => openTemplateModal()}>
+              新建模板
+            </Button>
+          </div>
+          <Card bordered={false} title="可用变量说明">
+            <Table
+              rowKey="name"
+              pagination={false}
+              size="small"
+              dataSource={notifyVariables}
+              columns={[
+                { title: '变量', dataIndex: 'name', render: (name: string) => <code>{`{{${name}}}`}</code> },
+                { title: '说明', dataIndex: 'description' },
+              ]}
+            />
+            <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+              条件块写法：{`{{#service}}服务：{{service}}\n{{/service}}`}（变量为空时整段不输出）
+            </Typography.Paragraph>
+          </Card>
+          <Card bordered={false}>
+            <Table
+              rowKey="template_id"
+              dataSource={messageTemplates}
+              columns={[
+                { title: '名称', dataIndex: 'name' },
+                {
+                  title: '类型',
+                  dataIndex: 'kind',
+                  render: (kind?: string) =>
+                    kind === 'system' ? <Tag color="blue">系统</Tag> : <Tag>普通</Tag>,
+                },
+                { title: '正文', dataIndex: 'body', ellipsis: true, render: renderEllipsisCell },
+                { title: '更新时间', dataIndex: 'updated_at', ellipsis: true },
+                {
+                  title: '操作',
+                  render: (_: unknown, record: MessageTemplateRecord) => (
+                    <Space>
+                      <Button icon={<EditOutlined />} onClick={() => openTemplateModal(record)}>
+                        编辑
+                      </Button>
+                      <Button
+                        danger
+                        disabled={record.kind === 'system'}
+                        onClick={() => deleteMessageTemplate(record)}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+          <Modal
+            title={editingTemplate ? `编辑模板：${editingTemplate.name}` : '新建消息模板'}
+            open={templateModalOpen}
+            onCancel={() => {
+              setTemplateModalOpen(false)
+              setEditingTemplate(null)
+              templateForm.resetFields()
+            }}
+            onOk={saveMessageTemplate}
+            okText="保存"
+            cancelText="取消"
+            width={800}
+          >
+            <Form form={templateForm} layout="vertical">
+              <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+                <Input placeholder="例如：简短通知" />
+              </Form.Item>
+              <Form.Item name="description" label="说明">
+                <Input placeholder="可选" />
+              </Form.Item>
+              <Form.Item name="body" label="模板正文" rules={[{ required: true }]}>
+                <Input.TextArea rows={12} style={{ fontFamily: 'Consolas, Monaco, monospace' }} />
               </Form.Item>
             </Form>
           </Modal>

@@ -74,6 +74,10 @@ from rootseeker.storage.notification_channels import (
     mask_channel_for_api,
     migrate_legacy_callbacks_from_admin,
 )
+from rootseeker.storage.message_templates import (
+    SYSTEM_TEMPLATE_ID,
+    build_message_template_store,
+)
 
 ADMIN_CASE_ID = "admin-console"
 ADMIN_STEP_ID = "admin-route"
@@ -403,6 +407,7 @@ class AdminNotificationChannelRequest(BaseModel):
     enabled: bool = True
     secret: str = ""
     sort_order: int = 0
+    template_id: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -413,6 +418,7 @@ class AdminNotificationChannelUpdateRequest(BaseModel):
     enabled: bool | None = None
     secret: str | None = None
     sort_order: int | None = None
+    template_id: str | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -423,11 +429,24 @@ class AdminNotificationChannelPatchRequest(BaseModel):
     endpoint_url: str | None = None
     secret: str | None = None
     sort_order: int | None = None
+    template_id: str | None = None
     metadata: dict[str, Any] | None = None
 
 
 class AdminNotificationChannelSettingsRequest(BaseModel):
     broadcast_enabled: bool | None = None
+
+
+class AdminMessageTemplateRequest(BaseModel):
+    name: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+    description: str = ""
+
+
+class AdminMessageTemplateUpdateRequest(BaseModel):
+    name: str | None = None
+    body: str | None = None
+    description: str | None = None
 
 
 class AdminMcpServerRequest(BaseModel):
@@ -611,6 +630,10 @@ def _notification_channel_store(config_root: Path) -> NotificationChannelStore:
     return build_notification_channel_store(config_root)
 
 
+def _message_template_store(config_root: Path):
+    return build_message_template_store(config_root)
+
+
 def _mcp_server_store(config_root: Path):
     return build_mcp_server_store(config_root)
 
@@ -686,7 +709,10 @@ def _migrate_legacy_notification_callbacks(config_root: Path, store: AdminConfig
         store.save(migrated)
 
 
-def _test_notification_channel_record(channel: dict[str, Any]) -> dict[str, Any]:
+def _test_notification_channel_record(channel: dict[str, Any], config_root: Path) -> dict[str, Any]:
+    from rootseeker.channel_routing.message_template_render import render_message_template
+    from rootseeker.channel_routing.notify_dispatch import resolve_template_body
+
     metadata = dict(channel.get("metadata") or {})
     secret = str(channel.get("secret") or "").strip()
     if secret:
@@ -697,9 +723,21 @@ def _test_notification_channel_record(channel: dict[str, Any]) -> dict[str, Any]
         team="default",
         metadata=metadata,
     )
-    message = (
-        f"[RootSeeker] 通知渠道测试 | channel={channel.get('channel_type')} | name={channel.get('name')}"
-    )
+    sample_context = {
+        "headline": "通知渠道测试",
+        "problem": "这是一条模板渲染测试消息",
+        "service": "demo-service",
+        "cause": "",
+        "narrative": "",
+        "confidence": "",
+        "case_id": "test-case",
+        "title": "通知渠道测试",
+        "exception": "",
+        "symptom": "通知渠道测试",
+    }
+    template_store = _message_template_store(config_root)
+    body = resolve_template_body(template_store, str(channel.get("template_id") or ""))
+    message = render_message_template(body, sample_context)
     return send_outbound_notification(target, message, registry=get_production_channel_registry())
 
 
@@ -1881,6 +1919,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
     @app.get("/mcp-servers")
     @app.get("/plugins")
     @app.get("/notification-channels")
+    @app.get("/message-templates")
     @app.get("/semantic-search")
     @app.get("/error-chat")
     @app.get("/overview")
@@ -2115,7 +2154,7 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
         channel = channel_store.get_channel(channel_id)
         if channel is None:
             raise HTTPException(status_code=404, detail=f"notification channel not found: {channel_id}")
-        return _test_notification_channel_record(channel)
+        return _test_notification_channel_record(channel, config_root)
 
     @app.get("/api/notification-channel-settings")
     def get_notification_channel_settings() -> dict[str, Any]:
@@ -2130,6 +2169,70 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
         patch = req.model_dump(mode="json", exclude_unset=True)
         settings = channel_store.update_settings(patch)
         return {"ok": True, "settings": settings}
+
+    @app.get("/api/message-templates")
+    def list_message_templates() -> dict[str, Any]:
+        from rootseeker.channel_routing.notify_variables import NOTIFY_VARIABLES
+
+        store = _message_template_store(config_root)
+        items = store.list_templates()
+        return {"items": items, "total": len(items), "variables": NOTIFY_VARIABLES}
+
+    @app.get("/api/message-templates/{template_id}")
+    def get_message_template(template_id: str) -> dict[str, Any]:
+        store = _message_template_store(config_root)
+        item = store.get_template(template_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail=f"message template not found: {template_id}")
+        return {"template": item}
+
+    @app.post("/api/message-templates")
+    def create_message_template(req: AdminMessageTemplateRequest) -> dict[str, Any]:
+        store = _message_template_store(config_root)
+        try:
+            saved = store.upsert_template(
+                {
+                    "name": req.name,
+                    "body": req.body,
+                    "description": req.description,
+                    "kind": "custom",
+                }
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "template": saved}
+
+    @app.put("/api/message-templates/{template_id}")
+    def update_message_template(
+        template_id: str,
+        req: AdminMessageTemplateUpdateRequest,
+    ) -> dict[str, Any]:
+        store = _message_template_store(config_root)
+        existing = store.get_template(template_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"message template not found: {template_id}")
+        payload = dict(existing)
+        payload.update(req.model_dump(mode="json", exclude_unset=True))
+        payload["template_id"] = template_id
+        try:
+            saved = store.upsert_template(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "template": saved}
+
+    @app.delete("/api/message-templates/{template_id}")
+    def delete_message_template(template_id: str) -> dict[str, Any]:
+        store = _message_template_store(config_root)
+        existing = store.get_template(template_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"message template not found: {template_id}")
+        if existing.get("kind") == "system" or template_id == SYSTEM_TEMPLATE_ID:
+            raise HTTPException(status_code=400, detail="cannot delete system template")
+        try:
+            store.delete_template(template_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "template_id": template_id}
 
     @app.get("/api/mcp-servers")
     def list_mcp_servers() -> dict[str, Any]:

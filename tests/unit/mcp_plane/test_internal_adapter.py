@@ -69,7 +69,7 @@ class FixedAdapter:
     def get_index_status(self) -> dict[str, Any]:
         return {"ready": True, "indexes": []}
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]:
+    def send_notification(self, channel: str, message: str, context=None) -> dict[str, Any]:
         return {"channel": channel, "message": message, "status": "sent"}
 
     def repo_register(self, args: dict[str, Any]) -> dict[str, Any]:

@@ -55,7 +55,9 @@ class InternalToolAdapter(Protocol):
 
     def get_index_status(self) -> dict[str, Any]: ...
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]: ...
+    def send_notification(
+        self, channel: str, message: str, context: dict[str, str] | None = None
+    ) -> dict[str, Any]: ...
 
     # Repo operations
     def repo_register(self, args: dict[str, Any]) -> dict[str, Any]: ...
@@ -259,8 +261,13 @@ class HttpInternalToolAdapter:
     def get_index_status(self) -> dict[str, Any]:
         return self._post(self.route_index_status, {})
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]:
-        return self._post(self.route_notify_send, {"channel": channel, "message": message})
+    def send_notification(
+        self, channel: str, message: str, context: dict[str, str] | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"channel": channel, "message": message}
+        if context is not None:
+            payload["context"] = context
+        return self._post(self.route_notify_send, payload)
 
     # Repo operations via HTTP
     def repo_register(self, args: dict[str, Any]) -> dict[str, Any]:

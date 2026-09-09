@@ -107,6 +107,12 @@ def _normalize_channel_payload(
 
     enabled = channel.get("enabled") if "enabled" in channel else (existing or {}).get("enabled", True)
     sort_order = channel.get("sort_order") if "sort_order" in channel else (existing or {}).get("sort_order", 0)
+    template_id = str(
+        channel.get("template_id")
+        if "template_id" in channel
+        else (existing or {}).get("template_id")
+        or ""
+    ).strip()
 
     return {
         "channel_id": channel_id,
@@ -116,6 +122,7 @@ def _normalize_channel_payload(
         "secret": secret,
         "enabled": bool(enabled),
         "sort_order": int(sort_order or 0),
+        "template_id": template_id,
         "metadata": dict(metadata),
         "created_at": created_at,
         "updated_at": now,
@@ -226,6 +233,14 @@ class SqliteNotificationChannelStore:
                 )
                 """
             )
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(notification_channels)").fetchall()
+            }
+            if "template_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE notification_channels ADD COLUMN template_id TEXT NOT NULL DEFAULT ''"
+                )
             row = conn.execute(
                 "SELECT payload FROM notification_channel_settings WHERE settings_key = ?",
                 ("default",),
@@ -237,7 +252,17 @@ class SqliteNotificationChannelStore:
                 )
 
     def _row_to_channel(self, row: tuple[Any, ...]) -> dict[str, Any]:
-        metadata_raw = row[7]
+        # Support legacy rows without template_id (9 fields) and new rows (10 fields).
+        if len(row) >= 11:
+            metadata_raw = row[8]
+            template_id = row[7] or ""
+            created_at = row[9]
+            updated_at = row[10]
+        else:
+            metadata_raw = row[7]
+            template_id = ""
+            created_at = row[8]
+            updated_at = row[9]
         metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else {}
         if not isinstance(metadata, dict):
             metadata = {}
@@ -249,9 +274,10 @@ class SqliteNotificationChannelStore:
             "secret": row[4] or "",
             "enabled": bool(row[5]),
             "sort_order": int(row[6] or 0),
+            "template_id": str(template_id or ""),
             "metadata": metadata,
-            "created_at": row[8],
-            "updated_at": row[9],
+            "created_at": created_at,
+            "updated_at": updated_at,
         }
 
     def list_channels(self) -> list[dict[str, Any]]:
@@ -259,7 +285,7 @@ class SqliteNotificationChannelStore:
             rows = conn.execute(
                 """
                 SELECT channel_id, name, channel_type, endpoint_url, secret, enabled,
-                       sort_order, metadata, created_at, updated_at
+                       sort_order, template_id, metadata, created_at, updated_at
                 FROM notification_channels
                 """
             ).fetchall()
@@ -270,7 +296,7 @@ class SqliteNotificationChannelStore:
             row = conn.execute(
                 """
                 SELECT channel_id, name, channel_type, endpoint_url, secret, enabled,
-                       sort_order, metadata, created_at, updated_at
+                       sort_order, template_id, metadata, created_at, updated_at
                 FROM notification_channels WHERE channel_id = ?
                 """,
                 (channel_id,),
@@ -289,8 +315,8 @@ class SqliteNotificationChannelStore:
                 """
                 INSERT OR REPLACE INTO notification_channels (
                     channel_id, name, channel_type, endpoint_url, secret, enabled,
-                    sort_order, metadata, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    sort_order, template_id, metadata, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     normalized["channel_id"],
@@ -300,6 +326,7 @@ class SqliteNotificationChannelStore:
                     normalized["secret"],
                     1 if normalized["enabled"] else 0,
                     normalized["sort_order"],
+                    normalized["template_id"],
                     json.dumps(normalized["metadata"], ensure_ascii=False),
                     normalized["created_at"],
                     normalized["updated_at"],
@@ -375,6 +402,19 @@ class MysqlNotificationChannelStore:
                     """
                 )
                 cur.execute(
+                    """
+                    SELECT COUNT(*) FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE()
+                      AND TABLE_NAME = 'notification_channels'
+                      AND COLUMN_NAME = 'template_id'
+                    """
+                )
+                if int(cur.fetchone()[0] or 0) == 0:
+                    cur.execute(
+                        "ALTER TABLE notification_channels "
+                        "ADD COLUMN template_id VARCHAR(64) NOT NULL DEFAULT ''"
+                    )
+                cur.execute(
                     "SELECT payload FROM notification_channel_settings WHERE settings_key = %s",
                     ("default",),
                 )
@@ -395,6 +435,16 @@ class MysqlNotificationChannelStore:
         return raw if isinstance(raw, dict) else {}
 
     def _row_to_channel(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        if len(row) >= 11:
+            metadata = self._decode_json(row[8])
+            template_id = row[7] or ""
+            created_at = row[9]
+            updated_at = row[10]
+        else:
+            metadata = self._decode_json(row[7])
+            template_id = ""
+            created_at = row[8]
+            updated_at = row[9]
         return {
             "channel_id": row[0],
             "name": row[1],
@@ -403,9 +453,10 @@ class MysqlNotificationChannelStore:
             "secret": row[4] or "",
             "enabled": bool(row[5]),
             "sort_order": int(row[6] or 0),
-            "metadata": self._decode_json(row[7]),
-            "created_at": row[8],
-            "updated_at": row[9],
+            "template_id": str(template_id or ""),
+            "metadata": metadata,
+            "created_at": created_at,
+            "updated_at": updated_at,
         }
 
     def list_channels(self) -> list[dict[str, Any]]:
@@ -414,7 +465,7 @@ class MysqlNotificationChannelStore:
                 cur.execute(
                     """
                     SELECT channel_id, name, channel_type, endpoint_url, secret, enabled,
-                           sort_order, metadata, created_at, updated_at
+                           sort_order, template_id, metadata, created_at, updated_at
                     FROM notification_channels
                     """
                 )
@@ -427,7 +478,7 @@ class MysqlNotificationChannelStore:
                 cur.execute(
                     """
                     SELECT channel_id, name, channel_type, endpoint_url, secret, enabled,
-                           sort_order, metadata, created_at, updated_at
+                           sort_order, template_id, metadata, created_at, updated_at
                     FROM notification_channels WHERE channel_id = %s
                     """,
                     (channel_id,),
@@ -448,8 +499,8 @@ class MysqlNotificationChannelStore:
                     """
                     REPLACE INTO notification_channels (
                         channel_id, name, channel_type, endpoint_url, secret, enabled,
-                        sort_order, metadata, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        sort_order, template_id, metadata, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         normalized["channel_id"],
@@ -459,6 +510,7 @@ class MysqlNotificationChannelStore:
                         normalized["secret"],
                         1 if normalized["enabled"] else 0,
                         normalized["sort_order"],
+                        normalized["template_id"],
                         json.dumps(normalized["metadata"], ensure_ascii=False),
                         normalized["created_at"],
                         normalized["updated_at"],

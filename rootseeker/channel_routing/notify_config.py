@@ -25,6 +25,8 @@ def list_enabled_outbound_targets(store: NotificationChannelStore) -> list[Outbo
         secret = str(record.get("secret") or "").strip()
         if secret:
             metadata["secret"] = secret
+        metadata["channel_id"] = str(record.get("channel_id") or "")
+        metadata["template_id"] = str(record.get("template_id") or "")
         targets.append(
             OutboundTarget(
                 channel=channel_type,

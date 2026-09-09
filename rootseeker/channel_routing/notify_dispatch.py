@@ -5,16 +5,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from rootseeker.channel_routing.message_template_render import render_message_template
 from rootseeker.channel_routing.notify_config import list_enabled_outbound_targets
 from rootseeker.channel_routing.notify_env import resolve_notify_outbound_target
+from rootseeker.channel_routing.notify_variables import SYSTEM_DEFAULT_TEMPLATE_BODY, SYSTEM_TEMPLATE_ID
 from rootseeker.channel_routing.outbound import (
     get_production_channel_registry,
     send_outbound_notification,
 )
 from rootseeker.infra_core.settings import RootSeekerSettings
+from rootseeker.storage.message_templates import build_message_template_store
 from rootseeker.storage.notification_channels import build_notification_channel_store
 
-__all__ = ["dispatch_broadcast_notify", "dispatch_env_resolved_notify"]
+__all__ = ["dispatch_broadcast_notify", "dispatch_env_resolved_notify", "resolve_template_body"]
 
 
 def _resolve_repo_root(settings: RootSeekerSettings | None) -> Path:
@@ -23,6 +26,15 @@ def _resolve_repo_root(settings: RootSeekerSettings | None) -> Path:
     if not root.is_absolute():
         root = Path.cwd() / root
     return root.resolve()
+
+
+def resolve_template_body(template_store: Any, template_id: str) -> str:
+    tid = str(template_id or "").strip() or SYSTEM_TEMPLATE_ID
+    record = template_store.get_template(tid)
+    if record is None:
+        record = template_store.get_template(SYSTEM_TEMPLATE_ID)
+    body = str((record or {}).get("body") or "").strip()
+    return body or SYSTEM_DEFAULT_TEMPLATE_BODY
 
 
 def dispatch_env_resolved_notify(channel: str, message: str) -> dict[str, Any]:
@@ -49,6 +61,7 @@ def dispatch_broadcast_notify(
     message: str,
     *,
     channel: str = "webhook",
+    context: dict[str, str] | None = None,
     repo_root: Path | None = None,
     settings: RootSeekerSettings | None = None,
 ) -> dict[str, Any]:
@@ -74,10 +87,19 @@ def dispatch_broadcast_notify(
             },
         }
 
+    template_store = None
+    if context is not None:
+        template_store = build_message_template_store(root, settings=cfg)
+
     registry = get_production_channel_registry()
     results: list[dict[str, Any]] = []
     for target in targets:
-        results.append(send_outbound_notification(target, message, registry=registry))
+        outbound_message = message
+        if context is not None and template_store is not None:
+            template_id = str((target.metadata or {}).get("template_id") or "")
+            body = resolve_template_body(template_store, template_id)
+            outbound_message = render_message_template(body, context)
+        results.append(send_outbound_notification(target, outbound_message, registry=registry))
 
     failed = sum(1 for item in results if not item.get("ok"))
     sent = len(results) - failed
@@ -89,5 +111,5 @@ def dispatch_broadcast_notify(
         "sent": sent,
         "failed": failed,
         "results": results,
-        "metadata": {"broadcast": True},
+        "metadata": {"broadcast": True, "templated": context is not None},
     }

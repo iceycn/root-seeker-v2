@@ -180,7 +180,11 @@ def register_internal_tools(
     def _invoke_notify_send(args: dict[str, Any]) -> dict[str, Any]:
         channel = str(args.get("channel", "webhook"))
         message = str(args.get("message", ""))
-        return adapter.send_notification(channel, message)
+        raw_context = args.get("context")
+        context: dict[str, str] | None = None
+        if isinstance(raw_context, dict):
+            context = {str(k): str(v if v is not None else "") for k, v in raw_context.items()}
+        return adapter.send_notification(channel, message, context=context)
 
     def _repo_register(args: dict[str, Any]) -> dict[str, Any]:
         return adapter.repo_register(args)

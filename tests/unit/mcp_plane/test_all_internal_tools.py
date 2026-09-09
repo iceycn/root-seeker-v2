@@ -198,7 +198,7 @@ class RecordingAdapter:
         self._record("get_index_status")
         return {"ready": True, "indexes": [{"name": "demo", "ready": True}]}
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]:
+    def send_notification(self, channel: str, message: str, context=None) -> dict[str, Any]:
         self._record("send_notification", channel, message)
         return {"ok": True, "channel": channel, "message": message, "metadata": {"test": True}}
 

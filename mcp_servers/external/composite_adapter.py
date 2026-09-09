@@ -256,10 +256,12 @@ class CompositeProductionAdapter:
         """Get index status via Zoekt."""
         return self._zoekt.get_index_status()
 
-    def send_notification(self, channel: str, message: str) -> dict[str, Any]:
+    def send_notification(
+        self, channel: str, message: str, context: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         from rootseeker.channel_routing.notify_dispatch import dispatch_broadcast_notify
 
-        return dispatch_broadcast_notify(message, channel=channel)
+        return dispatch_broadcast_notify(message, channel=channel, context=context)
 
     def close(self) -> None:
         """Close all adapter connections."""

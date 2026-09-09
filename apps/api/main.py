@@ -173,6 +173,7 @@ class CodeReadRequest(BaseModel):
 class NotifySendRequest(BaseModel):
     channel: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    context: dict[str, str] | None = None
 
 
 class LspReferencesRequest(BaseModel):

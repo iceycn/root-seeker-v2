@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from rootseeker.analysis.call_chain import extract_exception_summary
 from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 from rootseeker.code_index.search_query import build_zoekt_search_query
 from rootseeker.contracts.case import CaseCreateRequest
@@ -161,113 +160,14 @@ class RuleStepArgumentResolver:
 
 
 def build_notify_args(*, case_request: CaseCreateRequest, report: CaseReport) -> dict[str, Any]:
+    from rootseeker.channel_routing.notify_variables import build_notify_context, render_notify_message
+
     channel = case_request.metadata.get("notify_channel", "webhook")
     return {
         "channel": channel,
-        "message": _build_notify_message(case_request=case_request, report=report),
+        "message": render_notify_message(case_request=case_request, report=report),
+        "context": build_notify_context(case_request=case_request, report=report),
     }
-
-
-_GENERIC_CASE_TITLES = frozenset({"", "t", "错误排查请求", "error triage", "case"})
-_INDEXER_TAIL_RE = re.compile(
-    r"(?:\s*;\s*)+(?:zoekt|gitnexus|qdrant|catalog)"
-    r"(?:\s*;\s*(?:zoekt|gitnexus|qdrant|catalog))*\s*$",
-    re.IGNORECASE,
-)
-_LOG_ERROR_PREFIX_RE = re.compile(r"^日志中发现错误:\s*")
-_PROCEDURAL_NARRATIVE_RE = re.compile(r"共分析|分析已收敛|上下文片段")
-
-
-def _build_notify_message(*, case_request: CaseCreateRequest, report: CaseReport) -> str:
-    from rootseeker.analysis.problem_summary import build_problem_summary
-
-    exception = extract_exception_summary(case_request.symptom, max_chars=180)
-    cause = _clean_cause_title(
-        report.root_cause.title if report.root_cause is not None else "",
-        exception=exception,
-    )
-    headline = exception or cause or _usable_case_title(case_request.title) or "排查完成"
-    service = resolve_service_name(
-        case_request.service_name,
-        text=case_request.symptom,
-        default="",
-    )
-    if is_placeholder_service_name(service):
-        service = ""
-
-    report_summary = str(report.summary or "").strip()
-    problem = str((report.metadata or {}).get("problem_summary") or "").strip()
-    if not problem and report_summary and not report_summary.startswith("Collected "):
-        # Pre-LLM reports may store the rule summary directly on summary.
-        problem = report_summary
-    if not problem:
-        problem = build_problem_summary(
-            symptom=case_request.symptom,
-            service_name=service,
-            exception=exception,
-        )
-
-    lines = [f"【RootSeeker】{headline}"]
-    if problem and _should_include_problem_summary(problem, headline=headline):
-        lines.append(f"问题：{problem}")
-    if service:
-        lines.append(f"服务：{service}")
-    if (
-        cause
-        and cause not in headline
-        and headline not in cause
-        and cause not in problem
-        and problem not in cause
-    ):
-        lines.append(f"结论：{cause}")
-    narrative = ""
-    if report.root_cause is not None:
-        narrative = str(report.root_cause.narrative or "").strip()
-    if (
-        narrative
-        and narrative not in headline
-        and narrative not in (cause or "")
-        and narrative not in problem
-        and not _PROCEDURAL_NARRATIVE_RE.search(narrative)
-    ):
-        if len(narrative) > 280:
-            narrative = narrative[:277] + "..."
-        lines.append(f"说明：{narrative}")
-    confidence = report.root_cause.confidence if report.root_cause is not None else 0.0
-    if confidence > 0:
-        lines.append(f"置信度：{int(round(confidence * 100))}%")
-    lines.append(f"Case：{report.case_id}")
-    return "\n".join(lines)
-
-
-def _should_include_problem_summary(problem: str, *, headline: str) -> bool:
-    text = problem.strip()
-    head = headline.strip()
-    if not text:
-        return False
-    if text == head:
-        return False
-    if text == f"抛出 {head}":
-        return False
-    return True
-
-
-
-def _usable_case_title(title: str) -> str:
-    text = str(title or "").strip()
-    if text.lower() in _GENERIC_CASE_TITLES or text in _GENERIC_CASE_TITLES:
-        return ""
-    return text
-
-
-def _clean_cause_title(title: str, *, exception: str = "") -> str:
-    text = _INDEXER_TAIL_RE.sub("", str(title or "").strip()).strip(" ;")
-    text = _LOG_ERROR_PREFIX_RE.sub("", text).strip()
-    if not text:
-        return ""
-    if exception and (text == exception or exception.startswith(text) or text.startswith(exception)):
-        return ""
-    return text
 
 
 def _normalize_payload(step_outputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
