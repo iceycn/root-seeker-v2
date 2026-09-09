@@ -1216,6 +1216,9 @@ function App() {
   const saveNotificationChannel = async () => {
     const values = await channelForm.validateFields()
     values.template_id = values.template_id || ''
+    if (!values.secret) {
+      delete values.secret
+    }
     if (editingChannel?.channel_id) {
       await api(`/api/notification-channels/${encodeURIComponent(editingChannel.channel_id)}`, {
         method: 'PUT',

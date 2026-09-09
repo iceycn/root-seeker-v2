@@ -92,7 +92,8 @@ def _normalize_channel_payload(
         raise ValueError("endpoint_url is required")
 
     secret_raw = channel.get("secret") if "secret" in channel else None
-    if secret_raw is None and existing is not None:
+    # Empty string means "keep existing" on update (Admin form never echoes secrets).
+    if existing is not None and (secret_raw is None or str(secret_raw).strip() == ""):
         secret = str(existing.get("secret") or "")
     else:
         secret = str(secret_raw or "")

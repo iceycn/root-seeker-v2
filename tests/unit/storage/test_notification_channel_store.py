@@ -46,6 +46,19 @@ def test_file_notification_channel_store_crud(tmp_path: Path) -> None:
     assert masked["has_secret"] is True
     assert "secret" not in masked
 
+    kept = store.upsert_channel(
+        {
+            "channel_id": saved["channel_id"],
+            "name": "ops-feishu",
+            "channel_type": "feishu",
+            "endpoint_url": "https://example.com/feishu",
+            "secret": "",
+            "template_id": "system-default",
+        }
+    )
+    assert kept["secret"] == "abc123"
+    assert kept["template_id"] == "system-default"
+
     store.update_settings({"broadcast_enabled": False})
     assert store.get_settings()["broadcast_enabled"] is False
 
