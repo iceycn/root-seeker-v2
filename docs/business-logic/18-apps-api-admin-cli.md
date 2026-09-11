@@ -142,7 +142,7 @@ Admin 分三层：**SPA 页面路由**（返回 `admin-web/dist/index.html` 或 
 
 | 方法 | 路径 | Handler | 说明 |
 | --- | --- | --- | --- |
-| GET | `/`, `/admin`, `/models`, `/advanced-settings`, `/skills`, `/repos`, `/catalog`, `/plugins`, `/notification-channels`, `/semantic-search`, `/error-chat`, `/overview`, `/schedules` | `admin_page` | 同一 SPA 入口 |
+| GET | `/`, `/admin`, `/models`, `/advanced-settings`, `/skills`, `/repos`, `/catalog`, `/plugins`, `/notification-channels`, `/error-chat`, `/overview`, `/schedules` | `admin_page` | 同一 SPA 入口 |
 | GET | `/assets/{path:path}` | `admin_assets` | 前端静态资源 |
 | GET | `/healthz` | `healthz` | `{"status":"ok"}` |
 
@@ -229,7 +229,6 @@ Admin 在 API REST 之上增加 **远端配置**、**批量发现**、**本地�
 | DELETE | `/api/repos/{repo_name}` | `unregister_repo` | `repo.unregister` + `store.delete_repo` |
 | POST | `/api/repos/{repo_name}/sync` | `sync_repo` | `repo.sync` + `_persist_repo_state` |
 | GET | `/api/repos/{repo_name}/index-status` | `repo_index_status` | `repo.index_status` |
-| POST | `/api/code/semantic-search` | `semantic_search` | `repo.semantic_search` |
 
 Admin 工具调用统一经 `_invoke_admin_tool` → `gateway.invoke(actor="admin", plugin_id="builtin.code_index")`，详见 [14-code-index.md](./14-code-index.md)。
 

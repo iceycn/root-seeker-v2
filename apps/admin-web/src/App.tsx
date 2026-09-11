@@ -709,7 +709,6 @@ const pathToView: Record<string, string> = {
   '/notification-channels': 'notificationChannels',
   '/message-templates': 'messageTemplates',
   '/schedules': 'schedules',
-  '/semantic-search': 'semantic',
   '/error-chat': 'errorChat',
   '/overview': 'overview',
 }
@@ -725,7 +724,6 @@ const viewToPath: Record<string, string> = {
   notificationChannels: '/notification-channels',
   messageTemplates: '/message-templates',
   schedules: '/schedules',
-  semantic: '/semantic-search',
   errorChat: '/error-chat',
   overview: '/overview',
 }
@@ -795,11 +793,9 @@ function App() {
   const [mcpServerSaving, setMcpServerSaving] = useState(false)
   const [cronForm] = Form.useForm()
   const [skillForm] = Form.useForm()
-  const [semanticForm] = Form.useForm()
   const [errorCaseForm] = Form.useForm()
   const [envForm] = Form.useForm()
   const [runtimeForm] = Form.useForm()
-  const [semanticResult, setSemanticResult] = useState<unknown>(null)
   const [errorChatItems, setErrorChatItems] = useState<ErrorChatResult[]>([])
   const [errorChatInput, setErrorChatInput] = useState('')
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
@@ -817,7 +813,6 @@ function App() {
 
   const pageMeta: Record<string, { title: string; desc: string }> = {
     overview: { title: '总览状态', desc: '系统健康、索引、服务目录和运行时资源概览。' },
-    semantic: { title: '语义搜索', desc: '使用 Qdrant 在已索引代码块里做语义搜索。' },
     errorChat: { title: '错误排查助手', desc: '提交错误信息、日志或现象，形成可追踪的排查历史。' },
     skills: { title: 'Skills 管理', desc: '系统 playbook 是主排查流程；helper 描述各工具如何协作。用户 Skills 可从本地路径、Git URL 或 owner/repo 安装。' },
     plugins: { title: 'Plugins / Tools', desc: '查看已加载插件和 MCP 工具注册情况。' },
@@ -1641,12 +1636,6 @@ function App() {
     })
   }
 
-  const runSemanticSearch = async () => {
-    const values = await semanticForm.validateFields()
-    const data = await api('/api/code/semantic-search', { method: 'POST', body: JSON.stringify(values) })
-    setSemanticResult(data)
-  }
-
   const pollErrorChatAnalysis = (itemId: string, attempt = 0) => {
     if (attempt >= 30) return
     window.setTimeout(() => {
@@ -1748,7 +1737,6 @@ function App() {
   const menuItems: MenuProps['items'] = [
     { key: 'sessions', label: '会话', type: 'group' },
     { key: 'overview', icon: <ThunderboltOutlined />, label: '总览状态' },
-    { key: 'semantic', icon: <SearchOutlined />, label: '语义搜索' },
     { key: 'errorChat', icon: <MessageOutlined />, label: '错误排查' },
     { key: 'agent', label: '智能体', type: 'group' },
     { key: 'skills', icon: <ExperimentOutlined />, label: 'Skills 管理' },
@@ -3050,9 +3038,6 @@ function App() {
           />
         </Card>
       )
-    }
-    if (active === 'semantic') {
-      return <Space direction="vertical" size={16} style={{ width: '100%' }}><Card title="语义搜索" bordered={false}><Form form={semanticForm} layout="inline"><Form.Item name="query" rules={[{ required: true }]}><Input placeholder="查询内容" style={{ width: 360 }} /></Form.Item><Form.Item name="repo_name"><Input placeholder="repo，可空" /></Form.Item><Form.Item name="limit" initialValue={10}><Input type="number" style={{ width: 100 }} /></Form.Item><Form.Item><Button type="primary" onClick={runSemanticSearch}>搜索</Button></Form.Item></Form></Card><Card title="搜索结果" bordered={false}><pre>{JSON.stringify(semanticResult, null, 2)}</pre></Card></Space>
     }
     if (active === 'errorChat') {
       return (

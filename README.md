@@ -102,24 +102,23 @@ flowchart LR
     <td align="center"><b>错误排查</b><br><img src="docs/screenshots/admin-error-chat.png" alt="错误排查"></td>
   </tr>
   <tr>
-    <td align="center"><b>语义搜索</b><br><img src="docs/screenshots/admin-semantic-search.png" alt="语义搜索"></td>
     <td align="center"><b>Skills 管理</b><br><img src="docs/screenshots/admin-skills.png" alt="Skills 管理"></td>
-  </tr>
-  <tr>
     <td align="center"><b>Plugins / Tools</b><br><img src="docs/screenshots/admin-plugins.png" alt="Plugins / Tools"></td>
+  </tr>
+  <tr>
     <td align="center"><b>MCP 协议</b><br><img src="docs/screenshots/admin-mcp-servers.png" alt="MCP 协议"></td>
-  </tr>
-  <tr>
     <td align="center"><b>Repo 管理</b><br><img src="docs/screenshots/admin-repos.png" alt="Repo 管理"></td>
+  </tr>
+  <tr>
     <td align="center"><b>Service Catalog</b><br><img src="docs/screenshots/admin-catalog.png" alt="Service Catalog"></td>
-  </tr>
-  <tr>
     <td align="center"><b>大模型</b><br><img src="docs/screenshots/admin-models.png" alt="大模型"></td>
-    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道"></td>
   </tr>
   <tr>
+    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道"></td>
     <td align="center"><b>定时任务</b><br><img src="docs/screenshots/admin-schedules.png" alt="定时任务"></td>
-    <td align="center"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置"></td>
   </tr>
 </table>
 

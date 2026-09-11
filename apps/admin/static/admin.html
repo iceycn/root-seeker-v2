@@ -151,7 +151,6 @@
     <div class="brand"><span class="brand-mark"></span><span>RootSeeker</span></div>
     <div class="group-title">会话</div>
     <button class="nav-btn" data-view="status" onclick="route('status')">◎ 总览状态</button>
-    <button class="nav-btn" data-view="semantic" onclick="route('semantic')">⌕ 语义搜索</button>
     <div class="group-title">智能体</div>
     <button class="nav-btn" data-view="skills" onclick="route('skills')">✧ Skills 管理</button>
     <button class="nav-btn" data-view="plugins" onclick="route('plugins')">◇ Plugins / Tools</button>
@@ -247,7 +246,7 @@ function table(rows, cols) {
     `</tbody></table>`;
 }
 function btn(label, fn, cls="primary"){ return `<button class="${cls}" onclick="${fn}">${label}</button>`; }
-function route(view){ setActive(view); ({status,settings,ai,notificationChannels,skills,plugins,repos,catalog,semantic}[view])().catch(e=>show(String(e))); }
+function route(view){ setActive(view); ({status,settings,ai,notificationChannels,skills,plugins,repos,catalog}[view])().catch(e=>show(String(e))); }
 
 async function status(){
   pageTitle.textContent="总览状态"; pageDesc.textContent="系统状态、索引状态和管理配置概览。";
@@ -449,9 +448,6 @@ async function plugins(){
   pageTitle.textContent="Plugins / Tools"; pageDesc.textContent="查看已加载插件和 MCP 工具。";
   const d=await req("/api/plugins"); const tools=await req("/api/tools");
   content.innerHTML=`<section class="card"><div class="card-title">Plugins</div>${table(d.items,[{label:"ID",value:x=>x.plugin_id},{label:"名称",value:x=>x.display_name},{label:"类型",value:x=>x.kind},{label:"工具数",value:x=>(x.mcp_tools||[]).length},{label:"启用",value:x=>x.enabled_by_default?"是":"否"}])}</section><section class="card"><div class="card-title">Tools</div>${table(tools.items,[{label:"Name",value:x=>x.name},{label:"Scope",value:x=>x.scope},{label:"Server",value:x=>x.server_name},{label:"Tags",value:x=>(x.tags||[]).join(",")}])}</section>`; show({plugins:d,tools}); }
-
-function semantic(){ pageTitle.textContent="语义搜索"; pageDesc.textContent="搜索 Qdrant 中的代码片段。"; content.innerHTML=`<section class="card"><div class="form-grid"><div><label>Repo（可空）</label><input id="sr" value="smoke-mini"></div><div><label>查询</label><input id="sq" value="readme smoke handler"></div></div><div class="actions">${btn("搜索","semanticSearch()")}</div></section>`; }
-async function semanticSearch(){ show(await req("/api/code/semantic-search",{method:"POST",body:JSON.stringify({query:sq.value,repo_name:sr.value||null,limit:10})})); }
 
 route("ai");
 </script>
