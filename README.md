@@ -1,21 +1,17 @@
 # RootSeeker V2
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.2-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
 </p>
 
-**RootSeeker V2** 是面向公司内网的 **AI 驱动故障排查与根因发现平台**。从一条告警或报错日志出发，自动还原故障现场、检索私有代码与知识图谱、汇聚证据并产出可落地的根因报告——帮你告别「通灵」式 Debug。
+**RootSeeker V2** 是面向公司内网的 **AI 驱动故障排查与根因发现平台**。从一条告警或报错出发，自动还原现场、检索私有代码与知识图谱、汇聚证据，并产出可落地的根因报告。
 
-**核心价值**：把研发从繁杂的证据收集中解放出来，缩短排查时长，减少现网应急损失。支持告警接入 → 日志/链路采集 → 代码检索与图谱 → 根因分析与多渠道通知的全链路自动化；Skill 可编排、MCP 可审计、Case 可回放。支持私有化部署，代码与日志可不出内网。
+全链路覆盖：告警接入 → 日志 / 链路采集 → 代码检索与图谱 → 根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署，代码与日志可不出内网。通知支持飞书 / 钉钉 / 企微 / Slack；Admin 可管理仓库同步、定时任务、消息模板与错误排查助手。
 
-**使用它能带来什么**：不再对着堆栈瞎猜；自动关联 Trace / 日志上下文；Zoekt + Qdrant + GitNexus 构建私有代码索引；报告可推送飞书 / 钉钉 / 企微 / Slack；运维控制台支持仓库同步、定时任务与错误排查助手。
-
-> **当前阶段**：MVP 主链路已在开发环境端到端跑通。详见 [实现状态](docs/implementation-status.md)。
-
-> 📮 项目快速迭代中：需求与建议欢迎通过 [Issue](https://github.com/iceycn/root-seeker-v2/issues) 提交。
+> **当前阶段**（`v1.1.2`）：MVP 主链路已在开发环境端到端跑通。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
 
 ---
 
@@ -41,26 +37,26 @@
 
 ## 为什么选择 RootSeeker？
 
-传统故障排查依赖人工经验，SRE 需要在日志平台、监控系统和 IDE 之间反复横跳。RootSeeker 旨在解决这些痛点：
+传统排查高度依赖人工经验，SRE 往往在日志平台、监控与 IDE 之间反复切换。RootSeeker 针对这些痛点：
 
-- **告别「通灵」式 Debug**：不再对着报错堆栈瞎猜，结合代码检索定位到具体文件与行号。
+- **告别「通灵」式 Debug**：结合代码检索，把堆栈落到具体文件与行号，而不是凭感觉猜。
 - **全息现场还原**：自动拉取关联日志与 Trace 上下文（API 入参、SQL、RPC 等）。
-- **懂你的私有代码**：Zoekt 词法检索 + Qdrant 语义搜索 + GitNexus 知识图谱，覆盖精确匹配与业务意图。
-- **可编排、可审计**：标准 Agent Skills（playbook + helper）经 MCP Gateway 调用工具，策略守卫与审计贯穿全程。
-- **可运维**：Admin 控制台管理仓库同步、定时任务、错误排查助手与索引状态。
+- **懂你的私有代码**：Zoekt 词法检索 + Qdrant 语义检索 + GitNexus 知识图谱，兼顾精确匹配与业务意图。
+- **可编排、可审计**：Agent Skills（playbook + helper）经 MCP Gateway 调用工具，策略守卫与审计贯穿全程。
+- **可运维**：Admin 统一管理仓库同步、定时任务、消息模板、错误排查助手与索引状态。
 
 ---
 
 ## 核心特性
 
-- **Skill 驱动流程**：内置 playbook `default-log-triage`，由 Agent 阅读 `SKILL.md` 后经 MCP Gateway 调用工具。
-- **MCP 工具平面**：统一内外部工具调用，含策略守卫、审批与审计。
-- **证据与根因**：证据归集、多假设推理；规则引擎 + 可选 LLM 增强报告。
+- **Skill 驱动流程**：内置 playbook `default-log-triage`；Agent 阅读 `SKILL.md` 后经 MCP Gateway 调用工具。
+- **MCP 工具平面**：统一内外部工具调用，内置策略守卫、审批与审计。
+- **证据与根因**：证据归集与多假设推理；规则引擎 + 可选 LLM 增强报告。
 - **三引擎代码索引**：Zoekt（词法）+ Qdrant（语义）+ GitNexus（图谱），均支持容器内远程索引。
-- **运维控制台**：仓库注册/同步、定时任务（如每小时同步变更仓）、错误排查助手、服务目录。
+- **运维控制台**：仓库注册 / 同步、定时任务、消息模板、错误排查助手、服务目录。
 - **多渠道接入与触达**：Webhook / 阿里云 SLS / Prometheus 入站；飞书 / 钉钉 / 企微 / Slack 出站。
-- **持久化与回放**：SQLite 可选持久化；Case 回放与质量门禁。
-- **数据安全**：支持私有化部署与本地/内网 LLM，代码与日志可不出公网。
+- **持久化与回放**：可选 SQLite / MySQL；Case 回放与质量门禁。
+- **数据安全**：私有化部署与本地 / 内网 LLM，代码与日志可不出公网。
 
 **环境要求**：Docker + Compose（推荐）· Python 3.11+（本地开发）
 
@@ -68,7 +64,7 @@
 
 ## 工作原理
 
-默认排查链路（`default-log-triage`）：告警归一化 → 服务目录 → 日志查询 → 链路追踪 → 仓库/索引 → 代码检索 / 图谱 → 报告通知。
+默认排查链路（`default-log-triage`）：告警归一化 → 服务目录 → 日志查询 → 链路追踪 → 仓库 / 索引 → 代码检索 / 图谱 → 报告通知。
 
 ```mermaid
 flowchart LR
@@ -83,16 +79,16 @@ flowchart LR
 ```
 
 1. **接入**：Webhook / SLS / Prometheus 等归一化为 Case。
-2. **编排**：当前主流程 playbook 注入 Agent；模型经 MCP Gateway 调用允许的工具。
+2. **编排**：主流程 playbook 注入 Agent；模型经 MCP Gateway 调用允许的工具。
 3. **证据**：日志、链路、代码检索与图谱结果归集为 Evidence。
-4. **根因**：RootCauseEngine 多假设推理；可选 LLM 增强报告文案。
+4. **根因**：RootCauseEngine 做多假设推理；可选 LLM 增强报告文案。
 5. **触达**：推送通知，并可在 Admin 中回放与审计。
 
 ---
 
 ## 界面预览
 
-以下截图来自 `v1.1.0` 本地全栈（API `:8000` · Admin `:8010` · Zoekt `:6070` · Qdrant `:6333`）。管理控制台入口：http://127.0.0.1:8010/admin
+截图来自 `v1.1.x` 本地全栈（API `:8000` · Admin `:8010` · Zoekt `:6070` · Qdrant `:6333`）。控制台入口：[http://127.0.0.1:8010/admin](http://127.0.0.1:8010/admin)
 
 ### 管理控制台
 
@@ -102,24 +98,23 @@ flowchart LR
     <td align="center"><b>错误排查</b><br><img src="docs/screenshots/admin-error-chat.png" alt="错误排查"></td>
   </tr>
   <tr>
-    <td align="center"><b>语义搜索</b><br><img src="docs/screenshots/admin-semantic-search.png" alt="语义搜索"></td>
     <td align="center"><b>Skills 管理</b><br><img src="docs/screenshots/admin-skills.png" alt="Skills 管理"></td>
-  </tr>
-  <tr>
     <td align="center"><b>Plugins / Tools</b><br><img src="docs/screenshots/admin-plugins.png" alt="Plugins / Tools"></td>
+  </tr>
+  <tr>
     <td align="center"><b>MCP 协议</b><br><img src="docs/screenshots/admin-mcp-servers.png" alt="MCP 协议"></td>
-  </tr>
-  <tr>
     <td align="center"><b>Repo 管理</b><br><img src="docs/screenshots/admin-repos.png" alt="Repo 管理"></td>
+  </tr>
+  <tr>
     <td align="center"><b>Service Catalog</b><br><img src="docs/screenshots/admin-catalog.png" alt="Service Catalog"></td>
-  </tr>
-  <tr>
     <td align="center"><b>大模型</b><br><img src="docs/screenshots/admin-models.png" alt="大模型"></td>
-    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道"></td>
   </tr>
   <tr>
+    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道"></td>
     <td align="center"><b>定时任务</b><br><img src="docs/screenshots/admin-schedules.png" alt="定时任务"></td>
-    <td align="center"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置"></td>
   </tr>
 </table>
 
@@ -139,8 +134,7 @@ flowchart LR
 
 ## 快速开始
 
-推荐 **Docker Compose** 一键启动完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus）。  
-部署包说明见 [docker/README.md](docker/README.md)。
+推荐用 **Docker Compose** 一键拉起完整栈（API、Admin、Worker、Scheduler、Zoekt、Qdrant、GitNexus）。部署包说明见 [docker/README.md](docker/README.md)。
 
 ### 1. 克隆并准备配置
 
@@ -276,7 +270,7 @@ make docker-down
 
 ## Hybrid 本地开发
 
-适合本机改 Python 代码、索引服务仍跑在 Docker：
+适合本机改 Python、索引服务仍跑在 Docker：
 
 ```powershell
 # Windows（默认 sqlite）
@@ -368,25 +362,23 @@ rootseeker-scheduler --loop --interval-seconds 60
 | `POST /webhook/{channel}` | 告警接入 |
 | `WebSocket /gateway/ws` | 控制平面 |
 
-文档：http://localhost:8000/docs
+Swagger：[http://localhost:8000/docs](http://localhost:8000/docs)
 
 ### Admin（`:8010`）
 
-访问：http://127.0.0.1:8010/admin
-
-主要能力：
+入口：[http://127.0.0.1:8010/admin](http://127.0.0.1:8010/admin)
 
 - Skills / Plugins / MCP 工具一览
-- Git 仓库注册、同步、强制重建图谱
-- **定时任务**（如每小时同步有变更仓库并重建 GitNexus）
-- **错误排查助手**（粘贴日志触发默认 Flow）
-- 服务目录、语义代码搜索、运行时与索引状态
+- Git 仓库注册、同步与图谱重建
+- 定时任务（例如按小时同步有变更仓库并重建 GitNexus）
+- 错误排查助手（粘贴日志触发默认 Flow）
+- 服务目录、通知渠道、消息模板，以及运行时 / 索引状态
 
 ---
 
 ## 代码索引
 
-完整栈与 Hybrid 模式均通过 **容器内远程索引**，无需本机安装 `zoekt-index` / `gitnexus` CLI。
+完整栈与 Hybrid 模式均走 **容器内远程索引**，无需本机安装 `zoekt-index` / `gitnexus` CLI。
 
 | 组件 | 端口 | 作用 |
 | --- | --- | --- |
@@ -462,25 +454,26 @@ k8s/            # Kubernetes 清单
 
 ## 模块状态
 
-`Completed` 已实现并有测试 · `Partial` 已实现待加固 · `Planned` 未达目标深度
+图例：`Completed` 已实现并有测试 · `Partial` 已实现待加固 · `Planned` 未达目标深度
 
 | 模块 | 状态 |
 | --- | --- |
-| 契约、存储/审计、Plugin / Skill / MCP | Completed |
+| 契约、存储 / 审计、Plugin / Skill / MCP | Completed |
 | 服务目录、日志平面、代码索引（含远程 Zoekt / GitNexus） | Completed |
-| 证据、根因、Task/Flow、默认排查 Flow | Completed |
+| 证据、根因、Task / Flow、默认排查 Flow | Completed |
 | API / Admin / Worker / Scheduler / 定时仓库同步 | Completed |
 | 渠道路由、Gateway、SQLite、LLM 报告增强 | Completed |
 | Agent Runtime（LLM 工具规划、自修复） | Partial |
 | 审批策略、部署策略编排 | Partial |
 
-详情：[docs/implementation-status.md](docs/implementation-status.md)
+更多细节见 [docs/implementation-status.md](docs/implementation-status.md)。
 
 ---
 
 ## 相关文档
 
 - [实现状态与缺口](docs/implementation-status.md)
+- [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [Case 状态机](docs/architecture/case-state-machine.md)
 - [状态机总览](docs/architecture/state-machines.md)
 
@@ -488,12 +481,12 @@ k8s/            # Kubernetes 清单
 
 ## 贡献指南
 
-欢迎提交 Pull Request 或 Issue！
+欢迎 PR 与 Issue：
 
 1. Fork 本仓库
 2. 新建特性分支
-3. 提交代码并确保测试通过
-4. 新建 Pull Request
+3. 提交改动并确保测试通过
+4. 发起 Pull Request
 
 ---
 
@@ -501,5 +494,5 @@ k8s/            # Kubernetes 清单
 
 MIT License © 2026 iceycn / RootSeeker Team
 
-见 [LICENSE](LICENSE)。
+详见 [LICENSE](LICENSE)。
 ```

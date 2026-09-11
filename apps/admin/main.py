@@ -345,12 +345,6 @@ class AdminSyncRepoRequest(BaseModel):
     force_reclone: bool = False
 
 
-class AdminSemanticSearchRequest(BaseModel):
-    query: str = Field(min_length=1)
-    repo_name: str | None = None
-    limit: int = Field(default=10, ge=1, le=100)
-
-
 class AdminServiceCatalogUpsertRequest(BaseModel):
     tenant: str = Field(default="demo", min_length=1)
     environment: str = Field(default="prod", min_length=1)
@@ -1920,7 +1914,6 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
     @app.get("/plugins")
     @app.get("/notification-channels")
     @app.get("/message-templates")
-    @app.get("/semantic-search")
     @app.get("/error-chat")
     @app.get("/overview")
     @app.get("/schedules")
@@ -2843,14 +2836,6 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
     @app.get("/api/repos/{repo_name}/index-status")
     def repo_index_status(repo_name: str) -> dict[str, Any]:
         return _invoke_admin_tool(runtime, "repo.index_status", {"name": repo_name})
-
-    @app.post("/api/code/semantic-search")
-    def semantic_search(req: AdminSemanticSearchRequest) -> dict[str, Any]:
-        return _invoke_admin_tool(
-            runtime,
-            "repo.semantic_search",
-            {"query": req.query, "repo_name": req.repo_name, "limit": req.limit},
-        )
 
     @app.get("/api/catalog")
     def list_catalog() -> dict[str, Any]:
