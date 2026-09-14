@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
+  <a href="https://github.com/iceycn/root-seeker-v2"><img src="https://img.shields.io/github/stars/iceycn/root-seeker-v2?style=social" alt="GitHub Stars"></a>
 </p>
 
 **RootSeeker V2** 是面向公司内网的 **AI 驱动故障排查与根因发现平台**。从一条告警或报错出发，自动还原现场、检索私有代码与知识图谱、汇聚证据，并产出可落地的根因报告。
@@ -12,6 +13,21 @@
 全链路覆盖：告警接入 → 日志 / 链路采集 → 代码检索与图谱 → 根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署，代码与日志可不出内网。通知支持飞书 / 钉钉 / 企微 / Slack；Admin 可管理仓库同步、定时任务、消息模板与错误排查助手。
 
 > **当前阶段**（`v1.1.2`）：MVP 主链路已在开发环境端到端跑通。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
+
+<p align="center">
+  <b>⭐ 如果这个项目对你有帮助，请点个 Star 支持一下！</b><br>
+  <sub>你的 Star 是我们持续打磨内网排障链路的最大动力</sub>
+</p>
+
+<p align="center">
+  <a href="https://github.com/iceycn/root-seeker-v2">
+    <img src="https://img.shields.io/badge/⭐_Star_on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="Star on GitHub">
+  </a>
+  &nbsp;
+  <a href="https://gitee.com/icey_1/root-seeker-v2">
+    <img src="https://img.shields.io/badge/⭐_Star_on_Gitee-C71D23?style=for-the-badge&logo=gitee&logoColor=white" alt="Star on Gitee">
+  </a>
+</p>
 
 ---
 
@@ -487,6 +503,13 @@ k8s/            # Kubernetes 清单
 2. 新建特性分支
 3. 提交改动并确保测试通过
 4. 发起 Pull Request
+
+<p align="center">
+  <b>觉得有用？给仓库点个 ⭐ Star，让更多同路人看见。</b><br>
+  <a href="https://github.com/iceycn/root-seeker-v2">GitHub</a>
+  ·
+  <a href="https://gitee.com/icey_1/root-seeker-v2">Gitee</a>
+</p>
 
 ---
 
