@@ -80,25 +80,33 @@
 
 ## 工作原理
 
-默认排查链路（`default-log-triage`）：告警归一化 → 服务目录 → 日志查询 → 链路追踪 → 仓库 / 索引 → 代码检索 / 图谱 → 报告通知。
+默认排查由出厂 playbook **`default-log-triage`** 驱动：Webhook / `POST /cases/run-default` / Admin 错误排查三条入口汇合后，统一走 **AttemptRunner + Agent 工具规划**（YAML 步进器已移除）。
+
+推荐工具顺序（由模型按 `SKILL.md` 与 `allowed-tools` 规划，非固定脚本逐步执行）：
+
+`incident.normalize` → 服务目录 / 日志源 → 日志与 Trace → 索引与仓库 → 代码检索 / 图谱 / callers → **系统生成报告并按渠道自动通知**
 
 ```mermaid
 flowchart LR
-  A[告警/Case] --> B[Playbook SKILL.md]
-  B --> C[AttemptRunner]
-  C --> D[MCP Gateway]
-  D --> E[MCP ToolCall]
-  E --> F[Evidence]
-  F --> G[RootCauseEngine]
-  G --> H[CaseReport]
-  H --> I[Notify]
+  A[Webhook / API / 错误排查] --> B[Case]
+  B --> C[Playbook SKILL.md]
+  C --> D[AttemptRunner]
+  D --> E[LLM Tool Plan]
+  E --> F[MCP Gateway]
+  F --> G[SLS / Jaeger / Zoekt / GitNexus]
+  G --> H[Evidence]
+  H --> I[RootCauseEngine]
+  I --> J[CaseReport]
+  J --> K[Notify 渠道模板]
 ```
 
-1. **接入**：Webhook / SLS / Prometheus 等归一化为 Case。
-2. **编排**：主流程 playbook 注入 Agent；模型经 MCP Gateway 调用允许的工具。
-3. **证据**：日志、链路、代码检索与图谱结果归集为 Evidence。
-4. **根因**：RootCauseEngine 做多假设推理；可选 LLM 增强报告文案。
-5. **触达**：推送通知，并可在 Admin 中回放与审计。
+1. **接入**：告警 Webhook、API `run-default` 或 Admin 粘贴堆栈 → 归一化为 Case。
+2. **编排**：解析当前默认 playbook；LLM（或测试 stub）产出 tool plan，仅调用 `allowed-tools` 内的 MCP 工具；策略守卫与审计贯穿全程。
+3. **证据**：日志、链路、词法/语义代码检索与知识图谱结果归集为 EvidencePack。
+4. **根因与报告**：RootCauseEngine 多假设推理；可选 LLM 增强报告；规则侧会生成问题摘要等可读字段。
+5. **触达**：报告生成后由系统按已启用通知渠道与消息模板发送（Agent **不**主动规划 `notify.send`）；可在 Admin 回看 Case / 证据 / AI 分析。
+
+失败时 Case 标记 `failed` 并带错误码（如缺 planner / 工具失败），**不会**回退到已删除的 YAML Flow。
 
 ---
 
