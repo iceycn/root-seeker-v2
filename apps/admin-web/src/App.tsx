@@ -1670,14 +1670,18 @@ function App() {
       if (serviceName) payload.service_name = serviceName
       const traceId = String(formValues.trace_id || '').trim()
       if (traceId) payload.trace_id = traceId
-      const data = await api<{ item: ErrorChatResult }>('/api/error-chat', {
+      const data = await api<{ ok?: boolean; item: ErrorChatResult }>('/api/error-chat', {
         method: 'POST',
         body: JSON.stringify(payload),
       })
       setErrorChatItems((items) => [...items, data.item])
       setErrorChatResult(data.item)
       setErrorChatInput('')
-      apiMessage.success('排查流程已完成')
+      if (data.ok === false || data.item.case?.status === 'failed') {
+        apiMessage.warning('排查流程已结束，但 Case 未成功完成')
+      } else {
+        apiMessage.success('排查流程已完成')
+      }
       if (data.item.id && data.item.ai_analysis?.pending) pollErrorChatAnalysis(data.item.id)
     } finally {
       setErrorChatSubmitting(false)

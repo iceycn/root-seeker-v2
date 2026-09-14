@@ -1848,6 +1848,13 @@ def _resolve_admin_flow_run_id(runtime: DevRuntime, result: Any) -> str:
     return _save_default_flow_checkpoint(runtime, result)
 
 
+def _admin_flow_succeeded(*, flow_result: Any, flow_view: Any) -> bool:
+    if isinstance(flow_result, AgentRunResult):
+        return flow_result.status == "completed"
+    status = getattr(flow_view.case.status, "value", flow_view.case.status)
+    return str(status) == "completed"
+
+
 def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
     trace = build_execution_trace(
         case_id=result.case.case_id,
@@ -1855,13 +1862,14 @@ def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
         flow_id="builtin.default_log_triage_flow",
         case_steps=result.case.steps,
     )
+    case_status = getattr(result.case.status, "value", result.case.status)
     runtime.flow_checkpoint_store.save(
         trace.execution_id,
         {
             "case_id": result.case.case_id,
             "flow_id": trace.flow_id,
             "skill_slug": trace.skill_slug,
-            "status": "completed",
+            "status": str(case_status),
             "next_step_index": len(trace.steps),
             "steps": [
                 {
@@ -2575,7 +2583,8 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
                 content=req.content,
                 flow_result=flow_view,
             )
-        return {"ok": True, "item": item}
+        flow_ok = _admin_flow_succeeded(flow_result=flow_result, flow_view=flow_view)
+        return {"ok": flow_ok, "item": item}
 
     @app.delete("/api/error-chat")
     def clear_error_chat() -> dict[str, Any]:

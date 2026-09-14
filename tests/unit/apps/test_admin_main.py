@@ -615,7 +615,9 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     )
 
     assert response.status_code == 200
-    item = response.json()["item"]
+    body = response.json()
+    assert body["ok"] is True
+    item = body["item"]
     assert item["content"] == "NullPointerException at Foo.java:12"
     assert item["case"]["case_id"].startswith("case-")
     assert "report" in item
@@ -627,6 +629,54 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     assert history["total"] == 1
     assert history["items"][0]["case"]["case_id"] == item["case"]["case_id"]
     assert history["items"][0]["evidence_items"] == item["evidence_items"]
+
+
+def test_admin_error_chat_reports_failure_when_planner_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
+    monkeypatch.delenv("ROOTSEEKER_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("ROOTSEEKER_LLM_BASE_URL", raising=False)
+    client = TestClient(create_app(tmp_path))
+
+    response = client.post(
+        "/api/error-chat", json={"content": "NullPointerException at Foo.java:12"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["item"]["case"]["status"] == "failed"
+
+
+def test_save_default_flow_checkpoint_uses_case_status(tmp_path: Path) -> None:
+    from apps.admin.main import _save_default_flow_checkpoint
+    from rootseeker.bootstrap.results import DefaultFlowRunResult
+    from rootseeker.bootstrap.runtime import create_dev_runtime
+    from rootseeker.contracts.case import CaseRecord, CaseStatus
+    from rootseeker.contracts.evidence import EvidencePack
+    from rootseeker.contracts.report import CaseReport
+
+    runtime = create_dev_runtime(tmp_path)
+    case = CaseRecord(
+        case_id="case-failed-checkpoint",
+        title="failed case",
+        symptom="boom",
+        service_name="svc",
+        source="test",
+        status=CaseStatus.FAILED,
+        selected_skills=["default-log-triage"],
+    )
+    pack = EvidencePack(case_id=case.case_id, items=[], summary="")
+    report = CaseReport(case_id=case.case_id, title=case.title, summary="failed")
+    result = DefaultFlowRunResult(
+        case=case, evidence_pack=pack, report=report, tool_results=[]
+    )
+
+    flow_run_id = _save_default_flow_checkpoint(runtime, result)
+    checkpoint = runtime.flow_checkpoint_store.get(flow_run_id)
+    assert checkpoint is not None
+    assert checkpoint["status"] == "failed"
 
 
 def test_admin_error_chat_with_use_agent(monkeypatch, tmp_path: Path) -> None:
