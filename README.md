@@ -1,7 +1,7 @@
 # RootSeeker V2
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.3-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.1.4-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
@@ -12,7 +12,7 @@
 
 全链路覆盖：告警接入 → 日志 / 链路采集 → 代码检索与图谱 → 根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署，代码与日志可不出内网。通知支持飞书 / 钉钉 / 企微 / Slack；Admin 可管理仓库同步、定时任务、消息模板与错误排查助手。
 
-> **当前阶段**（`v1.1.3`）：MVP 主链路已在开发环境端到端跑通。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
+> **当前阶段**（`v1.1.4`）：MVP 主链路已在开发环境端到端跑通。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
 
 <p align="center">
   <b>⭐ 如果这个项目对你有帮助，请点个 Star 支持一下！</b><br>
@@ -21,11 +21,11 @@
 
 <p align="center">
   <a href="https://github.com/iceycn/root-seeker-v2">
-    <img src="https://img.shields.io/badge/⭐_Star_on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="Star on GitHub">
+    <img src="https://img.shields.io/badge/Star_on_GitHub-181717?style=for-the-badge&logo=github&logoColor=white" alt="Star on GitHub">
   </a>
   &nbsp;
   <a href="https://gitee.com/icey_1/root-seeker-v2">
-    <img src="https://img.shields.io/badge/⭐_Star_on_Gitee-C71D23?style=for-the-badge&logo=gitee&logoColor=white" alt="Star on Gitee">
+    <img src="https://img.shields.io/badge/Star_on_Gitee-C71D23?style=for-the-badge&logo=gitee&logoColor=white" alt="Star on Gitee">
   </a>
 </p>
 
@@ -118,27 +118,27 @@ flowchart LR
 
 <table>
   <tr>
-    <td align="center"><b>总览状态</b><br><img src="docs/screenshots/admin-overview.png" alt="总览状态"></td>
-    <td align="center"><b>错误排查</b><br><img src="docs/screenshots/admin-error-chat.png" alt="错误排查"></td>
+    <td align="center" width="50%"><b>总览状态</b><br><img src="docs/screenshots/admin-overview.png" alt="总览状态" width="420"></td>
+    <td align="center" width="50%"><b>错误排查</b><br><img src="docs/screenshots/admin-error-chat.png" alt="错误排查" width="420"></td>
   </tr>
   <tr>
-    <td align="center"><b>Skills 管理</b><br><img src="docs/screenshots/admin-skills.png" alt="Skills 管理"></td>
-    <td align="center"><b>Plugins / Tools</b><br><img src="docs/screenshots/admin-plugins.png" alt="Plugins / Tools"></td>
+    <td align="center"><b>Skills 管理</b><br><img src="docs/screenshots/admin-skills.png" alt="Skills 管理" width="420"></td>
+    <td align="center"><b>Plugins / Tools</b><br><img src="docs/screenshots/admin-plugins.png" alt="Plugins / Tools" width="420"></td>
   </tr>
   <tr>
-    <td align="center"><b>MCP 协议</b><br><img src="docs/screenshots/admin-mcp-servers.png" alt="MCP 协议"></td>
-    <td align="center"><b>Repo 管理</b><br><img src="docs/screenshots/admin-repos.png" alt="Repo 管理"></td>
+    <td align="center"><b>MCP 协议</b><br><img src="docs/screenshots/admin-mcp-servers.png" alt="MCP 协议" width="420"></td>
+    <td align="center"><b>Repo 管理</b><br><img src="docs/screenshots/admin-repos.png" alt="Repo 管理" width="420"></td>
   </tr>
   <tr>
-    <td align="center"><b>Service Catalog</b><br><img src="docs/screenshots/admin-catalog.png" alt="Service Catalog"></td>
-    <td align="center"><b>大模型</b><br><img src="docs/screenshots/admin-models.png" alt="大模型"></td>
+    <td align="center"><b>Service Catalog</b><br><img src="docs/screenshots/admin-catalog.png" alt="Service Catalog" width="420"></td>
+    <td align="center"><b>大模型</b><br><img src="docs/screenshots/admin-models.png" alt="大模型" width="420"></td>
   </tr>
   <tr>
-    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道"></td>
-    <td align="center"><b>定时任务</b><br><img src="docs/screenshots/admin-schedules.png" alt="定时任务"></td>
+    <td align="center"><b>通知渠道</b><br><img src="docs/screenshots/admin-notification-channels.png" alt="通知渠道" width="420"></td>
+    <td align="center"><b>定时任务</b><br><img src="docs/screenshots/admin-schedules.png" alt="定时任务" width="420"></td>
   </tr>
   <tr>
-    <td align="center" colspan="2"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置"></td>
+    <td align="center" colspan="2"><b>高级设置</b><br><img src="docs/screenshots/admin-advanced-settings.png" alt="高级设置" width="640"></td>
   </tr>
 </table>
 
@@ -146,11 +146,11 @@ flowchart LR
 
 <table>
   <tr>
-    <td align="center"><b>API 文档（Swagger）</b><br><img src="docs/screenshots/api-docs.png" alt="API 文档"></td>
-    <td align="center"><b>Zoekt 代码搜索</b><br><img src="docs/screenshots/zoekt.png" alt="Zoekt"></td>
+    <td align="center" width="50%"><b>API 文档（Swagger）</b><br><img src="docs/screenshots/api-docs.png" alt="API 文档" width="420"></td>
+    <td align="center" width="50%"><b>Zoekt 代码搜索</b><br><img src="docs/screenshots/zoekt.png" alt="Zoekt" width="420"></td>
   </tr>
   <tr>
-    <td align="center" colspan="2"><b>Qdrant 向量库</b><br><img src="docs/screenshots/qdrant.png" alt="Qdrant"></td>
+    <td align="center" colspan="2"><b>Qdrant 向量库</b><br><img src="docs/screenshots/qdrant.png" alt="Qdrant" width="640"></td>
   </tr>
 </table>
 
@@ -497,7 +497,7 @@ k8s/            # Kubernetes 清单
 ## 相关文档
 
 - [实现状态与缺口](docs/implementation-status.md)
-- [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
+- [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [Case 状态机](docs/architecture/case-state-machine.md)
 - [状态机总览](docs/architecture/state-machines.md)
 
