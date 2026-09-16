@@ -8,13 +8,12 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from apps.admin.config_store import REPO_SYNC_CHANGED_JOB_ID
-from apps.admin.main import create_app
 from rootseeker.cron import JobRunResult, JobRunStatus
+from tests.support.admin_client import make_admin_client
 
 
 def _client(tmp_path: Path) -> TestClient:
-    app = create_app(repo_root=tmp_path)
-    return TestClient(app)
+    return make_admin_client(tmp_path)
 
 
 def test_cron_jobs_list_includes_builtin(tmp_path: Path) -> None:

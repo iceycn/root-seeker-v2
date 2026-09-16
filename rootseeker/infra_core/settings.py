@@ -48,6 +48,7 @@ class RootSeekerSettings(BaseSettings):
     notification_channel_sqlite_path: str = "data/admin/notification_channels.db"
     message_template_file: str = "data/admin/message_templates.json"
     message_template_sqlite_path: str = "data/admin/message_templates.db"
+    admin_users_sqlite_path: str = "data/admin/users.sqlite"
 
     # LLM report enhancement — OpenAI-compatible chat completions endpoint.
     llm_enabled: bool = True

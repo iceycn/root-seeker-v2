@@ -8,12 +8,14 @@ import {
   FolderOpenOutlined,
   HeartOutlined,
   KeyOutlined,
+  LogoutOutlined,
   MessageOutlined,
   PlusOutlined,
   RobotOutlined,
   SearchOutlined,
   SettingOutlined,
   ThunderboltOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
 import {
   App as AntApp,
@@ -23,6 +25,7 @@ import {
   Checkbox,
   ConfigProvider,
   Divider,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -43,6 +46,8 @@ import {
 import type { MenuProps } from 'antd'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
+import LoginPage from './LoginPage.tsx'
+import UsersPage from './UsersPage.tsx'
 
 type ApiRecord = Record<string, unknown>
 
@@ -319,7 +324,7 @@ type ErrorChatResult = ApiRecord & {
   tool_results?: unknown[]
 }
 
-const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
+export const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json' },
     ...init,
@@ -334,6 +339,13 @@ const api = async <T,>(url: string, init?: RequestInit): Promise<T> => {
     }
   }
   if (!response.ok) {
+    const isAuthForm = url.startsWith('/api/auth/login') || url.startsWith('/api/auth/bootstrap')
+    if (response.status === 401 && !isAuthForm) {
+      if (window.location.pathname !== '/login') {
+        const next = encodeURIComponent(window.location.pathname)
+        window.location.href = `/login?next=${next}`
+      }
+    }
     const detail = data?.detail
     let message = text || response.statusText
     if (typeof detail === 'string') {
@@ -711,6 +723,7 @@ const pathToView: Record<string, string> = {
   '/schedules': 'schedules',
   '/error-chat': 'errorChat',
   '/overview': 'overview',
+  '/users': 'users',
 }
 
 const viewToPath: Record<string, string> = {
@@ -726,9 +739,21 @@ const viewToPath: Record<string, string> = {
   schedules: '/schedules',
   errorChat: '/error-chat',
   overview: '/overview',
+  users: '/users',
 }
 
 function App() {
+  if (window.location.pathname === '/login') {
+    return (
+      <ConfigProvider theme={{ token: { colorPrimary: '#e85d75', borderRadius: 12 } }}>
+        <LoginPage />
+      </ConfigProvider>
+    )
+  }
+  return <AdminApp />
+}
+
+function AdminApp() {
   const [active, setActive] = useState(() => pathToView[window.location.pathname] || 'models')
   const [providers, setProviders] = useState<AiProvider[]>([])
   const [defaultProvider, setDefaultProvider] = useState<string | null>(null)
@@ -801,6 +826,9 @@ function App() {
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [errorChatSubmitting, setErrorChatSubmitting] = useState(false)
   const [errorChatResult, setErrorChatResult] = useState<ErrorChatResult | null>(null)
+  const [currentUser, setCurrentUser] = useState<{ id: string; username: string } | null>(null)
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false)
+  const [passwordForm] = Form.useForm()
   const [apiMessage, contextHolder] = message.useMessage()
 
   const navigateTo = (view: string) => {
@@ -830,6 +858,7 @@ function App() {
     },
     schedules: { title: '定时任务', desc: '管理仓库增量同步等定时任务：启停、改调度、立即执行与运行记录。' },
     advanced: { title: '高级设置', desc: '管理 Skill/MCP 运行时环境变量与 RootSeeker 运行时配置。' },
+    users: { title: '用户管理', desc: '创建与删除控制台账号；用户名创建后不可修改。' },
   }
 
   const loadProviders = useCallback(async () => {
@@ -838,6 +867,31 @@ function App() {
     setDefaultProvider(data.default_provider)
     setDefaultModel(data.default_model || null)
   }, [])
+
+  useEffect(() => {
+    api<{ id: string; username: string }>('/api/auth/me')
+      .then(setCurrentUser)
+      .catch((error) => apiMessage.error(String(error)))
+  }, [apiMessage])
+
+  const logout = async () => {
+    await api('/api/auth/logout', { method: 'POST' })
+    window.location.href = '/login'
+  }
+
+  const changePassword = async () => {
+    const values = await passwordForm.validateFields()
+    await api('/api/users/me/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        old_password: values.old_password,
+        new_password: values.new_password,
+      }),
+    })
+    apiMessage.success('密码已修改')
+    passwordForm.resetFields()
+    setPasswordModalOpen(false)
+  }
 
   useEffect(() => {
     const loadTimer = window.setTimeout(() => {
@@ -1754,6 +1808,7 @@ function App() {
     { key: 'messageTemplates', icon: <EditOutlined />, label: '消息模板' },
     { key: 'schedules', icon: <ClockCircleOutlined />, label: '定时任务' },
     { key: 'advanced', icon: <SettingOutlined />, label: '高级设置' },
+    { key: 'users', icon: <UserOutlined />, label: '用户管理' },
   ]
 
   const meta = pageMeta[active] || pageMeta.models
@@ -3043,6 +3098,9 @@ function App() {
         </Card>
       )
     }
+    if (active === 'users') {
+      return <UsersPage />
+    }
     if (active === 'errorChat') {
       return (
         <div className={`error-chat-page ${historyCollapsed ? 'history-collapsed' : ''}`}>
@@ -3218,7 +3276,23 @@ function App() {
                   <Typography.Title level={2} style={{ marginBottom: 6 }}>{meta.title}</Typography.Title>
                   <Typography.Text type="secondary">{meta.desc}</Typography.Text>
                 </div>
-                <Badge status="success" text="正常" />
+                <Space>
+                  <Dropdown
+                    menu={{
+                      items: [
+                        { key: 'password', label: '修改密码' },
+                        { key: 'logout', icon: <LogoutOutlined />, label: '退出' },
+                      ],
+                      onClick: ({ key }) => {
+                        if (key === 'password') setPasswordModalOpen(true)
+                        if (key === 'logout') void logout()
+                      },
+                    }}
+                  >
+                    <Button type="text">{currentUser?.username || '账号'}</Button>
+                  </Dropdown>
+                  <Badge status="success" text="正常" />
+                </Space>
               </div>
             )}
 
@@ -3316,6 +3390,45 @@ function App() {
             </Form.Item>
             <Form.Item label="是否密钥" name="secret" valuePropName="checked">
               <Switch />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        <Modal
+          open={passwordModalOpen}
+          title="修改密码"
+          okText="保存"
+          cancelText="取消"
+          onCancel={() => {
+            setPasswordModalOpen(false)
+            passwordForm.resetFields()
+          }}
+          onOk={() => void changePassword().catch((error) => apiMessage.error(String(error)))}
+        >
+          <Form form={passwordForm} layout="vertical">
+            <Form.Item name="old_password" label="旧密码" rules={[{ required: true, message: '请输入旧密码' }]}>
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+            <Form.Item name="new_password" label="新密码" rules={[{ required: true, message: '请输入新密码' }]}>
+              <Input.Password autoComplete="new-password" />
+            </Form.Item>
+            <Form.Item
+              name="confirm_password"
+              label="确认新密码"
+              dependencies={['new_password']}
+              rules={[
+                { required: true, message: '请再次输入新密码' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('new_password') === value) {
+                      return Promise.resolve()
+                    }
+                    return Promise.reject(new Error('两次输入的新密码不一致'))
+                  },
+                }),
+              ]}
+            >
+              <Input.Password autoComplete="new-password" />
             </Form.Item>
           </Form>
         </Modal>

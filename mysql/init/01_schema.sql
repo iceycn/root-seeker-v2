@@ -83,5 +83,13 @@ CREATE TABLE IF NOT EXISTS error_chat_history (
     payload JSON NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS users (
+    id VARCHAR(36) PRIMARY KEY,
+    username VARCHAR(64) NOT NULL UNIQUE COLLATE utf8mb4_bin,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Replay tables intentionally omitted: runtime replay still uses in-memory ReplayStore.
 -- Add MysqlReplayStore + matching schema when/if replay persistence is required.

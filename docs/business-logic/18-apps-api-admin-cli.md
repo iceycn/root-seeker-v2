@@ -142,7 +142,7 @@ Admin 分三层：**SPA 页面路由**（返回 `admin-web/dist/index.html` 或 
 
 | 方法 | 路径 | Handler | 说明 |
 | --- | --- | --- | --- |
-| GET | `/`, `/admin`, `/models`, `/advanced-settings`, `/skills`, `/repos`, `/catalog`, `/plugins`, `/notification-channels`, `/error-chat`, `/overview`, `/schedules` | `admin_page` | 同一 SPA 入口 |
+| GET | `/`, `/admin`, `/login`, `/users`, `/models`, `/advanced-settings`, `/skills`, `/repos`, `/catalog`, `/plugins`, `/notification-channels`, `/error-chat`, `/overview`, `/schedules` | `admin_page` | 同一 SPA 入口 |
 | GET | `/assets/{path:path}` | `admin_assets` | 前端静态资源 |
 | GET | `/healthz` | `healthz` | `{"status":"ok"}` |
 
@@ -186,6 +186,23 @@ Store 工厂：`build_notification_channel_store(config_root)`；持久化规则
 | GET | `/api/plugins` | `list_plugins` | plugin registry → [06-plugin-system.md](./06-plugin-system.md) |
 | GET | `/api/tools` | `list_tools` | tool registry → [07-mcp-plane.md](./07-mcp-plane.md) |
 | GET/POST/DELETE | `/api/catalog` 及 `/{tenant}/{environment}/{service_name}` | 各同名 handler | service catalog → [15-service-catalog-log-data.md](./15-service-catalog-log-data.md) |
+
+#### 3.3.6 认证与用户（Auth / Users）
+
+**中间件：** 除公开认证路由外，未携带有效 Cookie `rootseeker_admin_session` 时，访问 `/api/*` 返回 **401**；访问 SPA 页面路由 **302** 重定向至 `/login`。公开路由含 `/api/auth/status`、`/api/auth/bootstrap`（仅 `users` 计数为 0 时可用）、`/api/auth/login`、`POST /api/auth/logout`、`/healthz` 等（见 `apps/admin/auth_middleware.py`）。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/auth/status` | 公开；返回 `needs_bootstrap` / 是否已登录 |
+| POST | `/api/auth/bootstrap` | 仅 `users` 表 `count==0` 时可创建首个用户 |
+| POST | `/api/auth/login` | 校验 bcrypt 密码并设置 HttpOnly Cookie `rootseeker_admin_session` |
+| POST | `/api/auth/logout` | 清除会话 Cookie |
+| GET | `/api/auth/me` | 当前登录用户（公开字段，无密码哈希） |
+| GET/POST | `/api/users` | 列表 / 创建用户（用户名不可后续修改） |
+| DELETE | `/api/users/{id}` | 删除用户；可删除自己；删至无用户时回到 bootstrap |
+| POST | `/api/users/me/password` | 修改当前用户密码 |
+
+持久化：`apps/admin/user_store.py`；密码哈希：`apps/admin/passwords.py`（bcrypt）。会话：`apps/admin/session_store.py`（进程内内存，重启失效）。
 
 ---
 

@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from apps.admin.main import create_app
+from tests.support.admin_client import make_admin_client
 
 
 def test_message_templates_crud_and_system_guard(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     listed = client.get("/api/message-templates")
     assert listed.status_code == 200
@@ -42,7 +40,7 @@ def test_message_templates_crud_and_system_guard(tmp_path: Path) -> None:
 
 
 def test_notification_channel_template_id_roundtrip(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
     templates = client.get("/api/message-templates").json()["items"]
     system_id = next(item["template_id"] for item in templates if item["kind"] == "system")
 

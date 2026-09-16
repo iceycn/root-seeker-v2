@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.admin.main import create_app
+from tests.support.admin_client import bootstrap_client, make_admin_client
 
 
 def _repo_root() -> Path:
@@ -16,7 +17,7 @@ def _repo_root() -> Path:
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    return TestClient(create_app(tmp_path))
+    return make_admin_client(tmp_path)
 
 
 def test_delete_builtin_skill_rejected(client) -> None:
@@ -80,7 +81,8 @@ def test_install_helper_set_role_then_set_default(client, tmp_path) -> None:
 
 def test_upsert_env_var_injects_runtime_scope_into_mcp_manager(tmp_path: Path) -> None:
     app = create_app(tmp_path)
-    client = TestClient(app)
+    client = TestClient(app, follow_redirects=False)
+    bootstrap_client(client)
     result = client.post(
         "/api/env-vars",
         json={"key": "MCP_TEST_TOKEN", "value": "secret-from-advanced", "secret": True, "scope": "runtime"},
@@ -100,26 +102,38 @@ def test_upsert_env_var_injects_runtime_scope_into_mcp_manager(tmp_path: Path) -
 
 
 def test_admin_health_status_and_page(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = TestClient(create_app(tmp_path), follow_redirects=False)
 
     health = client.get("/healthz")
     assert health.status_code == 200
     assert health.json()["status"] == "ok"
 
     page = client.get("/admin")
-    assert page.status_code == 200
-    # Prefer built SPA when dist exists; otherwise accept embedded fallback console.
-    assert ('<div id="root">' in page.text) or ("RootSeeker V2 Admin" in page.text)
-    if '<div id="root">' in page.text:
-        assert "/assets/" in page.text
+    assert page.status_code == 302
+    assert "/login" in page.headers["location"]
 
     status = client.get("/api/status")
-    assert status.status_code == 200
-    assert "skills_total" in status.json()
+    assert status.status_code == 401
+    assert status.json()["detail"] == "未登录"
+
+    auth_status = client.get("/api/auth/status")
+    assert auth_status.status_code == 200
+    assert auth_status.json()["needs_bootstrap"] is True
+
+    authed = make_admin_client(tmp_path)
+    authed_page = authed.get("/admin")
+    assert authed_page.status_code == 200
+    assert ('<div id="root">' in authed_page.text) or ("RootSeeker V2 Admin" in authed_page.text)
+    if '<div id="root">' in authed_page.text:
+        assert "/assets/" in authed_page.text
+
+    authed_status = authed.get("/api/status")
+    assert authed_status.status_code == 200
+    assert "skills_total" in authed_status.json()
 
 
 def test_admin_builtin_skill_content_returns_standard_skill_md() -> None:
-    client = TestClient(create_app(_repo_root()))
+    client = make_admin_client(_repo_root())
 
     response = client.get("/api/skills/default-log-triage/content")
 
@@ -138,7 +152,7 @@ def test_admin_builtin_skill_content_returns_standard_skill_md() -> None:
 
 
 def test_admin_repo_register_and_list(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post(
         "/api/repos",
@@ -153,7 +167,7 @@ def test_admin_repo_register_and_list(tmp_path: Path) -> None:
 
 
 def test_admin_import_local_repo(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
     local_repo = tmp_path / "local-repo"
     (local_repo / ".git").mkdir(parents=True)
 
@@ -171,7 +185,7 @@ def test_admin_import_local_repo(tmp_path: Path) -> None:
 
 
 def test_admin_repo_remote_config_masks_token(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post(
         "/api/repo-remotes",
@@ -194,7 +208,7 @@ def test_admin_repo_remote_config_masks_token(tmp_path: Path) -> None:
 
 
 def test_admin_repo_remote_fills_default_base_url(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post(
         "/api/repo-remotes",
@@ -213,7 +227,7 @@ def test_admin_repo_remote_fills_default_base_url(tmp_path: Path) -> None:
 
 
 def test_admin_repo_remote_normalizes_generic_to_custom(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post(
         "/api/repo-remotes",
@@ -454,7 +468,7 @@ def test_admin_annotate_discovered_repo_marks_failed_as_reimportable() -> None:
 
 
 def test_admin_discover_requires_existing_repo_remote(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post("/api/repos/discover", json={"remote_name": "missing"})
 
@@ -505,7 +519,7 @@ def test_admin_discover_from_remote_prefers_request_owner_over_remote_default(
 
 
 def test_admin_catalog_upsert_and_list(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post(
         "/api/catalog",
@@ -520,7 +534,7 @@ def test_admin_catalog_upsert_and_list(tmp_path: Path) -> None:
 
 
 def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
     client.post(
         "/api/repos",
         json={"name": "repo-admin", "url": "https://example.invalid/repo.git", "branch": "main"},
@@ -581,7 +595,7 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
     )
     assert quick.status_code == 410
 
-    fresh = TestClient(create_app(tmp_path))
+    fresh = make_admin_client(tmp_path)
 
     assert fresh.get("/api/repos").json()["total"] == 1
     assert any(
@@ -608,7 +622,7 @@ def test_admin_config_persists_repo_catalog_skill_and_settings(tmp_path: Path) -
 def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path) -> None:
     from tests.support.stub_planner import IncidentNormalizePlanner
 
-    client = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
+    client = make_admin_client(tmp_path, tool_planner=IncidentNormalizePlanner())
 
     response = client.post(
         "/api/error-chat", json={"content": "NullPointerException at Foo.java:12"}
@@ -624,7 +638,7 @@ def test_admin_error_chat_runs_default_flow_and_persists_history(tmp_path: Path)
     assert item["evidence_count"] >= 0
     assert len(item["evidence_items"]) == item["evidence_count"]
 
-    fresh = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
+    fresh = make_admin_client(tmp_path, tool_planner=IncidentNormalizePlanner())
     history = fresh.get("/api/error-chat").json()
     assert history["total"] == 1
     assert history["items"][0]["case"]["case_id"] == item["case"]["case_id"]
@@ -637,7 +651,7 @@ def test_admin_error_chat_reports_failure_when_planner_missing(
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
     monkeypatch.delenv("ROOTSEEKER_LLM_API_KEY", raising=False)
     monkeypatch.delenv("ROOTSEEKER_LLM_BASE_URL", raising=False)
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
 
     response = client.post(
         "/api/error-chat", json={"content": "NullPointerException at Foo.java:12"}
@@ -683,7 +697,7 @@ def test_admin_error_chat_with_use_agent(monkeypatch, tmp_path: Path) -> None:
     from tests.support.stub_planner import IncidentNormalizePlanner
 
     monkeypatch.setenv("ROOTSEEKER_LLM_ENABLED", "false")
-    client = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
+    client = make_admin_client(tmp_path, tool_planner=IncidentNormalizePlanner())
 
     response = client.post(
         "/api/error-chat",
@@ -699,7 +713,7 @@ def test_admin_error_chat_with_use_agent(monkeypatch, tmp_path: Path) -> None:
 def test_admin_error_chat_infers_service_name_when_omitted(tmp_path: Path) -> None:
     from tests.support.stub_planner import IncidentNormalizePlanner
 
-    client = TestClient(create_app(tmp_path, tool_planner=IncidentNormalizePlanner()))
+    client = make_admin_client(tmp_path, tool_planner=IncidentNormalizePlanner())
     content = (
         "2026-07-14 13:49:24.473 [training-manage-api] [http-nio-30000-exec-34] [ERROR] "
         "DuplicateKeyException in PopRecordService.insertPopRecordLogic"
@@ -753,14 +767,14 @@ def test_create_app_wires_admin_ai_provider_as_tool_planner(tmp_path: Path) -> N
     )
     store.set_default_ai_model("mimo", "mimo-v2.5-pro")
 
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
     planner = client.app.state.runtime.tool_planner
     assert planner is not None
     assert planner.config.model == "mimo-v2.5-pro"
 
 
 def test_upsert_ai_provider_refreshes_runtime_tool_planner(tmp_path: Path) -> None:
-    client = TestClient(create_app(tmp_path))
+    client = make_admin_client(tmp_path)
     assert client.app.state.runtime.tool_planner is None
 
     response = client.post(

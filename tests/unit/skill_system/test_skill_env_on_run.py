@@ -9,6 +9,7 @@ from apps.admin.main import create_app
 from rootseeker.contracts.case import CaseCreateRequest
 from rootseeker.mcp_plane.process_env import merge_stdio_env
 from rootseeker.mcp_plane.stdio_session import McpStdioSession
+from tests.support.admin_client import bootstrap_client
 from tests.support.stub_planner import IncidentNormalizePlanner
 
 ECHO_SERVER = Path(__file__).resolve().parents[2] / "fixtures" / "mcp_echo_server.py"
@@ -34,7 +35,8 @@ def test_skill_scope_env_reaches_mcp_echo_env_after_install_and_set_default(
     )
 
     app = create_app(tmp_path)
-    client = TestClient(app)
+    client = TestClient(app, follow_redirects=False)
+    bootstrap_client(client)
     skill_only = client.post(
         "/api/env-vars",
         json={"key": "SKILL_ONLY_TOKEN", "value": "skill-secret-from-admin", "scope": "skill"},

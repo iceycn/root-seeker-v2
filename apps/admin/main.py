@@ -11,16 +11,21 @@ from typing import Any
 from urllib.parse import quote, urlparse, urlunparse
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from apps.admin.auth_middleware import AdminAuthMiddleware
 from apps.admin.config_store import (
     ALLOWED_CRON_HANDLERS,
     AdminConfigStore,
     build_admin_config_store,
 )
 from apps.admin.error_history import ErrorChatHistoryStore, build_error_history_store
+from apps.admin.passwords import hash_password, verify_password
+from apps.admin.session_store import SESSION_COOKIE_NAME, SESSION_TTL_SECONDS, SessionStore
+from apps.admin.user_rules import password_error, username_error
+from apps.admin.user_store import UserAlreadyExists, UsersAlreadyExist, build_user_store, public_user
 from apps.scheduler.main import run_job_now
 from rootseeker.agent_runtime.llm_tool_planner import OpenAICompatibleToolPlanner
 from rootseeker.agent_runtime.result import AgentRunResult
@@ -67,16 +72,16 @@ from rootseeker.storage.mcp_servers import (
     build_mcp_server_store,
     mask_mcp_server_for_api,
 )
+from rootseeker.storage.message_templates import (
+    SYSTEM_TEMPLATE_ID,
+    build_message_template_store,
+)
 from rootseeker.storage.notification_channels import (
     ALLOWED_CHANNEL_TYPES,
     NotificationChannelStore,
     build_notification_channel_store,
     mask_channel_for_api,
     migrate_legacy_callbacks_from_admin,
-)
-from rootseeker.storage.message_templates import (
-    SYSTEM_TEMPLATE_ID,
-    build_message_template_store,
 )
 
 ADMIN_CASE_ID = "admin-console"
@@ -370,6 +375,21 @@ class AdminEnvVarRequest(BaseModel):
     value: str = ""
     secret: bool = False
     scope: str = "runtime"
+
+
+class AdminAuthCredentialsRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminUserCreateRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AdminPasswordChangeRequest(BaseModel):
+    old_password: str
+    new_password: str
 
 
 class AdminSkillInstallRequest(BaseModel):
@@ -1888,6 +1908,11 @@ def _save_default_flow_checkpoint(runtime: DevRuntime, result: Any) -> str:
 def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> FastAPI:
     app = FastAPI(title="RootSeeker Admin", version="0.1.0")
     config_root = Path(repo_root or Path.cwd())
+    user_store = build_user_store(config_root)
+    session_store = SessionStore()
+    app.state.user_store = user_store
+    app.state.session_store = session_store
+    app.middleware("http")(AdminAuthMiddleware(session_store, user_store))
     store = build_admin_config_store(config_root)
     _migrate_repo_remotes_git_username(store)
     _migrate_legacy_notification_callbacks(config_root, store)
@@ -1911,8 +1936,123 @@ def create_app(repo_root: Path | None = None, *, tool_planner: Any = None) -> Fa
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    def _set_session_cookie(response: JSONResponse, session_id: str) -> JSONResponse:
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_id,
+            httponly=True,
+            samesite="lax",
+            max_age=SESSION_TTL_SECONDS,
+            path="/",
+        )
+        return response
+
+    def _clear_session_cookie(response: JSONResponse) -> JSONResponse:
+        response.delete_cookie(
+            SESSION_COOKIE_NAME,
+            path="/",
+            httponly=True,
+            samesite="lax",
+        )
+        return response
+
+    def _current_user(request: Request):
+        return getattr(request.state, "admin_user", None)
+
+    @app.get("/api/auth/status")
+    def auth_status(request: Request) -> dict[str, Any]:
+        record = _current_user(request)
+        user = user_store.get_by_id(record.user_id) if record else None
+        return {
+            "authenticated": user is not None,
+            "needs_bootstrap": user_store.count() == 0,
+            "user": public_user(user) if user else None,
+        }
+
+    @app.post("/api/auth/bootstrap")
+    def auth_bootstrap(req: AdminAuthCredentialsRequest) -> JSONResponse:
+        err = username_error(req.username) or password_error(req.password)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        try:
+            user = user_store.create_first(req.username, hash_password(req.password))
+        except UsersAlreadyExist as exc:
+            raise HTTPException(status_code=409, detail="已存在用户，请登录") from exc
+        except UserAlreadyExists as exc:
+            raise HTTPException(status_code=409, detail="用户名已存在") from exc
+        sid = session_store.create(user["id"], user["username"])
+        body = JSONResponse({"ok": True, "user": public_user(user)})
+        return _set_session_cookie(body, sid)
+
+    @app.post("/api/auth/login")
+    def auth_login(req: AdminAuthCredentialsRequest) -> JSONResponse:
+        user = user_store.get_by_username(req.username)
+        if user is None or not verify_password(req.password, user["password_hash"]):
+            raise HTTPException(status_code=401, detail="用户名或密码错误")
+        sid = session_store.create(user["id"], user["username"])
+        body = JSONResponse({"ok": True, "user": public_user(user)})
+        return _set_session_cookie(body, sid)
+
+    @app.post("/api/auth/logout")
+    def auth_logout(request: Request) -> JSONResponse:
+        sid = request.cookies.get(SESSION_COOKIE_NAME)
+        if sid:
+            session_store.delete(sid)
+        return _clear_session_cookie(JSONResponse({"ok": True}))
+
+    @app.get("/api/auth/me")
+    def auth_me(request: Request) -> dict[str, Any]:
+        record = _current_user(request)
+        user = user_store.get_by_id(record.user_id) if record else None
+        if user is None:
+            raise HTTPException(status_code=401, detail="未登录")
+        return public_user(user)
+
+    @app.get("/api/users")
+    def list_users() -> dict[str, Any]:
+        items = [public_user(item) for item in user_store.list_users()]
+        return {"items": items, "total": len(items)}
+
+    @app.post("/api/users")
+    def create_user(req: AdminUserCreateRequest) -> dict[str, Any]:
+        err = username_error(req.username) or password_error(req.password)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        try:
+            user = user_store.create(req.username, hash_password(req.password))
+        except UserAlreadyExists as exc:
+            raise HTTPException(status_code=409, detail="用户名已存在") from exc
+        return {"ok": True, "user": public_user(user)}
+
+    @app.delete("/api/users/{user_id}")
+    def delete_user(user_id: str, request: Request) -> dict[str, Any]:
+        existing = user_store.get_by_id(user_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        user_store.delete(user_id)
+        session_store.delete_by_user_id(user_id)
+        return {"ok": True, "id": user_id}
+
+    @app.post("/api/users/me/password")
+    def change_my_password(req: AdminPasswordChangeRequest, request: Request) -> dict[str, Any]:
+        err = password_error(req.new_password)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+        record = _current_user(request)
+        user = user_store.get_by_id(record.user_id) if record else None
+        if user is None:
+            raise HTTPException(status_code=401, detail="未登录")
+        if not verify_password(req.old_password, user["password_hash"]):
+            raise HTTPException(status_code=400, detail="旧密码不正确")
+        if req.old_password == req.new_password:
+            raise HTTPException(status_code=400, detail="新密码不能与旧密码相同")
+        user_store.update_password_hash(user["id"], hash_password(req.new_password))
+        return {"ok": True}
+
     @app.get("/")
     @app.get("/admin")
+    @app.get("/login")
+    @app.get("/users")
     @app.get("/models")
     @app.get("/advanced-settings")
     @app.get("/skills")

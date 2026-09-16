@@ -27,6 +27,7 @@ dependencies = [
     "httpx>=0.26.0",
     "structlog>=24.1.0",
     "PyMySQL>=1.1.0",
+    "bcrypt>=4.2.0",
     "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
