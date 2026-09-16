@@ -1,4 +1,13 @@
-"""Minimal Mustache-like renderer for notify message templates."""
+"""Minimal Mustache-like renderer for notify message templates.
+
+``{{name}}`` replaces with the variable value (missing/empty → blank).
+
+``{{#name}}...{{/name}}`` is one pair, not two independent prefixes:
+``#name`` opens a block, ``/name`` closes it. If ``name`` is empty the
+whole inner text (including newlines) is dropped; otherwise the inner
+text is kept and variables inside it are substituted. A lone ``#`` or
+``/`` tag does nothing.
+"""
 
 from __future__ import annotations
 

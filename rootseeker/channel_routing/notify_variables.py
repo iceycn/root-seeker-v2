@@ -33,6 +33,8 @@ NOTIFY_VARIABLES: list[dict[str, str]] = [
     {"name": "symptom", "description": "症状原文（截断）"},
 ]
 
+# {{#var}}...{{/var}} 成对使用：有值才输出中间整段（含换行），空值则整段省略。
+# 单独写 {{var}} 只会把空值换成空白，「问题：」这类标签仍会留下。
 SYSTEM_DEFAULT_TEMPLATE_BODY = (
     "【RootSeeker】{{headline}}\n"
     "{{#problem}}问题：{{problem}}\n{{/problem}}"

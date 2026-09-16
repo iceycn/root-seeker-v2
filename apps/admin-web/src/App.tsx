@@ -218,6 +218,26 @@ type NotifyVariable = {
   description: string
 }
 
+const TEMPLATE_SYNTAX_ROWS: { name: string; description: string; example?: string }[] = [
+  {
+    name: '{{变量}}',
+    description: '替换成实际值。没值时变成空白，但「问题：」「服务：」等文字仍会留在这一行。',
+  },
+  {
+    name: '{{#变量}}',
+    description: '条件块开始。后面的内容只在该变量有值时保留。',
+  },
+  {
+    name: '{{/变量}}',
+    description: '条件块结束。必须与 {{#变量}} 成对，且名字相同；单独写无效。',
+  },
+  {
+    name: '示例',
+    example: '{{#service}}服务：{{service}}\n{{/service}}',
+    description: '成对包住一整行。有值输出「服务：xxx」；没值整段删除（含换行），不会留下空行。',
+  },
+]
+
 type McpServerRecord = ApiRecord & {
   server_id: string
   name: string
@@ -2831,9 +2851,35 @@ function AdminApp() {
                 { title: '说明', dataIndex: 'description' },
               ]}
             />
-            <Typography.Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
-              条件块写法：{`{{#service}}服务：{{service}}\n{{/service}}`}（变量为空时整段不输出）
-            </Typography.Paragraph>
+          </Card>
+          <Card bordered={false} title="条件块写法">
+            <Table
+              rowKey="name"
+              pagination={false}
+              size="small"
+              dataSource={TEMPLATE_SYNTAX_ROWS}
+              columns={[
+                {
+                  title: '写法',
+                  dataIndex: 'name',
+                  render: (name: string) =>
+                    name.startsWith('{{') ? <code style={{ whiteSpace: 'pre-wrap' }}>{name}</code> : name,
+                },
+                {
+                  title: '说明',
+                  dataIndex: 'description',
+                  render: (description: string, record: { example?: string }) =>
+                    record.example ? (
+                      <span>
+                        <code style={{ whiteSpace: 'pre-wrap' }}>{record.example}</code>
+                        <div>{description}</div>
+                      </span>
+                    ) : (
+                      description
+                    ),
+                },
+              ]}
+            />
           </Card>
           <Card bordered={false}>
             <Table
@@ -2889,7 +2935,12 @@ function AdminApp() {
               <Form.Item name="description" label="说明">
                 <Input placeholder="可选" />
               </Form.Item>
-              <Form.Item name="body" label="模板正文" rules={[{ required: true }]}>
+              <Form.Item
+                name="body"
+                label="模板正文"
+                rules={[{ required: true }]}
+                extra="写法见页面「可用变量说明」「条件块写法」。空值不要整行时，用 {{#变量}}……{{/变量}} 成对包住。"
+              >
                 <Input.TextArea rows={12} style={{ fontFamily: 'Consolas, Monaco, monospace' }} />
               </Form.Item>
             </Form>
