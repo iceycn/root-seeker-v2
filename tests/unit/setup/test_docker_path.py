@@ -85,3 +85,30 @@ def test_docker_path_build_fail_falls_back_to_pull(tmp_path: Path, monkeypatch) 
     joined = [" ".join(c) for c in cmds]
     assert any("build" in j for j in joined)
     assert any("docker-compose.pull.yml" in j and "up" in j for j in joined)
+
+
+def test_run_pull_stack_cn_inspects_acr_app_image(tmp_path: Path, monkeypatch) -> None:
+    from scripts.setup import docker_path
+
+    inspected: list[str] = []
+
+    def fake_present(name: str) -> bool:
+        inspected.append(name)
+        return True
+
+    monkeypatch.setattr(docker_path, "_image_present", fake_present)
+    monkeypatch.setattr(
+        docker_path.subprocess,
+        "run",
+        lambda *a, **k: MagicMock(returncode=0),
+    )
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "docker-compose.pull.yml").write_text("services: {}\n", encoding="utf-8")
+    env = {
+        "APP_IMAGE": "crpi-b41zzjy8qjnhgc6o.cn-hangzhou.personal.cr.aliyuncs.com/root-seeker/root-seeker",
+        "IMAGE_TAG": "latest",
+        "MYSQL_IMAGE": "mysql:8.0",
+    }
+    code = docker_path._run_pull_stack(tmp_path, env=env, build_only=False)
+    assert code == 0
+    assert any(n.endswith("/root-seeker/root-seeker:latest") for n in inspected)

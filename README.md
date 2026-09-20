@@ -1,7 +1,7 @@
 # RootSeeker V2
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.1-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.3.0-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
@@ -12,7 +12,7 @@
 
 全链路覆盖：告警接入 → 日志 / 链路采集 → 代码检索与图谱 → 根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署，代码与日志可不出内网。通知支持飞书 / 钉钉 / 企微 / Slack；Admin 可管理仓库同步、定时任务、消息模板与错误排查助手。
 
-> **当前阶段**（`v1.2.1`）：MVP 主链路已在开发环境端到端跑通；Admin 已支持登录与用户管理。消息模板页补充条件块写法说明。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
+> **当前阶段**（`v1.3.0`）：MVP 主链路已在开发环境端到端跑通；Admin 已支持登录与用户管理。国内一键安装优先拉阿里云 ACR 预构建镜像。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
 
 <p align="center">
   <b>⭐ 如果这个项目对你有帮助，请点个 Star 支持一下！</b><br>
@@ -176,7 +176,7 @@ cp .env.docker .env   # 按需填写 LLM / SLS 等；不配也可跑通基础能
 | 入口 | 说明 |
 | --- | --- |
 | `setup.ps1` / `setup.sh` | **标准/国际源**：Docker Hub、MySQL 官网 |
-| `setup-cn.ps1` / `setup-cn.sh` | **国内加速**：DaoCloud / 清华镜像等（设置 `ROOTSEEKER_SETUP_REGION=cn`） |
+| `setup-cn.ps1` / `setup-cn.sh` | **国内加速**：优先拉杭州 ACR 公开预构建镜像，MySQL 等走清华/DaoCloud（设置 `ROOTSEEKER_SETUP_REGION=cn`） |
 | `uninstall.ps1` / `uninstall.sh` | **卸载全清**：停 Docker/本机进程，删除 volumes、`.env`、`.venv`、`.tools`、`data/*`、进度文件 |
 | `scripts/setup_wizard.py` | 真正的安装编排（探测、路径选择、写 env、启服务、健康检查） |
 
@@ -222,7 +222,7 @@ chmod +x uninstall.sh
 | `--path docker\|native` | Docker 全栈 / 本机完整安装 |
 | `--storage mysql\|sqlite\|existing-mysql` | 存储方式（Docker 下 `existing-mysql` 按 mysql 处理） |
 | `--build-only` | 仅 Docker 路径：只 `compose build` / 拉取，不启动 |
-| `--pull` | Docker 路径优先用预构建镜像（`docker-compose.pull.yml`），跳过本地 build；本地 build 失败时也会自动回退 |
+| `--pull` | Docker 路径优先用预构建镜像（`docker-compose.pull.yml`）。国内默认 ACR；国际为 Docker Hub。本地 build 失败时也会自动回退 |
 | `--resume` | 读取 `.setup-state.json` 跳过已完成步骤 |
 | `--status` | 打印各步骤完成状态后退出 |
 
@@ -232,7 +232,7 @@ chmod +x uninstall.sh
 # Docker + MySQL（默认 Compose profile=mysql）
 python scripts/setup_wizard.py --yes --path docker --storage mysql
 
-# 国内加速（等价于 setup-cn.*）：先设区域再跑向导
+# 国内加速（等价于 setup-cn.*）：优先拉阿里云 ACR 公开镜像
 # Windows:  .\setup-cn.ps1 --yes --path docker --storage mysql --pull
 # Linux:    ./setup-cn.sh  --yes --path docker --storage mysql --pull
 ROOTSEEKER_SETUP_REGION=cn python scripts/setup_wizard.py --yes --path docker --storage mysql --pull
@@ -261,7 +261,10 @@ python scripts/setup_wizard.py --yes --path native --storage mysql
 
 ```bash
 ./start.sh            # 推荐：缺 Zoekt 二进制时会自动下载
-# 或使用 Docker Hub 预构建镜像（账号 wuhun0301）：
+# 或使用预构建镜像：
+# 国内（setup-cn 已设 ROOTSEEKER_SETUP_REGION=cn，无需 Docker Hub 账号）：
+# ROOTSEEKER_SETUP_REGION=cn ./start.sh --pull
+# 国际：
 # DOCKERHUB_USER=wuhun0301 ./start.sh --pull
 # 或
 make docker-up
@@ -497,7 +500,7 @@ k8s/            # Kubernetes 清单
 ## 相关文档
 
 - [实现状态与缺口](docs/implementation-status.md)
-- [v1.2.1 发布说明](docs/releases/v1.2.1.md) · [v1.2.0 发布说明](docs/releases/v1.2.0.md) · [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
+- [v1.3.0 发布说明](docs/releases/v1.3.0.md) · [v1.2.1 发布说明](docs/releases/v1.2.1.md) · [v1.2.0 发布说明](docs/releases/v1.2.0.md) · [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [Case 状态机](docs/architecture/case-state-machine.md)
 - [状态机总览](docs/architecture/state-machines.md)
 

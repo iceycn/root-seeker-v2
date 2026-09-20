@@ -13,6 +13,25 @@ _CN_DOCKER_PROXIES = (
 
 _ENV_REGION = "ROOTSEEKER_SETUP_REGION"
 
+ACR_REGISTRY = "crpi-b41zzjy8qjnhgc6o.cn-hangzhou.personal.cr.aliyuncs.com"
+ACR_NAMESPACE = "root-seeker"
+
+_ACR_REPOS = {
+    "app": "root-seeker",
+    "zoekt": "root-seeker-zoekt",
+    "gitnexus": "root-seeker-gitnexus",
+}
+_HUB_REPOS = {
+    "app": "rootseeker-v2",
+    "zoekt": "rootseeker-v2-zoekt",
+    "gitnexus": "rootseeker-v2-gitnexus",
+}
+_COMPOSE_IMAGE_VARS = {
+    "app": "APP_IMAGE",
+    "zoekt": "ZOEKT_IMAGE",
+    "gitnexus": "GITNEXUS_IMAGE",
+}
+
 
 def setup_region() -> str:
     """Return ``cn`` or ``global`` from env (set by setup-cn.* wrappers)."""
@@ -55,6 +74,18 @@ def mirror_hub_refs(repository: str, tag: str = "latest") -> list[str]:
     return [f"docker.io/{repo}:{tag}", f"{repo}:{tag}"]
 
 
+def acr_repository(name: str) -> str:
+    return f"{ACR_REGISTRY}/{ACR_NAMESPACE}/{name}"
+
+
+def prebuilt_candidates(role: str, *, hub_user: str, tag: str) -> list[str]:
+    hub = f"{hub_user}/{_HUB_REPOS[role]}"
+    refs = mirror_hub_refs(hub, tag)
+    if is_cn_region():
+        return [f"{acr_repository(_ACR_REPOS[role])}:{tag}", *refs]
+    return refs
+
+
 def mysql_image_refs() -> list[str]:
     if is_cn_region():
         refs = [f"{proxy}/library/mysql:8.0" for proxy in _CN_DOCKER_PROXIES]
@@ -95,16 +126,18 @@ def apply_cn_docker_env(env: dict[str, str]) -> dict[str, str]:
     else:
         ui.warn("未能通过国内源拉取 mysql:8.0，后续 compose 可能失败")
 
-    for short in (
-        f"{hub_user}/rootseeker-v2",
-        f"{hub_user}/rootseeker-v2-zoekt",
-        f"{hub_user}/rootseeker-v2-gitnexus",
-    ):
-        local = f"docker.io/{short}:{tag}"
-        ensure_local_image(local, mirror_hub_refs(short, tag))
-        # Also tag without docker.io/ prefix used by some compose resolvers.
-        if _image_present(local) and not _image_present(f"{short}:{tag}"):
-            _docker_tag(local, f"{short}:{tag}")
+    for role, var_name in _COMPOSE_IMAGE_VARS.items():
+        repo = acr_repository(_ACR_REPOS[role])
+        env[var_name] = repo
+        local = f"{repo}:{tag}"
+        ok = ensure_local_image(local, prebuilt_candidates(role, hub_user=hub_user, tag=tag))
+        if ok:
+            ui.ok(f"预构建镜像已就绪 ({local})")
+        else:
+            ui.warn(
+                f"未能拉取预构建镜像 {local}（已含 ACR 公开仓与 Hub 加速）。"
+                "请确认 ACR 仓库已设为公开，后续 compose 可能失败。"
+            )
 
     return env
 

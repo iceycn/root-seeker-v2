@@ -108,7 +108,7 @@ repository behavior aligned.
 ## Planned
 
 - Richer bidirectional human-workflow integrations for approvals
-- Docker Compose baseline exists; Kubernetes manifests and production hardening remain planned
+- Docker Compose baseline exists; GitHub Publish dual-pushes Docker Hub and Alibaba Cloud ACR; CN setup (`setup-cn.*`) prefers public ACR pulls with Hub-mirror fallback. Kubernetes manifests and production hardening remain planned
 - Deeper production health probes, SLO dashboards and alert rules
 
 ## Notes

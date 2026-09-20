@@ -2,7 +2,7 @@
 # RootSeeker V2 - Quick Start Script
 # Usage:
 #   ./start.sh           # Docker Compose build+up (default)
-#   ./start.sh --pull    # 使用 Docker Hub 预构建镜像（需 DOCKERHUB_USER）
+#   ./start.sh --pull    # 预构建镜像：国内走 ACR，国际需 DOCKERHUB_USER
 #   ./start.sh k8s       # Kubernetes (kubectl)
 #   ./start.sh stop      # Stop all services
 #   ./start.sh status    # Check service status
@@ -65,11 +65,24 @@ docker_up() {
     sync_storage_compose_profiles
 
     if [ "$USE_PULL" = "1" ]; then
-        if [ -z "${DOCKERHUB_USER:-}" ]; then
-            error "使用 --pull 时请设置 DOCKERHUB_USER（Docker Hub 用户名）"
-            exit 1
+        ACR_REGISTRY="${ACR_REGISTRY:-crpi-b41zzjy8qjnhgc6o.cn-hangzhou.personal.cr.aliyuncs.com}"
+        ACR_NAMESPACE="${ACR_NAMESPACE:-root-seeker}"
+        region="$(printf '%s' "${ROOTSEEKER_SETUP_REGION:-global}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$region" = "cn" ] || [ "$region" = "china" ] || [ "$region" = "zh" ] || [ "$region" = "domestic" ] || [ "$region" = "china-mainland" ]; then
+            export APP_IMAGE="${APP_IMAGE:-${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker}"
+            export ZOEKT_IMAGE="${ZOEKT_IMAGE:-${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-zoekt}"
+            export GITNEXUS_IMAGE="${GITNEXUS_IMAGE:-${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-gitnexus}"
+            info "Pulling prebuilt images from ACR (${APP_IMAGE})..."
+        else
+            if [ -z "${DOCKERHUB_USER:-}" ]; then
+                error "使用 --pull 时请设置 DOCKERHUB_USER（Docker Hub 用户名）"
+                exit 1
+            fi
+            export APP_IMAGE="${APP_IMAGE:-docker.io/${DOCKERHUB_USER}/rootseeker-v2}"
+            export ZOEKT_IMAGE="${ZOEKT_IMAGE:-docker.io/${DOCKERHUB_USER}/rootseeker-v2-zoekt}"
+            export GITNEXUS_IMAGE="${GITNEXUS_IMAGE:-docker.io/${DOCKERHUB_USER}/rootseeker-v2-gitnexus}"
+            info "Pulling images from Docker Hub (user=${DOCKERHUB_USER})..."
         fi
-        info "Pulling images from Docker Hub (user=${DOCKERHUB_USER})..."
         docker compose -f docker-compose.yml -f docker-compose.pull.yml pull
         info "Starting RootSeeker V2 services (prebuilt images)..."
         docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d

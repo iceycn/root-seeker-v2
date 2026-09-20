@@ -1,6 +1,7 @@
 name: Publish
 
-# Images: wuhun0301/rootseeker-v2{,-zoekt,-gitnexus}
+# Images: Docker Hub wuhun0301/rootseeker-v2{,-zoekt,-gitnexus}
+#          ACR ${ACR_NAMESPACE}/root-seeker{,-zoekt,-gitnexus}
 on:
   push:
     branches: [main, master]
@@ -22,6 +23,8 @@ on:
 
 env:
   HUB_USER: wuhun0301
+  ACR_REGISTRY: crpi-b41zzjy8qjnhgc6o.cn-hangzhou.personal.cr.aliyuncs.com
+  ACR_NAMESPACE: root-seeker
 
 jobs:
   build-and-push:
@@ -41,6 +44,13 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to Alibaba Cloud ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
       - name: Resolve tags
         id: meta
@@ -67,6 +77,8 @@ jobs:
           tags: |
             ${{ env.HUB_USER }}/rootseeker-v2:latest
             ${{ env.HUB_USER }}/rootseeker-v2:${{ steps.meta.outputs.VERSION }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker:latest
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
 
@@ -79,6 +91,8 @@ jobs:
           tags: |
             ${{ env.HUB_USER }}/rootseeker-v2-zoekt:latest
             ${{ env.HUB_USER }}/rootseeker-v2-zoekt:${{ steps.meta.outputs.VERSION }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-zoekt:latest
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-zoekt:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=zoekt
           cache-to: type=gha,mode=max,scope=zoekt
 
@@ -91,5 +105,7 @@ jobs:
           tags: |
             ${{ env.HUB_USER }}/rootseeker-v2-gitnexus:latest
             ${{ env.HUB_USER }}/rootseeker-v2-gitnexus:${{ steps.meta.outputs.VERSION }}
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-gitnexus:latest
+            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-gitnexus:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=gitnexus
           cache-to: type=gha,mode=max,scope=gitnexus

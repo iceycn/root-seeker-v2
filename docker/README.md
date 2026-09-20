@@ -53,7 +53,7 @@ bash docker/prepare-zoekt.sh
 
 公开源码仓库：https://github.com/iceycn/root-seeker-v2
 
-## 推送到 Docker Hub
+## 推送到 Docker Hub / 阿里云 ACR
 
 ```powershell
 docker login
@@ -61,17 +61,32 @@ docker login
 # 默认推送到 wuhun0301；可覆盖: -User othername
 ```
 
-已发布镜像（`wuhun0301`）：
+GitHub Actions `Publish` 在构建时同时推送：
 
-- [wuhun0301/rootseeker-v2](https://hub.docker.com/r/wuhun0301/rootseeker-v2)（api / admin / worker / scheduler 共用）
-- [wuhun0301/rootseeker-v2-zoekt](https://hub.docker.com/r/wuhun0301/rootseeker-v2-zoekt)
-- [wuhun0301/rootseeker-v2-gitnexus](https://hub.docker.com/r/wuhun0301/rootseeker-v2-gitnexus)
+- Docker Hub（`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`）
+- 阿里云 ACR 杭州个人版（`ACR_USERNAME` / `ACR_PASSWORD`）
 
-## 从 Docker Hub 拉取启动
+ACR 主机：`crpi-b41zzjy8qjnhgc6o.cn-hangzhou.personal.cr.aliyuncs.com`  
+命名空间：`root-seeker`。三个仓库须在控制台设为**公开**，国内一键脚本才能匿名拉取。
+
+已发布镜像（`wuhun0301` / ACR `root-seeker`）：
+
+- Hub: [wuhun0301/rootseeker-v2](https://hub.docker.com/r/wuhun0301/rootseeker-v2)（api / admin / worker / scheduler 共用）
+- Hub: [wuhun0301/rootseeker-v2-zoekt](https://hub.docker.com/r/wuhun0301/rootseeker-v2-zoekt)
+- Hub: [wuhun0301/rootseeker-v2-gitnexus](https://hub.docker.com/r/wuhun0301/rootseeker-v2-gitnexus)
+- ACR: `crpi-b41zzjy8qjnhgc6o.cn-hangzhou.personal.cr.aliyuncs.com/root-seeker/root-seeker`
+- ACR: `…/root-seeker/root-seeker-zoekt`
+- ACR: `…/root-seeker/root-seeker-gitnexus`
+
+## 从预构建镜像拉取启动
 
 ```bash
+# 国际 Docker Hub
 export DOCKERHUB_USER=wuhun0301
 ./start.sh --pull
 # 或
 docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d
+
+# 国内 ACR（仓库须公开，无需 docker login）
+ROOTSEEKER_SETUP_REGION=cn ./start.sh --pull
 ```

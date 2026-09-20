@@ -58,7 +58,9 @@ def _run_pull_stack(repo_root: Path, *, env: dict[str, str], build_only: bool) -
     """Start (or pull) using prebuilt Hub images + compose profiles."""
     base = _compose_cmd(repo_root, use_pull=True)
     hub_user = env.get("DOCKERHUB_USER", "wuhun0301")
-    app_image = f"docker.io/{hub_user}/rootseeker-v2:latest"
+    tag = env.get("IMAGE_TAG", "latest")
+    app_repo = env.get("APP_IMAGE", f"docker.io/{hub_user}/rootseeker-v2")
+    app_image = f"{app_repo}:{tag}"
     mysql_image = env.get("MYSQL_IMAGE", "mysql:8.0")
 
     if build_only:
@@ -135,6 +137,10 @@ def run_docker_path(
     else:
         env["COMPOSE_PROFILES"] = "mysql"
     env.setdefault("DOCKERHUB_USER", os.environ.get("DOCKERHUB_USER", "wuhun0301"))
+    hub_user = env["DOCKERHUB_USER"]
+    env.setdefault("APP_IMAGE", f"docker.io/{hub_user}/rootseeker-v2")
+    env.setdefault("ZOEKT_IMAGE", f"docker.io/{hub_user}/rootseeker-v2-zoekt")
+    env.setdefault("GITNEXUS_IMAGE", f"docker.io/{hub_user}/rootseeker-v2-gitnexus")
 
     from scripts.setup.mirrors import apply_cn_docker_env, is_cn_region, setup_region
 
