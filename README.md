@@ -1,7 +1,7 @@
 # RootSeeker V2
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.3.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
@@ -12,7 +12,7 @@
 
 全链路覆盖：告警接入 → 日志 / 链路采集 → 代码检索与图谱 → 根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署，代码与日志可不出内网。通知支持飞书 / 钉钉 / 企微 / Slack；Admin 可管理仓库同步、定时任务、消息模板与错误排查助手。
 
-> **当前阶段**（`v1.3.0`）：MVP 主链路已在开发环境端到端跑通；Admin 已支持登录与用户管理。国内一键安装优先拉阿里云 ACR 预构建镜像。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
+> **当前阶段**（`v1.3.1`）：MVP 主链路已在开发环境端到端跑通；Admin 已支持登录与用户管理。国内一键安装优先拉阿里云 ACR 预构建镜像。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
 
 <p align="center">
   <b>⭐ 如果这个项目对你有帮助，请点个 Star 支持一下！</b><br>
@@ -500,7 +500,7 @@ k8s/            # Kubernetes 清单
 ## 相关文档
 
 - [实现状态与缺口](docs/implementation-status.md)
-- [v1.3.0 发布说明](docs/releases/v1.3.0.md) · [v1.2.1 发布说明](docs/releases/v1.2.1.md) · [v1.2.0 发布说明](docs/releases/v1.2.0.md) · [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
+- [v1.3.1 发布说明](docs/releases/v1.3.1.md) · [v1.3.0 发布说明](docs/releases/v1.3.0.md) · [v1.2.1 发布说明](docs/releases/v1.2.1.md) · [v1.2.0 发布说明](docs/releases/v1.2.0.md) · [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [Case 状态机](docs/architecture/case-state-machine.md)
 - [状态机总览](docs/architecture/state-machines.md)
 
