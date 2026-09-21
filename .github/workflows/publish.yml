@@ -81,6 +81,8 @@ jobs:
             ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
+          provenance: false
+          sbom: false
 
       - name: Build and push zoekt
         uses: docker/build-push-action@v5
@@ -95,6 +97,8 @@ jobs:
             ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-zoekt:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=zoekt
           cache-to: type=gha,mode=max,scope=zoekt
+          provenance: false
+          sbom: false
 
       - name: Build and push gitnexus
         uses: docker/build-push-action@v5
@@ -109,3 +113,5 @@ jobs:
             ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-gitnexus:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=gitnexus
           cache-to: type=gha,mode=max,scope=gitnexus
+          provenance: false
+          sbom: false
