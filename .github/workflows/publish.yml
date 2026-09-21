@@ -20,6 +20,17 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "要打到 Hub/ACR 的版本号（如 v1.3.0）。留空则用 sha-<7 位>"
+        required: false
+        type: string
+        default: ""
+      retag_only:
+        description: "异常回填：不重建，把已有 latest 复制为上述版本号（Hub + ACR）"
+        required: false
+        type: boolean
+        default: false
 
 env:
   HUB_USER: wuhun0301
@@ -27,8 +38,57 @@ env:
   ACR_NAMESPACE: root-seeker
 
 jobs:
+  retag-latest-to-version:
+    name: Retag latest to version (Hub + ACR)
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.retag_only == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require version input
+        run: |
+          if [[ -z "${{ github.event.inputs.version }}" ]]; then
+            echo "retag_only 需要填写 version，例如 v1.3.0" >&2
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to Alibaba Cloud ACR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Copy latest manifests to version tag
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          copy_tag() {
+            local src="$1"
+            local dest="$2"
+            echo "imagetools create ${dest} <- ${src}"
+            docker buildx imagetools create --tag "${dest}" "${src}"
+          }
+          copy_tag "${HUB_USER}/rootseeker-v2:latest" "${HUB_USER}/rootseeker-v2:${VERSION}"
+          copy_tag "${HUB_USER}/rootseeker-v2-zoekt:latest" "${HUB_USER}/rootseeker-v2-zoekt:${VERSION}"
+          copy_tag "${HUB_USER}/rootseeker-v2-gitnexus:latest" "${HUB_USER}/rootseeker-v2-gitnexus:${VERSION}"
+          copy_tag "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker:latest" "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker:${VERSION}"
+          copy_tag "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-zoekt:latest" "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-zoekt:${VERSION}"
+          copy_tag "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-gitnexus:latest" "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-gitnexus:${VERSION}"
+
   build-and-push:
     name: Build and Push Docker Images
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.retag_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,12 +115,16 @@ jobs:
       - name: Resolve tags
         id: meta
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+          INPUT_VERSION="${{ github.event.inputs.version }}"
+          if [[ -n "${INPUT_VERSION}" ]]; then
+            VERSION="${INPUT_VERSION}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             VERSION="${GITHUB_REF#refs/tags/}"
           else
             VERSION="sha-${GITHUB_SHA::7}"
           fi
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Using image version ${VERSION}"
 
       - name: Ensure Zoekt binaries
         run: |
