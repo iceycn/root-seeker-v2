@@ -92,6 +92,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # GitHub-hosted Buildx otherwise attaches OCI provenance (empty json) that ACR rejects.
+      BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -141,8 +144,6 @@ jobs:
           tags: |
             ${{ env.HUB_USER }}/rootseeker-v2:latest
             ${{ env.HUB_USER }}/rootseeker-v2:${{ steps.meta.outputs.VERSION }}
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker:latest
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=app
           cache-to: type=gha,mode=max,scope=app
           provenance: false
@@ -157,8 +158,6 @@ jobs:
           tags: |
             ${{ env.HUB_USER }}/rootseeker-v2-zoekt:latest
             ${{ env.HUB_USER }}/rootseeker-v2-zoekt:${{ steps.meta.outputs.VERSION }}
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-zoekt:latest
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-zoekt:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=zoekt
           cache-to: type=gha,mode=max,scope=zoekt
           provenance: false
@@ -173,9 +172,26 @@ jobs:
           tags: |
             ${{ env.HUB_USER }}/rootseeker-v2-gitnexus:latest
             ${{ env.HUB_USER }}/rootseeker-v2-gitnexus:${{ steps.meta.outputs.VERSION }}
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-gitnexus:latest
-            ${{ env.ACR_REGISTRY }}/${{ env.ACR_NAMESPACE }}/root-seeker-gitnexus:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha,scope=gitnexus
           cache-to: type=gha,mode=max,scope=gitnexus
           provenance: false
           sbom: false
+
+      - name: Mirror Hub images to ACR without OCI attestations
+        env:
+          VERSION: ${{ steps.meta.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          mirror() {
+            local hub_repo="$1"
+            local acr_repo="$2"
+            echo "mirror docker.io/${hub_repo}:${VERSION} -> ${acr_repo}"
+            docker pull "docker.io/${hub_repo}:${VERSION}"
+            docker tag "docker.io/${hub_repo}:${VERSION}" "${acr_repo}:${VERSION}"
+            docker tag "docker.io/${hub_repo}:${VERSION}" "${acr_repo}:latest"
+            docker push "${acr_repo}:${VERSION}"
+            docker push "${acr_repo}:latest"
+          }
+          mirror "${HUB_USER}/rootseeker-v2" "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker"
+          mirror "${HUB_USER}/rootseeker-v2-zoekt" "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-zoekt"
+          mirror "${HUB_USER}/rootseeker-v2-gitnexus" "${ACR_REGISTRY}/${ACR_NAMESPACE}/root-seeker-gitnexus"
