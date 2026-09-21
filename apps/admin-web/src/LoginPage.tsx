@@ -7,14 +7,6 @@ type AuthStatus = {
   needs_bootstrap: boolean
 }
 
-const safeNext = (): string => {
-  const next = new URLSearchParams(window.location.search).get('next') || ''
-  if (next.startsWith('/') && !next.startsWith('//')) {
-    return next
-  }
-  return ''
-}
-
 export default function LoginPage() {
   const [needsBootstrap, setNeedsBootstrap] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -26,7 +18,7 @@ export default function LoginPage() {
     void api<AuthStatus>('/api/auth/status')
       .then((status) => {
         if (status.authenticated) {
-          window.location.replace(safeNext() || '/overview')
+          window.location.replace('/')
           return
         }
         setNeedsBootstrap(Boolean(status.needs_bootstrap))
@@ -47,7 +39,7 @@ export default function LoginPage() {
         method: 'POST',
         body: JSON.stringify({ username: values.username, password: values.password }),
       })
-      window.location.replace(safeNext() || '/overview')
+      window.location.replace('/')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setSubmitting(false)

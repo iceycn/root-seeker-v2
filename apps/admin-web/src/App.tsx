@@ -7,6 +7,7 @@ import {
   EyeOutlined,
   FolderOpenOutlined,
   HeartOutlined,
+  HomeOutlined,
   KeyOutlined,
   LogoutOutlined,
   MessageOutlined,
@@ -46,6 +47,7 @@ import {
 import type { MenuProps } from 'antd'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
+import HomePage from './HomePage.tsx'
 import LoginPage from './LoginPage.tsx'
 import UsersPage from './UsersPage.tsx'
 
@@ -729,7 +731,6 @@ const mcpDiscoveryStatusMeta = (record: McpServerRecord) => {
 }
 
 const pathToView: Record<string, string> = {
-  '/': 'models',
   '/admin': 'models',
   '/models': 'models',
   '/advanced-settings': 'advanced',
@@ -763,12 +764,21 @@ const viewToPath: Record<string, string> = {
 }
 
 function App() {
-  if (window.location.pathname === '/login') {
+  const [path, setPath] = useState(window.location.pathname)
+  useEffect(() => {
+    const onPopState = () => setPath(window.location.pathname)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+  if (path === '/login') {
     return (
       <ConfigProvider theme={{ token: { colorPrimary: '#e85d75', borderRadius: 12 } }}>
         <LoginPage />
       </ConfigProvider>
     )
+  }
+  if (path === '/') {
+    return <HomePage />
   }
   return <AdminApp />
 }
@@ -1813,6 +1823,7 @@ function AdminApp() {
   }
 
   const menuItems: MenuProps['items'] = [
+    { key: 'home', icon: <HomeOutlined />, label: '首页' },
     { key: 'sessions', label: '会话', type: 'group' },
     { key: 'overview', icon: <ThunderboltOutlined />, label: '总览状态' },
     { key: 'errorChat', icon: <MessageOutlined />, label: '错误排查' },
@@ -3318,7 +3329,18 @@ function AdminApp() {
         <Layout className="admin-layout">
           <Layout.Sider width={210} theme="light" className="admin-sider">
             <div className="brand"><span className="brand-icon">R</span><span>RootSeeker</span></div>
-            <Menu selectedKeys={[active]} mode="inline" items={menuItems} onClick={(info) => navigateTo(info.key)} />
+            <Menu
+              selectedKeys={[active]}
+              mode="inline"
+              items={menuItems}
+              onClick={(info) => {
+                if (info.key === 'home') {
+                  window.location.assign('/')
+                  return
+                }
+                navigateTo(info.key)
+              }}
+            />
           </Layout.Sider>
           <Layout.Content className="admin-content">
             {active !== 'errorChat' && (

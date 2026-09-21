@@ -57,6 +57,9 @@ def test_unauthenticated_api_and_page(tmp_path) -> None:
     page = client.get("/overview")
     assert page.status_code == 302
     assert "/login" in page.headers["location"]
+    home = client.get("/")
+    assert home.status_code == 302
+    assert "/login" in home.headers["location"]
 
 
 def test_bootstrap_sets_cookie_then_second_bootstrap_conflicts(tmp_path) -> None:
@@ -99,6 +102,8 @@ def test_login_success_and_wrong_password(tmp_path) -> None:
     me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json()["username"] == "admin"
+    home = client.get("/")
+    assert home.status_code == 200
 
 
 def test_users_crud_and_self_delete_returns_to_bootstrap(tmp_path) -> None:
