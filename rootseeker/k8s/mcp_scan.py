@@ -39,7 +39,8 @@ def scan_k8s_mcp(registry: ToolRegistry) -> dict[str, Any]:
         "kind": "status",
         "mcp_present": present,
         "configured": present,
-        "ok": present,
+        # Absence is a completed scan, not a failed read. Callers stop on mcp_present.
+        "ok": True,
         "summary": summary,
         "mcp_servers": sorted(servers),
         "mcp_tools": tools,
@@ -47,5 +48,5 @@ def scan_k8s_mcp(registry: ToolRegistry) -> dict[str, Any]:
         "log_window_seconds": window * 60,
         "items": [],
         "anomalies": [],
-        "errors": [] if present else [summary],
+        "errors": [],
     }

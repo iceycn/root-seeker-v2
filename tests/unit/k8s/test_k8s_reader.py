@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 
 from mcp_servers.internal.handlers import register_internal_tools
@@ -154,6 +156,10 @@ def test_k8s_tools_are_registered_on_mcp() -> None:
     )
     assert missing.ok
     assert missing.content["mcp_present"] is False
+    assert missing.content["configured"] is False
+    assert missing.content["ok"] is True
+    assert missing.content["errors"] == []
+    assert missing.content.get("status") != "disabled"
     assert "未扫描到 Kubernetes MCP 协议" in missing.content["summary"]
 
     skipped = gateway.invoke(
@@ -167,6 +173,9 @@ def test_k8s_tools_are_registered_on_mcp() -> None:
     )
     assert skipped.ok
     assert skipped.content["mcp_present"] is False
+    assert skipped.content["ok"] is True
+    assert skipped.content["errors"] == []
+    assert skipped.content.get("status") != "disabled"
     assert "anomalies" not in skipped.content or skipped.content["anomalies"] == []
 
     registry.register_external(
@@ -192,6 +201,20 @@ def test_k8s_tools_are_registered_on_mcp() -> None:
     assert result.content["mcp_servers"] == ["k8s"]
     assert result.content["anomalies"][0]["resource"] == "memory"
     assert build_k8s_tools(registry, reader)[0][0].name == "k8s.status"
+
+
+def test_k8s_skills_are_wired_into_default_playbook() -> None:
+    from rootseeker.skill_system import build_registry_from_builtin_skills
+
+    root = Path(__file__).resolve().parents[3]
+    registry = build_registry_from_builtin_skills(root / "skills" / "builtin")
+    status = registry.get("k8s-status")
+    runtime = registry.get("k8s-runtime")
+    playbook = registry.get("default-log-triage")
+    assert status.bound_tools == ["k8s.status"]
+    assert "k8s.collect_snapshot" in runtime.bound_tools
+    assert "k8s.status" in playbook.bound_tools
+    assert "k8s.collect_snapshot" in playbook.bound_tools
 
 
 def _ready_config(*, log_window_minutes: int = 5) -> K8sConfig:

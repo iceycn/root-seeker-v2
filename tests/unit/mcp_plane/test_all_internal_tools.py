@@ -371,6 +371,8 @@ def test_every_tool_is_invoked_and_reaches_adapter(adapter: RecordingAdapter, ga
         if tool_name.startswith("k8s."):
             assert result.content["mcp_present"] is False
             assert result.content["configured"] is False
+            assert result.content["ok"] is True
+            assert result.content["errors"] == []
             assert result.content.get("status") != "disabled"
 
     adapter.calls.clear()
