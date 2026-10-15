@@ -33,6 +33,11 @@ const techGroups = [
 
 const changelog = [
   {
+    version: 'v1.3.5',
+    title: 'Kubernetes 异常证据',
+    desc: '扫描到外部 Kubernetes MCP 后读取 CPU、内存、磁盘和近 5 分钟容器日志；没有协议则跳过，不视为故障。',
+  },
+  {
     version: 'v1.3.2',
     title: '登录后进入宣传首页',
     desc: '登录成功后首先进入宣传页：项目介绍、技术选型、联系信息与更新日志以卡片展示。',
@@ -98,7 +103,7 @@ export default function HomePage() {
           <div className="brand">
             <span className="brand-icon">R</span>
             <span>RootSeeker</span>
-            <Tag color="magenta">v1.3.2</Tag>
+            <Tag color="magenta">v1.3.5</Tag>
           </div>
           <Space>
             <Button href="/overview" type="primary">
@@ -132,7 +137,7 @@ export default function HomePage() {
               根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署。
             </Typography.Paragraph>
             <Typography.Paragraph type="secondary">
-              当前阶段：MVP 主链路已在开发环境端到端跑通；登录后首先进入宣传首页，再进入控制台。
+              当前阶段：MVP 主链路已在开发环境端到端跑通；登录后首先进入宣传首页。扫描到外部 Kubernetes MCP 后可补充运行时证据。
             </Typography.Paragraph>
             <Space wrap>
               <Button type="primary" href={GITHUB_URL} target="_blank" rel="noreferrer" icon={<GithubOutlined />}>

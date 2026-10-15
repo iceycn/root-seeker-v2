@@ -67,6 +67,12 @@ EXPECTED_TOOLS = [
     "lsp.definition",
     "lsp.hover",
     "lsp.symbols",
+    "k8s.status",
+    "k8s.read_cpu",
+    "k8s.read_memory",
+    "k8s.read_disk",
+    "k8s.read_logs",
+    "k8s.collect_snapshot",
 ]
 
 
@@ -288,7 +294,7 @@ def test_all_expected_tools_are_registered(gateway) -> None:
     _gw, registry, _audit = gateway
     names = sorted(spec.name for spec in registry.list_specs())
     assert names == sorted(EXPECTED_TOOLS)
-    assert len(names) == 32
+    assert len(names) == len(EXPECTED_TOOLS)
 
 
 def test_every_tool_is_invoked_and_reaches_adapter(adapter: RecordingAdapter, gateway) -> None:
@@ -347,6 +353,12 @@ def test_every_tool_is_invoked_and_reaches_adapter(adapter: RecordingAdapter, ga
         ("lsp.hover", {"file_path": "Foo.java", "line": 1, "character": 2}, "lsp_hover"),
         ("lsp.symbols", {"file_path": "Foo.java"}, "lsp_symbols"),
         ("repo.unregister", {"name": "demo-repo"}, "repo_unregister"),
+        ("k8s.status", {}, ""),
+        ("k8s.read_cpu", {"namespace": "demo", "service_name": "order-service"}, ""),
+        ("k8s.read_memory", {"namespace": "demo"}, ""),
+        ("k8s.read_disk", {"namespace": "demo"}, ""),
+        ("k8s.read_logs", {"namespace": "demo", "pod": "order-0"}, ""),
+        ("k8s.collect_snapshot", {"namespace": "demo", "service_name": "order-service"}, ""),
     ]
 
     for tool_name, args, adapter_method in scenarios:
@@ -354,8 +366,14 @@ def test_every_tool_is_invoked_and_reaches_adapter(adapter: RecordingAdapter, ga
         result = _invoke(gw, tool_name, args)
         assert result.ok, f"{tool_name} failed: {result.error}"
         assert result.tool_name == tool_name
-        if tool_name != "incident.normalize":
+        if tool_name != "incident.normalize" and adapter_method:
             assert adapter.called(adapter_method), f"{tool_name} did not reach adapter.{adapter_method}"
+        if tool_name.startswith("k8s."):
+            assert result.content["mcp_present"] is False
+            assert result.content["configured"] is False
+            assert result.content["ok"] is True
+            assert result.content["errors"] == []
+            assert result.content.get("status") != "disabled"
 
     adapter.calls.clear()
     # Real sync path: register existing Docker-imported clones as local-only.
@@ -886,6 +904,12 @@ TOOL_REACH_MATRIX: list[tuple[str, dict[str, Any], str | None]] = [
     ("lsp.hover", {"file_path": "a.py", "line": 1, "character": 0}, "lsp_hover"),
     ("lsp.symbols", {"file_path": "a.py"}, "lsp_symbols"),
     ("repo.unregister", {"name": "r1"}, "repo_unregister"),
+    ("k8s.status", {}, None),
+    ("k8s.read_cpu", {"namespace": "demo"}, None),
+    ("k8s.read_memory", {"namespace": "demo"}, None),
+    ("k8s.read_disk", {"namespace": "demo"}, None),
+    ("k8s.read_logs", {"namespace": "demo", "pod": "api-0"}, None),
+    ("k8s.collect_snapshot", {"service_name": "order-service"}, None),
 ]
 
 

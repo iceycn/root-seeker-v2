@@ -1,7 +1,7 @@
 ---
 name: default-log-triage
 description: "内置默认值班日志链路排查 Flow，按步骤加载工具 Skill 并生成参数。"
-allowed-tools: incident.normalize catalog.resolve_service catalog.get_log_sources log.query_by_trace_id log.query_by_template trace.get_chain index.get_status repo.list code.search code.read graph.impact graph.context code.find_callers notify.send
+allowed-tools: incident.normalize catalog.resolve_service catalog.get_log_sources log.query_by_trace_id log.query_by_template k8s.status k8s.collect_snapshot k8s.read_cpu k8s.read_memory k8s.read_disk k8s.read_logs trace.get_chain index.get_status repo.list code.search code.read graph.impact graph.context code.find_callers notify.send
 metadata:
   role: playbook
 ---
@@ -17,6 +17,8 @@ metadata:
 3. `catalog.get_log_sources`（helper: `catalog-log-sources`）— 解析后续查询用的日志源
 4. `log.query_by_trace_id`（helper: `log-query-trace`）— 按 trace id 拉取事发窗口日志
 5. `log.query_by_template`（helper: `log-query-template`）— 按默认错误模板拉取兜底日志
+5b. `k8s.status`（helper: `k8s-status`）— 扫描已注册的外部 MCP。`mcp_present=false` 表示没有 Kubernetes 协议，停止本步后续读取，不要当成故障。
+5c. `k8s.collect_snapshot`（helper: `k8s-runtime`）— 仅在 `mcp_present=true` 时读取 CPU、内存、磁盘，以及最近一段时间的容器日志。日志窗口来自 `ROOTSEEKER_K8S_LOG_WINDOW_MINUTES`，默认 5 分钟。需要单独核对时再调用 `k8s.read_cpu`、`k8s.read_memory`、`k8s.read_disk`、`k8s.read_logs`。
 6. `trace.get_chain`（helper: `trace-chain`）— 在有 trace id 时拉取分布式链路
 7. `index.get_status`（helper: `index-repo-context`）— 读代码前确认索引是否可用
 8. `repo.list`（helper: `index-repo-context`）— 目录或索引不完整时列出已注册仓库
@@ -48,6 +50,7 @@ metadata:
 | normalize | `incident-normalize` |
 | catalog | `catalog-resolve-service`、`catalog-log-sources` |
 | logs | `log-query-trace`、`log-query-template` |
+| k8s | `k8s-status`、`k8s-runtime` |
 | trace | `trace-chain` |
 | index/repo | `index-repo-context` |
 | code | `code-lookup` |
