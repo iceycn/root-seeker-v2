@@ -10,11 +10,12 @@ repository behavior aligned.
 - Builtin plugin + skill loading and registration
 - MCP internal gateway with policy + audit
 - MCP external path (`ToolScope.EXTERNAL`) through unified `McpGateway`
-- **Kubernetes anomaly evidence** (v1.3.5):
+- **Kubernetes anomaly evidence** (v1.3.5, patched in v1.3.6):
   - Internal MCP tools `k8s.status`, `k8s.read_cpu`, `k8s.read_memory`, `k8s.read_disk`, `k8s.read_logs`, `k8s.collect_snapshot`
   - Builtin skills `k8s-status` and `k8s-runtime`; `default-log-triage` calls them after log queries
   - `k8s.status` only scans registered external MCP (server id, tool name, or tags containing `k8s` / `kubernetes` / `kubectl`). `mcp_present=false` skips cluster reads and is not a failure (`status=disabled` is not used)
   - Log window defaults to `ROOTSEEKER_K8S_LOG_WINDOW_MINUTES=5`
+  - v1.3.6: kubeconfig and client-certificate auth; auto-use credentials unless `ROOTSEEKER_K8S_ENABLED=false`; metrics-server unavailability is a warning when kubelet stats already provide CPU/memory
 - Gateway control-plane:
   - protocol frames, method registry, server request handling, subscriptions, broadcaster
   - **WebSocket transport layer** with heartbeat, connection lifecycle, topic subscription, request dispatch

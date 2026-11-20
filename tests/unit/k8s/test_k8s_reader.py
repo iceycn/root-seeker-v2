@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 import httpx
+import pytest
+import yaml
 
 from mcp_servers.internal.handlers import register_internal_tools
 from rootseeker.contracts.tool import ToolCallRequest, ToolScope, ToolSpec
+from rootseeker.k8s.client import KubernetesApiClient
 from rootseeker.k8s.config import K8sConfig
 from rootseeker.k8s.quantities import parse_bytes, parse_cpu_cores
 from rootseeker.k8s.reader import K8sQuery, KubernetesReader
@@ -15,6 +19,25 @@ from rootseeker.k8s.tools import build_k8s_tools
 from rootseeker.mcp_plane import McpGateway, PolicyGuard, ToolRegistry
 from rootseeker.observability.audit import InMemoryAuditLog
 from tests.support.stub_internal_adapter import StubInternalToolAdapter
+
+
+
+@pytest.fixture(autouse=True)
+def _isolate_k8s_env(monkeypatch, tmp_path) -> None:
+    missing = tmp_path / "missing-kubeconfig"
+    monkeypatch.setenv("KUBECONFIG", str(missing))
+    monkeypatch.setenv("ROOTSEEKER_K8S_KUBECONFIG", str(missing))
+    for name in (
+        "ROOTSEEKER_K8S_TOKEN",
+        "ROOTSEEKER_K8S_API_SERVER",
+        "ROOTSEEKER_K8S_CLIENT_CERT",
+        "ROOTSEEKER_K8S_CLIENT_KEY",
+        "ROOTSEEKER_K8S_CA_CERT",
+        "ROOTSEEKER_K8S_CONTEXT",
+        "ROOTSEEKER_K8S_NAMESPACE",
+        "ROOTSEEKER_K8S_ENABLED",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_quantity_parsers() -> None:
@@ -50,7 +73,20 @@ def test_disabled_reader_does_not_call_api() -> None:
     result = reader.read_memory(K8sQuery(namespace="demo"))
     assert result["configured"] is False
     assert result.get("status") != "disabled"
-    assert "ROOTSEEKER_K8S_ENABLED" in result["error"]
+    assert "连接信息" in result["error"]
+
+
+def test_explicitly_disabled_env_blocks_ready_credentials(monkeypatch, tmp_path) -> None:
+    kube = tmp_path / "config"
+    _write_kubeconfig(kube, token="secret-token")
+    monkeypatch.setenv("ROOTSEEKER_K8S_ENABLED", "false")
+    monkeypatch.setenv("ROOTSEEKER_K8S_KUBECONFIG", str(kube))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+    config = K8sConfig.from_env()
+    assert config.explicitly_disabled is True
+    assert config.is_ready() is False
+    result = KubernetesReader(config, transport=httpx.MockTransport(lambda req: httpx.Response(500))).status()
+    assert "ROOTSEEKER_K8S_ENABLED 未开启" in result["error"]
 
 
 def test_enabled_without_credentials_is_not_ready() -> None:
@@ -103,6 +139,28 @@ def test_reader_collects_cpu_memory_disk_and_five_minute_logs() -> None:
     assert resources == {"memory", "disk"}
     assert snapshot["logs"]["items"][0]["line_count"] == 1
     assert "ERROR boom" in snapshot["logs"]["items"][0]["text"]
+    assert snapshot.get("warnings") in (None, [],)
+
+
+def test_metrics_api_missing_falls_back_to_stats_as_warning() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/v1/namespaces/demo/pods":
+            return httpx.Response(200, json={"items": [_pod()]})
+        if path.startswith("/apis/metrics.k8s.io/"):
+            return httpx.Response(404, json={"message": "the server could not find the requested resource"})
+        if path == "/api/v1/nodes/node-1/proxy/stats/summary":
+            return httpx.Response(200, json=_stats_with_cpu_memory())
+        return httpx.Response(404, json={"message": f"missing {path}"})
+
+    reader = KubernetesReader(_ready_config(), transport=httpx.MockTransport(handler))
+    result = reader.read_memory(K8sQuery(namespace="demo"))
+    assert result["ok"] is True
+    assert result["items"]
+    assert result["errors"] == []
+    assert any("metrics.k8s.io 不可用" in item for item in result["warnings"])
+    assert "已改用 kubelet stats/summary" in result["summary"]
+    assert "水位正常" in result["summary"] or result["items"]
 
 
 def test_since_minutes_overrides_env_window() -> None:
@@ -124,6 +182,70 @@ def test_since_minutes_overrides_env_window() -> None:
     result = reader.read_logs(K8sQuery(namespace="demo", pod="api-0", since_minutes=2))
     assert result["log_window_minutes"] == 2
     assert seen == ["120"]
+
+
+def test_kubeconfig_client_certificate_is_ready(monkeypatch, tmp_path) -> None:
+    kube = tmp_path / "config"
+    cert = tmp_path / "client.crt"
+    key = tmp_path / "client.key"
+    ca = tmp_path / "ca.crt"
+    cert.write_text("CERT", encoding="utf-8")
+    key.write_text("KEY", encoding="utf-8")
+    ca.write_text("CA", encoding="utf-8")
+    _write_kubeconfig(
+        kube,
+        server="https://k8s.test",
+        client_cert=str(cert),
+        client_key=str(key),
+        ca_cert=str(ca),
+        namespace="demo",
+    )
+    monkeypatch.delenv("ROOTSEEKER_K8S_ENABLED", raising=False)
+    monkeypatch.delenv("ROOTSEEKER_K8S_TOKEN", raising=False)
+    monkeypatch.delenv("ROOTSEEKER_K8S_API_SERVER", raising=False)
+    monkeypatch.setenv("ROOTSEEKER_K8S_KUBECONFIG", str(kube))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+    config = K8sConfig.from_env()
+    try:
+        assert config.is_ready() is True
+        assert config.auth_source == "kubeconfig"
+        assert config.token == ""
+        assert config.client_cert == str(cert)
+        assert config.client_key == str(key)
+        assert config.namespace == "demo"
+        client = KubernetesApiClient(config, transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"kind": "PodList", "items": []})))
+        try:
+            payload = client.get_json("/api/v1/pods")
+            assert payload["kind"] == "PodList"
+        finally:
+            client.close()
+    finally:
+        config.cleanup()
+
+
+def test_kubeconfig_inline_data_materializes_cert_files(monkeypatch, tmp_path) -> None:
+    kube = tmp_path / "config"
+    _write_kubeconfig(
+        kube,
+        server="https://k8s.test",
+        client_cert_data=base64.b64encode(b"CERT").decode("ascii"),
+        client_key_data=base64.b64encode(b"KEY").decode("ascii"),
+        ca_data=base64.b64encode(b"CA").decode("ascii"),
+    )
+    monkeypatch.delenv("ROOTSEEKER_K8S_ENABLED", raising=False)
+    monkeypatch.setenv("ROOTSEEKER_K8S_KUBECONFIG", str(kube))
+    monkeypatch.delenv("KUBECONFIG", raising=False)
+    config = K8sConfig.from_env()
+    try:
+        assert config.is_ready() is True
+        assert Path(config.client_cert).is_file()
+        assert Path(config.client_key).is_file()
+        assert Path(config.ca_cert).is_file()
+        assert Path(config.client_cert).read_bytes() == b"CERT"
+    finally:
+        temps = config._temp_files
+        config.cleanup()
+        assert all(not Path(item).exists() for item in temps)
 
 
 def test_k8s_tools_are_registered_on_mcp() -> None:
@@ -228,6 +350,46 @@ def _ready_config(*, log_window_minutes: int = 5) -> K8sConfig:
     )
 
 
+def _write_kubeconfig(
+    path: Path,
+    *,
+    server: str = "https://k8s.test",
+    token: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    client_cert_data: str | None = None,
+    client_key_data: str | None = None,
+    ca_cert: str | None = None,
+    ca_data: str | None = None,
+    namespace: str = "default",
+) -> None:
+    user: dict = {}
+    if token:
+        user["token"] = token
+    if client_cert:
+        user["client-certificate"] = client_cert
+    if client_key:
+        user["client-key"] = client_key
+    if client_cert_data:
+        user["client-certificate-data"] = client_cert_data
+    if client_key_data:
+        user["client-key-data"] = client_key_data
+    cluster: dict = {"server": server}
+    if ca_cert:
+        cluster["certificate-authority"] = ca_cert
+    if ca_data:
+        cluster["certificate-authority-data"] = ca_data
+    payload = {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "current-context": "demo",
+        "clusters": [{"name": "demo", "cluster": cluster}],
+        "users": [{"name": "demo", "user": user}],
+        "contexts": [{"name": "demo", "context": {"cluster": "demo", "user": "demo", "namespace": namespace}}],
+    }
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+
 def _api(request: httpx.Request) -> httpx.Response:
     path = request.url.path
     if path == "/api/v1/namespaces/demo/pods":
@@ -281,3 +443,17 @@ def _stats() -> dict[str, object]:
             }
         ],
     }
+
+
+def _stats_with_cpu_memory() -> dict[str, object]:
+    body = _stats()
+    body["pods"][0]["cpu"] = {"usageNanoCores": 200_000_000}
+    body["pods"][0]["memory"] = {"workingSetBytes": 90 * 1024**2}
+    body["pods"][0]["containers"] = [
+        {
+            "name": "api",
+            "cpu": {"usageNanoCores": 200_000_000},
+            "memory": {"workingSetBytes": 90 * 1024**2},
+        }
+    ]
+    return body

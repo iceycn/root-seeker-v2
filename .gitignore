@@ -91,3 +91,6 @@ temp/
 
 # Local SDD / agent scratch (do not commit)
 .superpowers/sdd/
+
+# Local root scratch captures (do not commit)
+/tmp_*

@@ -28,9 +28,16 @@ class KubernetesApiClient:
             verify: bool | str = config.ca_cert
         else:
             verify = config.verify_ssl
+        headers: dict[str, str] = {}
+        if config.token:
+            headers["Authorization"] = f"Bearer {config.token}"
+        cert = None
+        if config.client_cert and config.client_key:
+            cert = (config.client_cert, config.client_key)
         self._http = httpx.Client(
             base_url=config.api_server.rstrip("/"),
-            headers={"Authorization": f"Bearer {config.token}"},
+            headers=headers,
+            cert=cert,
             verify=verify,
             timeout=config.timeout_seconds,
             trust_env=False,

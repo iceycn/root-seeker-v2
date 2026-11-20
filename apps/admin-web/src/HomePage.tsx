@@ -33,6 +33,11 @@ const techGroups = [
 
 const changelog = [
   {
+    version: 'v1.3.6',
+    title: 'Kubernetes 证据采集修复',
+    desc: '支持 kubeconfig 与客户端证书；metrics-server 缺失时降级到 kubelet 统计并给出警告。',
+  },
+  {
     version: 'v1.3.5',
     title: 'Kubernetes 异常证据',
     desc: '扫描到外部 Kubernetes MCP 后读取 CPU、内存、磁盘和近 5 分钟容器日志；没有协议则跳过，不视为故障。',
@@ -103,7 +108,7 @@ export default function HomePage() {
           <div className="brand">
             <span className="brand-icon">R</span>
             <span>RootSeeker</span>
-            <Tag color="magenta">v1.3.5</Tag>
+            <Tag color="magenta">v1.3.6</Tag>
           </div>
           <Space>
             <Button href="/overview" type="primary">
