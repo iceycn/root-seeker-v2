@@ -78,6 +78,7 @@ class _Inspection:
     pods: list[_PodView]
     items: list[dict[str, Any]]
     errors: list[str]
+    warnings: list[str] = field(default_factory=list)
 
 
 class KubernetesReader:
@@ -101,6 +102,7 @@ class KubernetesReader:
         if self._client is not None:
             self._client.close()
             self._client = None
+        self.config.cleanup()
 
     def status(self) -> dict[str, Any]:
         """Report whether Kubernetes reads are enabled before any API call."""
@@ -112,25 +114,17 @@ class KubernetesReader:
             "items": [],
             "anomalies": [],
         }
-        if not self.config.enabled:
-            reason = "ROOTSEEKER_K8S_ENABLED 未开启"
-            body.update(
-                {
-                    "configured": False,
-                    "ok": False,
-                    "summary": "Kubernetes 客户端未配置，跳过读取。",
-                    "error": reason,
-                    "errors": [reason],
-                }
-            )
-            return body
+        reason = self.config.disabled_reason() if not self.config.is_ready() else ""
         if not self.config.is_ready():
-            reason = self.config.disabled_reason()
+            if self.config.explicitly_disabled:
+                summary = "Kubernetes 客户端已关闭，跳过读取。"
+            else:
+                summary = "Kubernetes 客户端缺少连接信息，跳过读取。"
             body.update(
                 {
                     "configured": False,
                     "ok": False,
-                    "summary": "Kubernetes 客户端缺少连接信息，跳过读取。",
+                    "summary": summary,
                     "error": reason,
                     "errors": [reason],
                 }
@@ -142,6 +136,8 @@ class KubernetesReader:
                 "ok": True,
                 "summary": f"Kubernetes 客户端可用。日志窗口 {window} 分钟。",
                 "errors": [],
+                "warnings": [],
+                "auth_source": self.config.auth_source,
             }
         )
         return body
@@ -187,12 +183,22 @@ class KubernetesReader:
             *(disk.get("errors") or []),
             *(logs.get("errors") or []),
         ]
+        warnings = list(dict.fromkeys(
+            [
+                *(cpu.get("warnings") or []),
+                *(memory.get("warnings") or []),
+                *(disk.get("warnings") or []),
+                *(logs.get("warnings") or []),
+            ]
+        ))
         window = current.window_minutes(self.config)
         if anomalies:
             summary = "；".join(str(item.get("detail") or "") for item in anomalies[:5])
             summary = f"{summary}。日志窗口 {window} 分钟"
         else:
             summary = f"未发现 cpu / memory / disk 压力。日志窗口 {window} 分钟"
+        if warnings:
+            summary = f"{summary}（{'；'.join(warnings[:2])}）"
         return {
             "configured": True,
             "ok": bool(cpu.get("ok") or memory.get("ok") or disk.get("ok") or logs.get("ok")),
@@ -208,6 +214,7 @@ class KubernetesReader:
             "anomalies": anomalies,
             "summary": summary,
             "errors": errors,
+            "warnings": warnings,
         }
 
     def _read_resource(self, kind: str, query: K8sQuery) -> dict[str, Any]:
@@ -221,6 +228,11 @@ class KubernetesReader:
         items = [item for item in inspection.items if item.get("kind") == kind]
         anomalies = _anomalies(items)
         summary = _resource_summary(kind, items, anomalies)
+        warnings = list(inspection.warnings)
+        if kind in {"cpu", "memory"} and any("metrics.k8s.io 不可用" in item for item in warnings) and items:
+            summary = f"{summary}（metrics.k8s.io 不可用，已改用 kubelet stats/summary）"
+        if kind == "disk":
+            warnings = [item for item in warnings if "metrics.k8s.io 不可用" not in item]
         return self._ok(
             query,
             kind=kind,
@@ -228,6 +240,7 @@ class KubernetesReader:
             anomalies=anomalies,
             summary=summary,
             errors=inspection.errors,
+            warnings=warnings,
         )
 
     def _blocked(self, query: K8sQuery, kind: str) -> dict[str, Any] | None:
@@ -263,6 +276,7 @@ class KubernetesReader:
         anomalies: list[dict[str, Any]],
         summary: str,
         errors: list[str],
+        warnings: list[str] | None = None,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         window = query.window_minutes(self.config)
@@ -278,6 +292,7 @@ class KubernetesReader:
             "anomalies": anomalies,
             "summary": summary,
             "errors": errors,
+            "warnings": list(warnings or []),
         }
         if extra:
             body.update(extra)
@@ -291,13 +306,21 @@ class KubernetesReader:
     def _inspect(self, query: K8sQuery) -> _Inspection:
         pods = self._list_pods(query)[:MAX_RESOURCE_PODS]
         errors: list[str] = []
+        warnings: list[str] = []
         items: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str, str]] = set()
         metrics_error = self._append_metrics(query, pods, items, seen)
-        if metrics_error:
-            errors.append(metrics_error)
         errors.extend(self._append_stats(pods, items, seen, fill_cpu_memory=bool(metrics_error)))
-        return _Inspection(pods=pods, items=items, errors=errors)
+        if metrics_error:
+            has_fallback = any(
+                item.get("kind") in {"cpu", "memory"} and item.get("source") == "stats"
+                for item in items
+            )
+            if has_fallback:
+                warnings.append(metrics_error)
+            else:
+                errors.append(metrics_error)
+        return _Inspection(pods=pods, items=items, errors=errors, warnings=warnings)
 
     def _list_pods(self, query: K8sQuery) -> list[_PodView]:
         namespace = query.resolved_namespace(self.config)
