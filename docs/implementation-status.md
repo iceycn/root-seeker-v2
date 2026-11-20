@@ -10,6 +10,11 @@ repository behavior aligned.
 - Builtin plugin + skill loading and registration
 - MCP internal gateway with policy + audit
 - MCP external path (`ToolScope.EXTERNAL`) through unified `McpGateway`
+- **Kubernetes anomaly evidence** (v1.3.5):
+  - Internal MCP tools `k8s.status`, `k8s.read_cpu`, `k8s.read_memory`, `k8s.read_disk`, `k8s.read_logs`, `k8s.collect_snapshot`
+  - Builtin skills `k8s-status` and `k8s-runtime`; `default-log-triage` calls them after log queries
+  - `k8s.status` only scans registered external MCP (server id, tool name, or tags containing `k8s` / `kubernetes` / `kubectl`). `mcp_present=false` skips cluster reads and is not a failure (`status=disabled` is not used)
+  - Log window defaults to `ROOTSEEKER_K8S_LOG_WINDOW_MINUTES=5`
 - Gateway control-plane:
   - protocol frames, method registry, server request handling, subscriptions, broadcaster
   - **WebSocket transport layer** with heartbeat, connection lifecycle, topic subscription, request dispatch
@@ -108,7 +113,7 @@ repository behavior aligned.
 ## Planned
 
 - Richer bidirectional human-workflow integrations for approvals
-- Docker Compose baseline exists; GitHub Publish dual-pushes Docker Hub and Alibaba Cloud ACR; CN setup (`setup-cn.*`) prefers public ACR pulls with Hub-mirror fallback. Kubernetes manifests and production hardening remain planned
+- Docker Compose baseline exists; GitHub Publish dual-pushes Docker Hub and Alibaba Cloud ACR; CN setup (`setup-cn.*`) prefers public ACR pulls with Hub-mirror fallback. Kubernetes deployment manifests and production hardening remain planned
 - Deeper production health probes, SLO dashboards and alert rules
 
 ## Notes

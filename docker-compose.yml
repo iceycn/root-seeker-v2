@@ -25,6 +25,17 @@ x-app-storage-env: &app-storage-env
   ROOTSEEKER_CRON_STATE_STORE: ${ROOTSEEKER_CRON_STATE_STORE:-auto}
   ROOTSEEKER_ERROR_HISTORY_STORE: ${ROOTSEEKER_ERROR_HISTORY_STORE:-auto}
 
+x-k8s-env: &k8s-env
+  ROOTSEEKER_K8S_ENABLED: ${ROOTSEEKER_K8S_ENABLED:-false}
+  ROOTSEEKER_K8S_API_SERVER: ${ROOTSEEKER_K8S_API_SERVER:-}
+  ROOTSEEKER_K8S_TOKEN: ${ROOTSEEKER_K8S_TOKEN:-}
+  ROOTSEEKER_K8S_CA_CERT: ${ROOTSEEKER_K8S_CA_CERT:-}
+  ROOTSEEKER_K8S_NAMESPACE: ${ROOTSEEKER_K8S_NAMESPACE:-}
+  ROOTSEEKER_K8S_VERIFY_SSL: ${ROOTSEEKER_K8S_VERIFY_SSL:-true}
+  ROOTSEEKER_K8S_TIMEOUT_SECONDS: ${ROOTSEEKER_K8S_TIMEOUT_SECONDS:-15}
+  ROOTSEEKER_K8S_LOG_WINDOW_MINUTES: ${ROOTSEEKER_K8S_LOG_WINDOW_MINUTES:-5}
+  ROOTSEEKER_K8S_LOG_TAIL_LINES: ${ROOTSEEKER_K8S_LOG_TAIL_LINES:-500}
+
 services:
   mysql:
     image: ${MYSQL_IMAGE:-mysql:8.0}
@@ -76,7 +87,7 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
-      <<: *app-storage-env
+      <<: [*app-storage-env, *k8s-env]
       ROOTSEEKER_INTERNAL_ADAPTER_KIND: ${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
@@ -141,7 +152,7 @@ services:
     ports:
       - "${ADMIN_PORT:-8010}:8010"
     environment:
-      <<: *app-storage-env
+      <<: [*app-storage-env, *k8s-env]
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       ROOTSEEKER_HTTP_PROXY: ${ROOTSEEKER_HTTP_PROXY:-}
@@ -212,7 +223,7 @@ services:
         "0",
       ]
     environment:
-      <<: *app-storage-env
+      <<: [*app-storage-env, *k8s-env]
       ROOTSEEKER_INTERNAL_ADAPTER_KIND: ${ROOTSEEKER_INTERNAL_ADAPTER_KIND:-composite}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
@@ -258,7 +269,7 @@ services:
     container_name: rootseeker-scheduler
     command: ["rootseeker-scheduler", "--loop", "--interval-seconds", "60", "--max-runs", "0"]
     environment:
-      <<: *app-storage-env
+      <<: [*app-storage-env, *k8s-env]
       ROOTSEEKER_ZOEKT_ENDPOINT: http://zoekt:6070
       ROOTSEEKER_ZOEKT_INDEX_ENDPOINT: http://zoekt:6071
       ROOTSEEKER_ZOEKT_PATH_MAP: /data/repos:/repos

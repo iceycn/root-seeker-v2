@@ -13,6 +13,8 @@ from rootseeker.analysis.log_text import unwrap_embedded_log_text
 from rootseeker.analysis.service_identity import is_placeholder_service_name, resolve_service_name
 from rootseeker.channel_routing import webhook_payload_to_case_create
 from rootseeker.contracts.tool import ToolPermissionLevel, ToolScope, ToolSpec
+from rootseeker.k8s.reader import KubernetesReader
+from rootseeker.k8s.tools import build_k8s_tools
 from rootseeker.mcp_plane.registry import ToolRegistry
 from rootseeker.service_catalog.memory_catalog import MemoryServiceCatalog
 
@@ -23,6 +25,7 @@ def register_internal_tools(
     registry: ToolRegistry,
     *,
     adapter: InternalToolAdapter,
+    k8s_reader: KubernetesReader | None = None,
 ) -> MemoryServiceCatalog:
     """Register internal MCP handlers backed by an adapter."""
 
@@ -575,6 +578,7 @@ def register_internal_tools(
             _lsp_symbols,
         ),
     ]
+    tools.extend(build_k8s_tools(registry, k8s_reader))
 
     for spec, handler in tools:
         registry.register(spec, handler)

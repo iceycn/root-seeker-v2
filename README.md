@@ -1,7 +1,7 @@
 # RootSeeker V2
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.2-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.3.5-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
@@ -12,7 +12,7 @@
 
 全链路覆盖：告警接入 → 日志 / 链路采集 → 代码检索与图谱 → 根因分析 → 多渠道通知。Skill 可编排、MCP 可审计、Case 可回放；支持私有化部署，代码与日志可不出内网。通知支持飞书 / 钉钉 / 企微 / Slack；Admin 可管理仓库同步、定时任务、消息模板与错误排查助手。
 
-> **当前阶段**（`v1.3.2`）：MVP 主链路已在开发环境端到端跑通；Admin 已支持登录、用户管理；登录后首先进入宣传首页。国内一键安装优先拉阿里云 ACR 预构建镜像。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
+> **当前阶段**（`v1.3.5`）：MVP 主链路已在开发环境端到端跑通；Admin 已支持登录、用户管理；登录后首先进入宣传首页。默认排查在扫描到外部 Kubernetes MCP 后，可读取 CPU、内存、磁盘和近 5 分钟容器日志；没有协议则跳过，不视为故障。国内一键安装优先拉阿里云 ACR 预构建镜像。详见 [实现状态](docs/implementation-status.md)。问题与建议欢迎提 [Issue](https://github.com/iceycn/root-seeker-v2/issues)。
 
 <p align="center">
   <b>⭐ 如果这个项目对你有帮助，请点个 Star 支持一下！</b><br>
@@ -71,6 +71,7 @@
 - **三引擎代码索引**：Zoekt（词法）+ Qdrant（语义）+ GitNexus（图谱），均支持容器内远程索引。
 - **运维控制台**：仓库注册 / 同步、定时任务、消息模板、错误排查助手、服务目录。
 - **多渠道接入与触达**：Webhook / 阿里云 SLS / Prometheus 入站；飞书 / 钉钉 / 企微 / Slack 出站。
+- **Kubernetes 异常证据**：扫描到外部 Kubernetes MCP 后读取 CPU、内存、磁盘和近 5 分钟容器日志；没有协议则跳过。
 - **持久化与回放**：可选 SQLite / MySQL；Case 回放与质量门禁。
 - **数据安全**：私有化部署与本地 / 内网 LLM，代码与日志可不出公网。
 
@@ -454,6 +455,7 @@ export ROOTSEEKER_EMBEDDING_DIMENSION=1536
 | 仓库 | `ROOTSEEKER_REPO_BASE_PATH` · `ROOTSEEKER_REPO_ENABLE_*` |
 | LLM | `ROOTSEEKER_LLM_BASE_URL` · `ROOTSEEKER_LLM_API_KEY` · `ROOTSEEKER_LLM_MODEL` |
 | 日志/链路 | `SLS_*` · `JAEGER_ENDPOINT` |
+| Kubernetes | `ROOTSEEKER_K8S_ENABLED` · `ROOTSEEKER_K8S_API_SERVER` · `ROOTSEEKER_K8S_TOKEN` · `ROOTSEEKER_K8S_NAMESPACE` · `ROOTSEEKER_K8S_LOG_WINDOW_MINUTES`（默认 5） |
 | 代理 | `HTTP_PROXY` / `HTTPS_PROXY`（容器内会映射到 `host.docker.internal`；本机 hybrid 保持 `127.0.0.1`） |
 
 可选 tracing profile：
@@ -502,7 +504,7 @@ k8s/            # Kubernetes 清单
 ## 相关文档
 
 - [实现状态与缺口](docs/implementation-status.md)
-- [v1.3.2 发布说明](docs/releases/v1.3.2.md) · [v1.3.1 发布说明](docs/releases/v1.3.1.md) · [v1.3.0 发布说明](docs/releases/v1.3.0.md) · [v1.2.1 发布说明](docs/releases/v1.2.1.md) · [v1.2.0 发布说明](docs/releases/v1.2.0.md) · [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
+- [v1.3.5 发布说明](docs/releases/v1.3.5.md) · [v1.3.2 发布说明](docs/releases/v1.3.2.md) · [v1.3.1 发布说明](docs/releases/v1.3.1.md) · [v1.3.0 发布说明](docs/releases/v1.3.0.md) · [v1.2.1 发布说明](docs/releases/v1.2.1.md) · [v1.2.0 发布说明](docs/releases/v1.2.0.md) · [v1.1.4 发布说明](docs/releases/v1.1.4.md) · [v1.1.3 发布说明](docs/releases/v1.1.3.md) · [v1.1.2 发布说明](docs/releases/v1.1.2.md) · [v1.1.1 发布说明](docs/releases/v1.1.1.md) · [v1.1.0 发布说明](docs/releases/v1.1.0.md)
 - [Case 状态机](docs/architecture/case-state-machine.md)
 - [状态机总览](docs/architecture/state-machines.md)
 

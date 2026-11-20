@@ -171,6 +171,42 @@ INTERNAL_TOOL_PARAMETER_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+def _k8s_query_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "namespace": {
+                "type": "string",
+                "description": "Kubernetes namespace. Empty uses ROOTSEEKER_K8S_NAMESPACE, then all namespaces.",
+            },
+            "pod": {"type": "string", "description": "Pod name"},
+            "service_name": {
+                "type": "string",
+                "description": "Match app or app.kubernetes.io/name label, or pod name prefix",
+            },
+            "container": {"type": "string"},
+            "label_selector": {"type": "string"},
+            "since_minutes": {
+                "type": "integer",
+                "description": "Log window override in minutes. Default ROOTSEEKER_K8S_LOG_WINDOW_MINUTES (5).",
+            },
+            "tail_lines": {"type": "integer", "description": "Max log lines per container"},
+        },
+    }
+
+
+INTERNAL_TOOL_PARAMETER_SCHEMAS["k8s.status"] = {"type": "object", "properties": {}}
+
+for _k8s_tool_name in (
+    "k8s.read_cpu",
+    "k8s.read_memory",
+    "k8s.read_disk",
+    "k8s.read_logs",
+    "k8s.collect_snapshot",
+):
+    INTERNAL_TOOL_PARAMETER_SCHEMAS[_k8s_tool_name] = _k8s_query_schema()
+
+
 def parameter_schema_for(tool_name: str) -> dict[str, Any]:
     return dict(
         INTERNAL_TOOL_PARAMETER_SCHEMAS.get(tool_name, {"type": "object", "properties": {}})
